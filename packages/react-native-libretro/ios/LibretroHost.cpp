@@ -123,11 +123,12 @@ static bool onEnvironment(unsigned cmd, void *data) {
       auto *var = static_cast<struct retro_variable *>(data);
       // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
       if (g_isN64 && var && var->key) {
-        if (std::strcmp(var->key, "mupen64plus-next-rdp-plugin") == 0) {
+        // Claves reales del core: CORE_NAME = "mupen64plus" (ver mupen64plus-next_common.h)
+        if (std::strcmp(var->key, "mupen64plus-rdp-plugin") == 0) {
           var->value = "angrylion";
           return true;
         }
-        if (std::strcmp(var->key, "mupen64plus-next-cpucore") == 0) {
+        if (std::strcmp(var->key, "mupen64plus-cpucore") == 0) {
           var->value = "pure_interpreter";
           return true;
         }
