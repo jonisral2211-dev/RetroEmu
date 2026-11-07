@@ -4,6 +4,7 @@ import { Libretro, LibretroView } from 'react-native-libretro';
 import { coreForFile } from '../emulator/cores';
 import { layoutFor } from '../input/layouts';
 import { VirtualPad } from '../input/VirtualPad';
+import { useGamepadStatus } from '../input/useGamepadStatus';
 
 type Props = { romPath: string; onExit: () => void };
 
@@ -16,6 +17,13 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [genesisSix, setGenesisSix] = useState(false);
+
+  // Con un DualSense conectado el pad táctil se oculta; el usuario puede forzarlo con el botón.
+  // Al cambiar la conexión se descarta el override manual.
+  const pad = useGamepadStatus();
+  const [touchOverride, setTouchOverride] = useState<boolean | null>(null);
+  useEffect(() => setTouchOverride(null), [pad.dualSense]);
+  const touchVisible = touchOverride ?? !pad.dualSense;
 
   useEffect(() => {
     if (!core) {
@@ -75,6 +83,9 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
             <Text style={styles.buttonText}>{genesisSix ? '6 btn' : '3 btn'}</Text>
           </Pressable>
         ) : null}
+        <Pressable onPress={() => setTouchOverride(!touchVisible)} style={styles.button}>
+          <Text style={styles.buttonText}>{touchVisible ? 'Ocultar pad' : 'Mostrar pad'}</Text>
+        </Pressable>
         {SLOTS.map((slot) => (
           <View key={slot} style={styles.slot}>
             <Pressable
@@ -100,7 +111,10 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       <LibretroView style={styles.screen} filter={false} />
 
       {/* key: al cambiar de layout se remonta el pad y se reinician sus gestos */}
-      <VirtualPad key={layout.name} layout={layout} />
+      {pad.connected && pad.dualSense ? (
+        <Text style={styles.notice}>DualSense conectado: {pad.name || 'PS5'}</Text>
+      ) : null}
+      {touchVisible ? <VirtualPad key={layout.name} layout={layout} /> : null}
     </View>
   );
 }

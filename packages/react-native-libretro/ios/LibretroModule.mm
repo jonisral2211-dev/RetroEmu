@@ -1,6 +1,9 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 #import <React/RCTBridgeModule.h>
+#import <React/RCTEventEmitter.h>
+
+#import "GamepadBridge.h"
 #import <ReactCommon/RCTTurboModule.h>
 #import <RNLibretroSpec/RNLibretroSpec.h>
 
@@ -22,12 +25,38 @@ static BOOL isRomExtension(NSString *ext) {
   return [exts containsObject:ext.lowercaseString];
 }
 
-@interface Libretro : NSObject <RCTBridgeModule, NativeLibretroSpec>
+@interface Libretro : RCTEventEmitter <NativeLibretroSpec>
 @end
 
-@implementation Libretro
+@implementation Libretro {
+  BOOL _listening;  // JS tiene listeners de gamepadStatus
+}
 
 RCT_EXPORT_MODULE(Libretro)
+
+- (NSArray<NSString *> *)supportedEvents {
+  return @[ @"gamepadStatus" ];
+}
+
+- (void)startObserving {
+  _listening = YES;
+  // Estado actual al suscribirse (el mando puede estar conectado de antes)
+  [self sendStatus:[[GamepadBridge sharedBridge] currentStatus]];
+}
+
+- (void)stopObserving {
+  _listening = NO;
+}
+
+- (void)sendStatus:(NSDictionary *)status {
+  if (_listening) {
+    [self sendEventWithName:@"gamepadStatus" body:status];
+  }
+}
+
+- (NSNumber *)hasDualSense {
+  return @([[GamepadBridge sharedBridge] isDualSenseConnected]);
+}
 
 - (instancetype)init {
   if (self = [super init]) {
@@ -38,6 +67,11 @@ RCT_EXPORT_MODULE(Libretro)
     [fm createDirectoryAtPath:system withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:nil];
     host::configure(system.UTF8String, saves.UTF8String);
+
+    __weak Libretro *weakSelf = self;
+    [[GamepadBridge sharedBridge] startWithStatusHandler:^(NSDictionary *status) {
+      [weakSelf sendStatus:status];
+    }];
   }
   return self;
 }

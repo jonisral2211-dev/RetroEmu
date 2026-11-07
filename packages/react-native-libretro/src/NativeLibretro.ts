@@ -19,6 +19,11 @@ export interface Spec extends TurboModule {
   loadState(slot: number): boolean;
   /** Rutas absolutas de ROMs encontradas en Documents. */
   listRoms(): string[];
+  /** true si hay un DualSense (PS5) conectado ahora mismo. */
+  hasDualSense(): boolean;
+  // Requeridos por NativeEventEmitter para el evento 'gamepadStatus'
+  addListener(eventName: string): void;
+  removeListeners(count: number): void;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Libretro');

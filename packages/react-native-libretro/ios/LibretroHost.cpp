@@ -59,6 +59,11 @@ std::atomic<bool> g_paused{false};
 std::atomic<uint16_t> g_buttons{0};
 std::atomic<int16_t> g_axisX{0};  // stick izquierdo (RETRO_DEVICE_ANALOG)
 std::atomic<int16_t> g_axisY{0};
+// Estado del mando físico (escrito desde GameController, leído en input_state)
+std::atomic<uint16_t> g_padButtons{0};
+std::atomic<int16_t> g_padX{0};
+std::atomic<int16_t> g_padY{0};
+bool g_isN64 = false;
 FrameBuffer g_frame;
 AudioOutput g_audio;
 
@@ -166,12 +171,15 @@ static void onInputPoll(void) {}
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
   if (port != 0) return 0;
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
-    if (id == RETRO_DEVICE_ID_ANALOG_X) return g_axisX.load();
-    if (id == RETRO_DEVICE_ID_ANALOG_Y) return g_axisY.load();
+    // El stick del mando tiene prioridad sobre el táctil cuando está en uso
+    const int16_t padX = g_padX.load(), padY = g_padY.load();
+    const bool usePad = padX != 0 || padY != 0;
+    if (id == RETRO_DEVICE_ID_ANALOG_X) return usePad ? padX : g_axisX.load();
+    if (id == RETRO_DEVICE_ID_ANALOG_Y) return usePad ? padY : g_axisY.load();
     return 0;
   }
   if (device != RETRO_DEVICE_JOYPAD || index != 0 || id > 15) return 0;
-  return static_cast<int16_t>((g_buttons.load() >> id) & 1);
+  return static_cast<int16_t>(((g_buttons.load() | g_padButtons.load()) >> id) & 1);
 }
 
 }  // extern "C"
@@ -262,6 +270,7 @@ bool loadCore(const char *frameworkBinaryPath) {
     g_core = CoreApi{};
   }
 
+  g_isN64 = std::strstr(frameworkBinaryPath, "mupen64") != nullptr;
   void *handle = dlopen(frameworkBinaryPath, RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
     std::fprintf(stderr, "[libretro] dlopen: %s\n", dlerror());
@@ -345,7 +354,8 @@ bool loadGame(const char *romPath) {
   g_sampleRate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32768.0;
   g_fps = av.timing.fps > 0 ? av.timing.fps : 60.0;
 
-  g_core.setControllerPortDevice(0, RETRO_DEVICE_JOYPAD);
+  // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
+  g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
   restoreSram();
   return true;
 }
@@ -380,6 +390,16 @@ void setAnalog(double x, double y) {
   };
   g_axisX = toAxis(x);
   g_axisY = toAxis(y);
+}
+
+void setGamepad(uint16_t buttons, double x, double y) {
+  auto toAxis = [](double v) {
+    v = std::max(-1.0, std::min(1.0, v));
+    return static_cast<int16_t>(v * 32767.0);
+  };
+  g_padButtons = buttons;
+  g_padX = toAxis(x);
+  g_padY = toAxis(y);
 }
 
 void reset() {
