@@ -70,6 +70,7 @@ std::atomic<uint32_t> g_dbgJoyHits{0};  // bit id = el core pidió ese botón y 
 std::atomic<int16_t> g_dbgAxisX{0};     // último valor devuelto para el stick (X/Y)
 std::atomic<int16_t> g_dbgAxisY{0};
 std::atomic<uint32_t> g_dbgReads{0};    // lecturas de input_state desde la última instantánea
+std::atomic<uint32_t> g_dbgUiHits{0};   // botones escritos desde la UI desde la última instantánea
 bool g_isN64 = false;
 FrameBuffer g_frame;
 AudioOutput g_audio;
@@ -451,7 +452,10 @@ void stop() {
 
 void setPaused(bool paused) { g_paused = paused; }
 
-void setButtons(uint16_t mask) { g_buttons = mask; }
+void setButtons(uint16_t mask) {
+  g_buttons = mask;
+  g_dbgUiHits.fetch_or(mask, std::memory_order_relaxed);  // acumula también toques breves
+}
 
 void setAnalog(double x, double y) {
   auto toAxis = [](double v) {
@@ -506,13 +510,15 @@ std::string lastError() { return g_lastError; }
 std::string debugState() {
   const uint32_t hits = g_dbgJoyHits.exchange(0, std::memory_order_relaxed);
   const uint32_t reads = g_dbgReads.exchange(0, std::memory_order_relaxed);
-  char buf[256];
+  const uint32_t uiHits = g_dbgUiHits.exchange(0, std::memory_order_relaxed);
+  char buf[320];
   std::snprintf(buf, sizeof(buf),
-                "UI btn=%04x pad=%04x ax=%d ay=%d\n"
+                "UI ahora btn=%04x pad=%04x ax=%d ay=%d\n"
+                "UI pulsado (ult. 0.5s) btn=%04x\n"
                 "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
                 "stick devuelto x=%d y=%d",
-                g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), hits, reads,
-                g_dbgAxisX.load(), g_dbgAxisY.load());
+                g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
+                reads, g_dbgAxisX.load(), g_dbgAxisY.load());
   return buf;
 }
 
