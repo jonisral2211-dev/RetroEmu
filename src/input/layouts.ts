@@ -99,8 +99,8 @@ export const GENESIS6_LAYOUT = genesisLayout(true);
 
 // ---- Nintendo 64 ------------------------------------------------------------
 // Stick analógico, D-Pad secundario, Z trasero-izquierdo, rombo de botones C (amarillo),
-// A, B, L, R y Start. Mapeo de C a bits libretro asumido (C-Up=X, C-Down=Y, C-Left=R2,
-// C-Right=R3) y Z=L2: validar con Mupen64Plus-Next.
+// A, B, L, R y Start. Mapeo por defecto de mupen64plus-next (emulate_game_controller_via_libretro.c):
+// A=JOYPAD_B, B=JOYPAD_Y, C-Up=X, C-Down=A, C-Left=L, C-Right=R, Z=L2, R=R2, L=SELECT.
 const C_YELLOW = '#ffd400';
 export const N64_LAYOUT: PadLayout = {
   name: 'Nintendo 64',
@@ -109,8 +109,8 @@ export const N64_LAYOUT: PadLayout = {
       id: 'top', x: 0, y: 0, w: 1, h: 0.22,
       zones: [
         rect('Z', 0.02, 0.1, 0.26, 0.8, Btn.L2, '#8a8f98'),
-        rect('L', 0.36, 0.1, 0.26, 0.8, Btn.L),
-        rect('R', 0.72, 0.1, 0.26, 0.8, Btn.R),
+        rect('L', 0.36, 0.1, 0.26, 0.8, Btn.SELECT),
+        rect('R', 0.72, 0.1, 0.26, 0.8, Btn.R2),
       ],
     },
     {
@@ -125,16 +125,16 @@ export const N64_LAYOUT: PadLayout = {
       id: 'cbuttons', x: 0.38, y: 0.22, w: 0.24, h: 0.78,
       zones: [
         circle('C▲', 0.5, 0.2, 0.36, Btn.X, C_YELLOW),
-        circle('C◀', 0.15, 0.5, 0.36, Btn.R2, C_YELLOW),
-        circle('C▶', 0.85, 0.5, 0.36, Btn.R3, C_YELLOW),
-        circle('C▼', 0.5, 0.8, 0.36, Btn.Y, C_YELLOW),
+        circle('C◀', 0.15, 0.5, 0.36, Btn.L, C_YELLOW),
+        circle('C▶', 0.85, 0.5, 0.36, Btn.R, C_YELLOW),
+        circle('C▼', 0.5, 0.8, 0.36, Btn.A, C_YELLOW),
       ],
     },
     {
       id: 'face', x: 0.64, y: 0.22, w: 0.36, h: 0.78,
       zones: [
-        circle('A', 0.7, 0.55, 0.42, Btn.A, '#3b82f6'),
-        circle('B', 0.3, 0.4, 0.36, Btn.B, '#ef4444'),
+        circle('A', 0.7, 0.55, 0.42, Btn.B, '#3b82f6'),
+        circle('B', 0.3, 0.4, 0.36, Btn.Y, '#ef4444'),
         rect('START', 0.25, 0.86, 0.5, 0.12, Btn.START),
       ],
     },
