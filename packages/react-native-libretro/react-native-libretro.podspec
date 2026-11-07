@@ -6,6 +6,7 @@ Pod::Spec.new do |s|
   s.name         = 'react-native-libretro'
   s.version      = package['version']
   s.summary      = 'Host de núcleos Libretro para React Native (Fabric + Metal)'
+  s.homepage     = 'https://github.com/jonisral2211-dev/RetroEmu'
   s.license      = { :type => 'MIT' }
   s.authors      = { 'RetroEmu' => '' }
   s.platforms    = { :ios => '15.1' }
