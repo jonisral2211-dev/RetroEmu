@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -76,6 +77,20 @@ std::string g_saveDir;
 std::string g_romBase;
 std::vector<uint8_t> g_romData;
 std::string g_lastError;  // motivo del último fallo de loadCore/loadGame
+// Avisos del núcleo (warn/error) de la última carga: explican por qué retro_load_game falla
+std::string g_coreLog;
+
+void coreLog(enum retro_log_level level, const char *fmt, ...) {
+  char buf[512];
+  va_list args;
+  va_start(args, fmt);
+  std::vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  std::fprintf(stderr, "[core %d] %s", static_cast<int>(level), buf);
+  if (level <= RETRO_LOG_WARN && g_coreLog.size() < 1024) {
+    g_coreLog += buf;
+  }
+}
 
 // ---- Callbacks de Libretro (la API es C: deben tener enlace C) -------------
 extern "C" {
@@ -118,6 +133,9 @@ static bool onEnvironment(unsigned cmd, void *data) {
       }
       return false;  // el resto de opciones: valores por defecto del core
     }
+    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+      static_cast<struct retro_log_callback *>(data)->log = coreLog;
+      return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
       *static_cast<bool *>(data) = false;
       return true;
@@ -338,6 +356,11 @@ bool loadCore(const char *frameworkBinaryPath) {
 
 bool loadGame(const char *romPath) {
   g_lastError.clear();
+  g_coreLog.clear();
+  if (!romPath || !*romPath) {
+    g_lastError = "Ruta de ROM vacía";
+    return false;
+  }
   std::fprintf(stderr, "[RetroEmu] loadGame path=%s\n", romPath);
   if (!g_core.handle) {
     g_lastError = "No hay ningún núcleo cargado";
@@ -377,6 +400,7 @@ bool loadGame(const char *romPath) {
                  coreName, romPath, fileSize);
     g_lastError = std::string("El núcleo ") + coreName + " no ha aceptado la ROM (retro_load_game devolvió false).\n" +
                   "Ruta: " + path + "\nTamaño: " + std::to_string(fileSize) + " bytes\n" +
+                  (g_coreLog.empty() ? std::string() : "Motivo del núcleo: " + g_coreLog + "\n") +
                   "Comprueba que el archivo esté completo y sea de la consola correcta.";
     return false;
   }
