@@ -101,8 +101,21 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
       return true;
-    case RETRO_ENVIRONMENT_GET_VARIABLE:
-      return false;  // sin opciones personalizadas: el core usa sus valores por defecto
+    case RETRO_ENVIRONMENT_GET_VARIABLE: {
+      auto *var = static_cast<struct retro_variable *>(data);
+      // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
+      if (g_isN64 && var && var->key) {
+        if (std::strcmp(var->key, "mupen64plus-next-rdp-plugin") == 0) {
+          var->value = "angrylion";
+          return true;
+        }
+        if (std::strcmp(var->key, "mupen64plus-next-cpucore") == 0) {
+          var->value = "pure_interpreter";
+          return true;
+        }
+      }
+      return false;  // el resto de opciones: valores por defecto del core
+    }
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
       *static_cast<bool *>(data) = false;
       return true;

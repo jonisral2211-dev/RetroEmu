@@ -9,10 +9,27 @@
 
 #include <memory>
 
+#include <map>
+
 #include "LibretroHost.hpp"
+#include "RomArchive.hpp"
 
 static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+// Carpetas por consola dentro de Documents
+static NSArray<NSString *> *consoleFolders(void) {
+  return @[ @"gba", @"n64", @"sega", @"mame" ];
+}
+
+// Extensión -> carpeta de consola (los zips se extraen a la carpeta de su ROM)
+static NSDictionary<NSString *, NSString *> *extensionFolders(void) {
+  return @{
+    @"gba" : @"gba", @"gb" : @"gba", @"gbc" : @"gba",
+    @"z64" : @"n64", @"n64" : @"n64", @"v64" : @"n64",
+    @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"bin" : @"sega",
+  };
 }
 
 static BOOL isRomExtension(NSString *ext) {
@@ -66,6 +83,13 @@ RCT_EXPORT_MODULE(Libretro)
     NSString *saves = [docs stringByAppendingPathComponent:@"saves"];
     [fm createDirectoryAtPath:system withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:nil];
+    // Carpetas por consola, visibles en la app Archivos (UIFileSharingEnabled)
+    for (NSString *folder in consoleFolders()) {
+      [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:folder]
+          withIntermediateDirectories:YES
+                           attributes:nil
+                                error:nil];
+    }
     host::configure(system.UTF8String, saves.UTF8String);
 
     __weak Libretro *weakSelf = self;
@@ -140,20 +164,46 @@ RCT_EXPORT_MODULE(Libretro)
 }
 
 - (NSArray<NSString *> *)listRoms {
-  NSMutableArray<NSString *> *roms = [NSMutableArray array];
+  NSFileManager *fm = NSFileManager.defaultManager;
   NSString *docs = documentsDirectory();
-  NSDirectoryEnumerator<NSString *> *en = [NSFileManager.defaultManager enumeratorAtPath:docs];
+
+  // Mapa extensión -> carpeta absoluta para el extractor de zips
+  std::map<std::string, std::string> extToDir;
+  NSDictionary *folders = extensionFolders();
+  for (NSString *ext in folders) {
+    NSString *dir = [docs stringByAppendingPathComponent:folders[ext]];
+    extToDir[ext.UTF8String] = dir.UTF8String;
+  }
+
+  NSMutableArray<NSString *> *roms = [NSMutableArray array];
+  NSMutableArray<NSString *> *zipsWithoutRom = [NSMutableArray array];
+  NSDirectoryEnumerator<NSString *> *en = [fm enumeratorAtPath:docs];
   for (NSString *rel in en) {
     NSString *top = [rel componentsSeparatedByString:@"/"].firstObject;
     if ([top isEqualToString:@"system"] || [top isEqualToString:@"saves"]) {
       [en skipDescendants];  // BIOS y saves no son ROMs
       continue;
     }
-    if (isRomExtension(rel.pathExtension)) {
-      [roms addObject:[docs stringByAppendingPathComponent:rel]];
+    NSString *ext = rel.pathExtension.lowercaseString;
+    NSString *full = [docs stringByAppendingPathComponent:rel];
+    if ([ext isEqualToString:@"zip"]) {
+      // Zip con ROM: se extrae a su carpeta de consola y se lista la ROM extraída
+      std::string extracted = romzip::extractRom(full.UTF8String, extToDir);
+      if (!extracted.empty()) {
+        [roms addObject:[NSString stringWithUTF8String:extracted.c_str()]];
+      } else {
+        [zipsWithoutRom addObject:full];  // arcade u otro zip sin ROM conocida
+      }
+      continue;
+    }
+    if (isRomExtension(ext)) {
+      [roms addObject:full];
     }
   }
-  return roms;
+  // Zips sin ROM conocida: se listan como arcade (no hay núcleo, la UI lo indica)
+  [roms addObjectsFromArray:zipsWithoutRom];
+  // Un ROM extraído puede aparecer dos veces en la misma pasada: deduplicar
+  return [[NSOrderedSet orderedSetWithArray:roms] array];
 }
 
 @end

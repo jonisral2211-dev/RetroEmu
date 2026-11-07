@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
   s.source_files        = 'ios/**/*.{h,hpp,m,mm,c,cpp}'
   s.vendored_frameworks = 'ios/Frameworks/*.framework'
   s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController'
-  s.libraries           = 'c++'
+  s.libraries           = 'c++', 'z'
   s.requires_arc        = true
 
   s.pod_target_xcconfig = {
