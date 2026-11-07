@@ -30,6 +30,9 @@ static NSString *const kShaderSource =
     @"  return tex.sample(s, v.uv);\n"
     @"}\n";
 
+@interface LibretroView : RCTViewComponentView
+@end
+
 @interface LibretroView () <MTKViewDelegate>
 @end
 
