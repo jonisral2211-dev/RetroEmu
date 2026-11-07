@@ -93,6 +93,10 @@ RCT_EXPORT_MODULE(Libretro)
   host::setButtons((uint16_t)mask);
 }
 
+- (void)setAnalog:(double)x y:(double)y {
+  host::setAnalog(x, y);
+}
+
 - (NSNumber *)saveState:(double)slot {
   return @(host::saveState((int)slot));
 }

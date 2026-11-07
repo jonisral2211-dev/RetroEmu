@@ -2,20 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import { coreForFile } from '../emulator/cores';
-import { VirtualPad } from '../ui/VirtualPad';
+import { layoutFor } from '../input/layouts';
+import { VirtualPad } from '../input/VirtualPad';
 
 type Props = { romPath: string; onExit: () => void };
 
 const SLOTS = [0, 1, 2];
 
 export default function PlayerScreen({ romPath, onExit }: Props) {
+  const core = coreForFile(romPath);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [genesisSix, setGenesisSix] = useState(false);
 
   useEffect(() => {
-    const core = coreForFile(romPath);
     if (!core) {
       setError('Formato de ROM no soportado');
       return;
@@ -33,7 +35,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       Libretro.stop();
       Libretro.unloadGame();
     };
-  }, [romPath]);
+  }, [romPath, core]);
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -46,7 +48,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     Libretro.setPaused(next);
   };
 
-  if (error || !ready) {
+  if (error || !ready || !core) {
     return (
       <View style={styles.center}>
         <Text style={styles.text}>{error ?? 'Cargando…'}</Text>
@@ -57,6 +59,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     );
   }
 
+  const layout = layoutFor(core, genesisSix);
+
   return (
     <View style={styles.root}>
       <View style={styles.hud}>
@@ -66,6 +70,11 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         <Pressable onPress={togglePause} style={styles.button}>
           <Text style={styles.buttonText}>{paused ? 'Reanudar' : 'Pausa'}</Text>
         </Pressable>
+        {core === 'genesis' ? (
+          <Pressable onPress={() => setGenesisSix((v) => !v)} style={styles.button}>
+            <Text style={styles.buttonText}>{genesisSix ? '6 btn' : '3 btn'}</Text>
+          </Pressable>
+        ) : null}
         {SLOTS.map((slot) => (
           <View key={slot} style={styles.slot}>
             <Pressable
@@ -90,7 +99,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
 
       <LibretroView style={styles.screen} filter={false} />
 
-      <VirtualPad onChange={(mask) => Libretro.setButtons(mask)} />
+      {/* key: al cambiar de layout se remonta el pad y se reinician sus gestos */}
+      <VirtualPad key={layout.name} layout={layout} />
     </View>
   );
 }

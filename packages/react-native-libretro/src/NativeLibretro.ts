@@ -13,6 +13,8 @@ export interface Spec extends TurboModule {
   reset(): void;
   /** Máscara de botones: bit i = RETRO_DEVICE_ID_JOYPAD_i. Síncrono para baja latencia. */
   setButtons(mask: number): void;
+  /** Stick analógico izquierdo, x/y en [-1, 1] (y negativo = arriba). Se escala a int16 en nativo. */
+  setAnalog(x: number, y: number): void;
   saveState(slot: number): boolean;
   loadState(slot: number): boolean;
   /** Rutas absolutas de ROMs encontradas en Documents. */

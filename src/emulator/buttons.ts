@@ -1,4 +1,4 @@
-// Bit i = RETRO_DEVICE_ID_JOYPAD_i de libretro.h
+// Bit i = RETRO_DEVICE_ID_JOYPAD_i de libretro.h (los 16 ids del joypad)
 export const Btn = {
   B: 1 << 0,
   Y: 1 << 1,
@@ -12,4 +12,8 @@ export const Btn = {
   X: 1 << 9,
   L: 1 << 10,
   R: 1 << 11,
+  L2: 1 << 12,
+  R2: 1 << 13,
+  L3: 1 << 14,
+  R3: 1 << 15,
 } as const;

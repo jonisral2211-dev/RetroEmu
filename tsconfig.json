@@ -1,4 +1,7 @@
 {
   "extends": "@react-native/typescript-config/tsconfig.json",
+  "compilerOptions": {
+    "types": []
+  },
   "include": ["index.js", "src", "packages/react-native-libretro/src"]
 }

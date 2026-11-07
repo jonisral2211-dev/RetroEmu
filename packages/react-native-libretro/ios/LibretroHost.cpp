@@ -57,6 +57,8 @@ std::thread g_thread;
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_paused{false};
 std::atomic<uint16_t> g_buttons{0};
+std::atomic<int16_t> g_axisX{0};  // stick izquierdo (RETRO_DEVICE_ANALOG)
+std::atomic<int16_t> g_axisY{0};
 FrameBuffer g_frame;
 AudioOutput g_audio;
 
@@ -162,7 +164,13 @@ static size_t onAudioBatch(const int16_t *data, size_t frames) {
 static void onInputPoll(void) {}
 
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
-  if (port != 0 || index != 0 || device != RETRO_DEVICE_JOYPAD || id > 15) return 0;
+  if (port != 0) return 0;
+  if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+    if (id == RETRO_DEVICE_ID_ANALOG_X) return g_axisX.load();
+    if (id == RETRO_DEVICE_ID_ANALOG_Y) return g_axisY.load();
+    return 0;
+  }
+  if (device != RETRO_DEVICE_JOYPAD || index != 0 || id > 15) return 0;
   return static_cast<int16_t>((g_buttons.load() >> id) & 1);
 }
 
@@ -364,6 +372,15 @@ void stop() {
 void setPaused(bool paused) { g_paused = paused; }
 
 void setButtons(uint16_t mask) { g_buttons = mask; }
+
+void setAnalog(double x, double y) {
+  auto toAxis = [](double v) {
+    v = std::max(-1.0, std::min(1.0, v));
+    return static_cast<int16_t>(v * 32767.0);
+  };
+  g_axisX = toAxis(x);
+  g_axisY = toAxis(y);
+}
 
 void reset() {
   std::lock_guard<std::mutex> lock(g_coreMutex);
