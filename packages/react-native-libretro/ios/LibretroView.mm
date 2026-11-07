@@ -166,6 +166,6 @@ static NSString *const kShaderSource =
 @end
 
 // Fabric registra el componente llamando a esta función (generada por codegen/autolinking).
-Class<RCTComponentViewProtocol> LibretroViewCls(void) {
+extern "C" Class<RCTComponentViewProtocol> LibretroViewCls(void) {
   return LibretroView.class;
 }
