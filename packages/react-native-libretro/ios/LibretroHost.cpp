@@ -87,7 +87,8 @@ void coreLog(enum retro_log_level level, const char *fmt, ...) {
   std::vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   std::fprintf(stderr, "[core %d] %s", static_cast<int>(level), buf);
-  if (level <= RETRO_LOG_WARN && g_coreLog.size() < 1024) {
+  // RETRO_LOG_ERROR (3) > RETRO_LOG_WARN (2): se guardan avisos y errores del core
+  if (level >= RETRO_LOG_WARN && g_coreLog.size() < 1024) {
     g_coreLog += buf;
   }
 }

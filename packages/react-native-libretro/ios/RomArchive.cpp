@@ -158,4 +158,43 @@ std::string extractRom(const std::string &zipPath, const Folders &folders) {
   return "";
 }
 
+std::string foreignEntry(const std::string &zipPath) {
+  // Consolas o formatos que ningún core de RetroEmu puede ejecutar (p. ej. juegos de Nintendo DS)
+  static const char *const kForeign[] = {"nds", "3ds", "cia", "iso", "cso", "chd", "pbp", "gcm",
+                                         "rvz", "wbfs", "nsp", "xci", "nes", "sfc", "smc", "gb",
+                                         "gbc", "gg", "sms", "pce", "a26", "a78", "lnx", "ngp",
+                                         "ws", "wsc", "vb"};
+  std::vector<uint8_t> zip;
+  if (!readAll(zipPath, zip) || zip.size() < 22) return "";
+
+  size_t eocd = std::string::npos;
+  const size_t minPos = zip.size() > 22 + 0xFFFF ? zip.size() - 22 - 0xFFFF : 0;
+  for (size_t p = zip.size() - 22 + 1; p-- > minPos;) {
+    if (u32(zip, p) == 0x06054b50) {
+      eocd = p;
+      break;
+    }
+  }
+  if (eocd == std::string::npos) return "";
+
+  const uint16_t count = u16(zip, eocd + 10);
+  size_t p = u32(zip, eocd + 16);
+  for (uint16_t i = 0; i < count; ++i) {
+    if (p + 46 > zip.size() || u32(zip, p) != 0x02014b50) return "";
+    const uint16_t nameLen = u16(zip, p + 28);
+    const uint16_t extraLen = u16(zip, p + 30);
+    const uint16_t commentLen = u16(zip, p + 32);
+    if (p + 46 + nameLen > zip.size()) return "";
+    const std::string name(zip.begin() + p + 46, zip.begin() + p + 46 + nameLen);
+    p += 46 + nameLen + extraLen + commentLen;
+
+    if (name.empty() || name.back() == '/') continue;
+    const std::string ext = lowerExt(name);
+    for (const char *f : kForeign) {
+      if (ext == f) return name;
+    }
+  }
+  return "";
+}
+
 }  // namespace romzip

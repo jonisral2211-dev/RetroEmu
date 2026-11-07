@@ -21,4 +21,10 @@ struct Folders {
  */
 std::string extractRom(const std::string &zipPath, const Folders &folders);
 
+/**
+ * Devuelve el nombre de la primera entrada con formato de otra consola (p. ej. .nds),
+ * o cadena vacía si no hay ninguna. Un zip así no debe enviarse a MAME.
+ */
+std::string foreignEntry(const std::string &zipPath);
+
 }  // namespace romzip

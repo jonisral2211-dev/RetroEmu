@@ -252,7 +252,9 @@ RCT_EXPORT_MODULE(Libretro)
       if (!extracted.empty()) {
         [roms addObject:[NSString stringWithUTF8String:extracted.c_str()]];
       } else {
+        if (romzip::foreignEntry(full.UTF8String).empty()) {
         [arcade addObject:full];  // el core de arcade lo valida al cargar
+      }  // zips de otra consola (p. ej. .nds) no se envían a MAME
       }
       continue;
     }
@@ -296,6 +298,12 @@ RCT_EXPORT_MODULE(Libretro)
       [fm removeItemAtPath:src error:nil];
       return [NSString stringWithUTF8String:extracted.c_str()];
     }
+    std::string foreign = romzip::foreignEntry(src.UTF8String);
+    if (!foreign.empty()) {
+      _romError = [NSString stringWithFormat:@"\"%@\" contiene \"%s\", de una consola no soportada por RetroEmu. No se envía a MAME.",
+                                             name, foreign.c_str()];
+      return @"";
+    }
     // Zip sin ROM reconocible: candidato arcade, se guarda en mame/
     NSString *dest = [[docs stringByAppendingPathComponent:@"mame"] stringByAppendingPathComponent:name];
     NSError *error = nil;
@@ -327,7 +335,9 @@ RCT_EXPORT_MODULE(Libretro)
 // Consola a la que pertenece una ROM: 'gba' | 'n64' | 'sega' | 'mame' | '' (no verificada)
 - (NSString *)consoleOf:(NSString *)romPath {
   NSString *path = normalizeRomPath(romPath);
-  if ([path.pathExtension.lowercaseString isEqualToString:@"zip"]) return @"mame";
+  if ([path.pathExtension.lowercaseString isEqualToString:@"zip"]) {
+    return romzip::foreignEntry(path.UTF8String).empty() ? @"mame" : @"";
+  }
   return consoleForKind(sniffFile(path)) ?: @"";
 }
 
