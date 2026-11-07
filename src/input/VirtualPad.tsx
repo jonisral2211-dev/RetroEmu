@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { GestureTouchEvent, GestureType } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
@@ -77,9 +77,9 @@ function makeClusterGesture(
     });
 }
 
-type PadProps = { layout: PadLayout };
+type PadProps = { layout: PadLayout; style?: StyleProp<ViewStyle>; opacity?: number };
 
-export function VirtualPad({ layout }: PadProps) {
+export function VirtualPad({ layout, style, opacity = 1 }: PadProps) {
   // Estado de los controles en el runtime de UI: máscara por cluster y eje analógico
   const digital = useSharedValue<Record<string, number>>({});
   const axis = useSharedValue<Axis>({ x: 0, y: 0 });
@@ -124,7 +124,7 @@ export function VirtualPad({ layout }: PadProps) {
   );
 
   return (
-    <View style={styles.pad}>
+    <View style={[styles.pad, style, { opacity }]} pointerEvents="box-none">
       {layout.clusters.map((c, i) => (
         <ClusterView key={c.id} cluster={c} gesture={gestures[i]} sizes={sizes} />
       ))}
@@ -237,7 +237,7 @@ function ZoneView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
 }
 
 const styles = StyleSheet.create({
-  pad: { position: 'relative', width: '100%', height: '42%' },
+  pad: { position: 'relative', width: '100%' },
   cluster: { position: 'absolute' },
   key: {
     position: 'absolute',
