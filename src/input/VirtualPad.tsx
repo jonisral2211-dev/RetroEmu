@@ -1,172 +1,128 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { LayoutChangeEvent, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import type { GestureTouchEvent, GestureType } from 'react-native-gesture-handler';
-import { runOnJS, useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
-import type { SharedValue } from 'react-native-reanimated';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  GestureResponderEvent,
+  LayoutChangeEvent,
+  StyleProp,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
 import { Libretro } from 'react-native-libretro';
 import { evaluateZones, Pt } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 
 type Size = { w: number; h: number };
-type Axis = { x: number; y: number };
+type Touch = { identifier: number; locationX: number; locationY: number };
 
-// Llamadas a nativo: se ejecutan en el hilo JS solo cuando cambia el estado (runOnJS)
-const sendButtons = (mask: number) => Libretro.setButtons(mask);
-const sendAxis = (x: number, y: number) => Libretro.setAnalog(x, y);
+// Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
+// en cada evento se recalcula el estado completo a partir de todos los dedos activos.
+// Es estado puro (sin acumular), así un evento perdido no deja botones pegados.
+export function VirtualPad({
+  layout,
+  style,
+  opacity = 1,
+}: {
+  layout: PadLayout;
+  style?: StyleProp<ViewStyle>;
+  opacity?: number;
+}) {
+  const [size, setSize] = useState<Size>({ w: 0, h: 0 });
+  const sizeRef = useRef<Size>({ w: 0, h: 0 });
+  const mask = useRef(0);
+  const axis = useRef({ x: 0, y: 0 });
 
-// Un gesto por cluster. RNGH asigna cada toque al cluster donde empezó, así que un dedo
-// puede mantener una dirección del D-Pad mientras otro dedo pulsa A y B a la vez.
-function makeClusterGesture(
-  c: Cluster,
-  digital: SharedValue<Record<string, number>>,
-  axis: SharedValue<Axis>,
-  sizes: SharedValue<Record<string, Size>>,
-): GestureType {
-  const id = c.id;
-  const zones: Zone[] = c.zones;
-  const hasStick = zones.some((z) => z.kind === 'stick');
+  const compute = (touches: Touch[]) => {
+    const W = sizeRef.current.w;
+    const H = sizeRef.current.h;
+    if (W <= 0 || H <= 0) return;
 
-  // mode: 0 = down/move, 1 = up (excluye los toques que se levantan), 2 = cancelado
-  const handle = (e: GestureTouchEvent, mode: number) => {
-    'worklet';
-    const size = sizes.value[id];
-    if (!size || size.w <= 0 || size.h <= 0) return;
-
-    const pts: Pt[] = [];
-    if (mode !== 2) {
-      for (let i = 0; i < e.allTouches.length; i++) {
-        const t = e.allTouches[i];
-        let lifting = false;
-        if (mode === 1) {
-          for (let k = 0; k < e.changedTouches.length; k++) {
-            if (e.changedTouches[k].id === t.id) lifting = true;
-          }
-        }
-        if (!lifting) pts.push({ x: t.x, y: t.y });
+    let bits = 0;
+    let ax = 0;
+    let ay = 0;
+    for (const c of layout.clusters) {
+      const cx = c.x * W;
+      const cy = c.y * H;
+      const cw = c.w * W;
+      const ch = c.h * H;
+      // Puntos dentro de este cluster, en px relativos a él
+      const pts: Pt[] = [];
+      for (const t of touches) {
+        const px = t.locationX - cx;
+        const py = t.locationY - cy;
+        if (px >= 0 && px <= cw && py >= 0 && py <= ch) pts.push({ x: px, y: py });
+      }
+      const r = evaluateZones(c.zones, pts, cw, ch);
+      bits |= r.bits;
+      if (c.zones.some((z: Zone) => z.kind === 'stick')) {
+        ax = r.ax;
+        ay = r.ay;
       }
     }
 
-    const r = evaluateZones(zones, pts, size.w, size.h);
-    if ((digital.value[id] ?? 0) !== r.bits) {
-      const next = { ...digital.value };
-      next[id] = r.bits;
-      digital.value = next;
+    if (bits !== mask.current) {
+      mask.current = bits;
+      Libretro.setButtons(bits);
     }
-    if (hasStick && (axis.value.x !== r.ax || axis.value.y !== r.ay)) {
-      axis.value = { x: r.ax, y: r.ay };
+    if (ax !== axis.current.x || ay !== axis.current.y) {
+      axis.current = { x: ax, y: ay };
+      Libretro.setAnalog(ax, ay);
     }
   };
 
-  return Gesture.Manual()
-    .onTouchesDown((e) => {
-      'worklet';
-      handle(e, 0);
-    })
-    .onTouchesMove((e) => {
-      'worklet';
-      handle(e, 0);
-    })
-    .onTouchesUp((e) => {
-      'worklet';
-      handle(e, 1);
-    })
-    .onTouchesCancelled((e) => {
-      'worklet';
-      handle(e, 2);
-    });
-}
-
-type PadProps = { layout: PadLayout; style?: StyleProp<ViewStyle>; opacity?: number };
-
-export function VirtualPad({ layout, style, opacity = 1 }: PadProps) {
-  // Estado de los controles en el runtime de UI: máscara por cluster y eje analógico
-  const digital = useSharedValue<Record<string, number>>({});
-  const axis = useSharedValue<Axis>({ x: 0, y: 0 });
-  const sizes = useSharedValue<Record<string, Size>>({});
-
-  const gestures = useMemo(() => {
-    const list = layout.clusters.map((c) => makeClusterGesture(c, digital, axis, sizes));
-    // Todos los gestos son simultáneos entre sí: ninguno cancela a los demás
-    list.forEach((g, i) => {
-      g.simultaneousWithExternalGesture(...list.filter((_, j) => j !== i));
-    });
-    return list;
-  }, [layout, digital, axis, sizes]);
-
-  // OR de todas las partes = máscara final de Libretro (bit i = RETRO_DEVICE_ID_JOYPAD_i)
-  useAnimatedReaction(
-    () => {
-      const keys = Object.keys(digital.value);
-      let mask = 0;
-      for (let i = 0; i < keys.length; i++) mask |= digital.value[keys[i]];
-      return mask;
-    },
-    (mask, prev) => {
-      if (mask !== prev) runOnJS(sendButtons)(mask);
-    },
-  );
-
-  useAnimatedReaction(
-    () => axis.value,
-    (a, prev) => {
-      if (!prev || a.x !== prev.x || a.y !== prev.y) runOnJS(sendAxis)(a.x, a.y);
-    },
-  );
+  // Al levantar dedos, excluir los que terminan en este evento
+  const remaining = (e: GestureResponderEvent): Touch[] => {
+    const ended = new Set((e.nativeEvent.changedTouches as Touch[]).map((t) => t.identifier));
+    return (e.nativeEvent.touches as Touch[]).filter((t) => !ended.has(t.identifier));
+  };
 
   // Al desmontar (cambio de consola o salida) soltamos todo
   useEffect(
     () => () => {
-      sendButtons(0);
-      sendAxis(0, 0);
+      Libretro.setButtons(0);
+      Libretro.setAnalog(0, 0);
     },
     [],
   );
 
+  const onLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    sizeRef.current = { w: width, h: height };
+    setSize({ w: width, h: height });
+  };
+
   return (
-    <View style={[styles.pad, style, { opacity }]} pointerEvents="box-none">
-      {layout.clusters.map((c, i) => (
-        <ClusterView key={c.id} cluster={c} gesture={gestures[i]} sizes={sizes} />
+    <View
+      onLayout={onLayout}
+      onTouchStart={(e) => compute(e.nativeEvent.touches as Touch[])}
+      onTouchMove={(e) => compute(e.nativeEvent.touches as Touch[])}
+      onTouchEnd={(e) => compute(remaining(e))}
+      onTouchCancel={(e) => compute(remaining(e))}
+      style={[styles.pad, style, { opacity }]}>
+      {layout.clusters.map((c) => (
+        <ClusterView key={c.id} cluster={c} size={size} />
       ))}
     </View>
   );
 }
 
-function ClusterView({
-  cluster,
-  gesture,
-  sizes,
-}: {
-  cluster: Cluster;
-  gesture: GestureType;
-  sizes: SharedValue<Record<string, Size>>;
-}) {
-  const [size, setSize] = useState<Size>({ w: 0, h: 0 });
-
-  const onLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setSize({ w: width, h: height });
-    sizes.value = { ...sizes.value, [cluster.id]: { w: width, h: height } };
-  };
-
+function ClusterView({ cluster, size }: { cluster: Cluster; size: Size }) {
   return (
-    <GestureDetector gesture={gesture}>
-      <View
-        onLayout={onLayout}
-        style={[
-          styles.cluster,
-          {
-            left: `${cluster.x * 100}%`,
-            top: `${cluster.y * 100}%`,
-            width: `${cluster.w * 100}%`,
-            height: `${cluster.h * 100}%`,
-          },
-        ]}>
-        {cluster.zones.map((z, i) => (
-          <ZoneView key={i} zone={z} w={size.w} h={size.h} />
-        ))}
-      </View>
-    </GestureDetector>
+    <View
+      pointerEvents="none"
+      style={[
+        styles.cluster,
+        {
+          left: `${cluster.x * 100}%`,
+          top: `${cluster.y * 100}%`,
+          width: `${cluster.w * 100}%`,
+          height: `${cluster.h * 100}%`,
+        },
+      ]}>
+      {cluster.zones.map((z, i) => (
+        <ZoneView key={i} zone={z} w={size.w * cluster.w} h={size.h * cluster.h} />
+      ))}
+    </View>
   );
 }
 

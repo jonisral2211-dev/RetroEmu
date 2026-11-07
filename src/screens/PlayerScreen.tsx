@@ -123,10 +123,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     return (
       <View style={styles.root}>
         <LibretroView style={StyleSheet.absoluteFill} filter={false} />
-        <View style={styles.overlayTop} pointerEvents="box-none">
-          {hud}
-          {notices}
-        </View>
+        {/* El pad va antes que el HUD: así los botones de arriba reciben sus propios toques */}
         {touchVisible ? (
           <VirtualPad
             key={layout.name}
@@ -135,6 +132,10 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
             opacity={0.45}
           />
         ) : null}
+        <View style={styles.overlayTop} pointerEvents="box-none">
+          {hud}
+          {notices}
+        </View>
       </View>
     );
   }
