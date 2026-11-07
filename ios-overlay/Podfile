@@ -20,5 +20,11 @@ target 'RetroEmu' do
 
   post_install do |installer|
     react_native_post_install(installer, config[:reactNativePath], :mac_catalyst_enabled => false)
+
+    # fmt 9 (dentro de RN 0.76) falla con consteval en C++20 (Xcode 26): compilar fmt en C++17
+    installer.pods_project.targets.each do |target|
+      next unless target.name == 'fmt'
+      target.build_configurations.each { |c| c.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17' }
+    end
   end
 end
