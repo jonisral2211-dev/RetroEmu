@@ -1,0 +1,11 @@
+node_modules/
+ios/
+android/
+build/
+third_party/
+*.ipa
+.DS_Store
+
+# Generados por scripts/build-cores-ios.sh y scripts/fetch-libretro-header.sh
+packages/react-native-libretro/ios/Frameworks/
+packages/react-native-libretro/ios/include/libretro.h

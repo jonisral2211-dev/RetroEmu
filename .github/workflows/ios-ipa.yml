@@ -1,0 +1,61 @@
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Ensure CMake (usado si algún core usa build=cmake)
+        run: command -v cmake >/dev/null || brew install cmake
+
+      - name: Install JS dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate iOS project from React Native template
+        run: bash scripts/generate-ios-project.sh
+
+      - name: Build Libretro cores (iOS arm64 frameworks)
+        run: bash scripts/build-cores-ios.sh
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild \
+            -workspace ios/RetroEmu.xcworkspace \
+            -scheme RetroEmu \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned .ipa
+        run: bash scripts/package-ipa.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RetroEmu-unsigned-ipa
+          path: RetroEmu-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

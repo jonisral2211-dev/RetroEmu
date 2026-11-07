@@ -1,0 +1,14 @@
+{
+  "name": "react-native-libretro",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "files": ["src", "ios", "react-native-libretro.podspec"],
+  "codegenConfig": {
+    "name": "RNLibretroSpec",
+    "type": "all",
+    "jsSrcsDir": "src"
+  }
+}

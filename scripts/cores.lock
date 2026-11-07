@@ -1,0 +1,10 @@
+# Cores de Libretro para iOS. Formato: name|repo|ref|build|target|args|enabled
+#   name    = nombre del framework y del binario que produce el core
+#   ref     = rama, tag o commit. Fijar a un commit concreto antes de publicar.
+#   build   = make | cmake
+#   target  = target de make/cmake (vacío = por defecto)
+#   args    = argumentos extra (ej. platform=ios para make, -D... para cmake)
+#   enabled = true | false
+mgba_libretro|https://github.com/libretro/mgba.git|master|make||platform=ios|true
+genesis_plus_gx_libretro|https://github.com/libretro/Genesis-Plus-GX.git|master|make||platform=ios|false
+mupen64plus_next_libretro|https://github.com/libretro/mupen64plus-libretro-nx.git|master|make||platform=ios|false
