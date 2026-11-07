@@ -1,0 +1,121 @@
+#import <AVFoundation/AVFoundation.h>
+#import <Foundation/Foundation.h>
+#import <React/RCTBridgeModule.h>
+#import <ReactCommon/RCTTurboModule.h>
+#import <RNLibretroSpec/RNLibretroSpec.h>
+
+#include <memory>
+
+#include "LibretroHost.hpp"
+
+static NSString *documentsDirectory(void) {
+  return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+static BOOL isRomExtension(NSString *ext) {
+  static NSSet<NSString *> *exts;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    exts = [NSSet setWithArray:@[ @"gba", @"gb", @"gbc", @"md", @"gen", @"smd",
+                                  @"bin", @"z64", @"n64", @"v64" ]];
+  });
+  return [exts containsObject:ext.lowercaseString];
+}
+
+@interface Libretro : NSObject <RCTBridgeModule, NativeLibretroSpec>
+@end
+
+@implementation Libretro
+
+RCT_EXPORT_MODULE(Libretro)
+
+- (instancetype)init {
+  if (self = [super init]) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *docs = documentsDirectory();
+    NSString *system = [docs stringByAppendingPathComponent:@"system"];
+    NSString *saves = [docs stringByAppendingPathComponent:@"saves"];
+    [fm createDirectoryAtPath:system withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:nil];
+    host::configure(system.UTF8String, saves.UTF8String);
+  }
+  return self;
+}
+
+- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
+    (const facebook::react::ObjCTurboModule::InitParams &)params {
+  return std::make_shared<facebook::react::NativeLibretroSpecJSI>(params);
+}
+
+- (NSNumber *)loadCore:(NSString *)coreId {
+  NSDictionary<NSString *, NSString *> *frameworks = @{
+    @"mgba" : @"mgba_libretro",
+    @"genesis" : @"genesis_plus_gx_libretro",
+    @"mupen64" : @"mupen64plus_next_libretro",
+  };
+  NSString *name = frameworks[coreId];
+  if (!name) return @NO;
+  NSString *path = [NSString stringWithFormat:@"%@/%@.framework/%@",
+                                              NSBundle.mainBundle.privateFrameworksPath, name, name];
+  return @(host::loadCore(path.UTF8String));
+}
+
+- (NSNumber *)loadGame:(NSString *)romPath {
+  return @(host::loadGame(romPath.UTF8String));
+}
+
+- (void)unloadGame {
+  host::unloadGame();
+}
+
+- (void)start {
+  // .playback ignora el interruptor de silencio, como en cualquier juego
+  NSError *error = nil;
+  AVAudioSession *session = AVAudioSession.sharedInstance;
+  [session setCategory:AVAudioSessionCategoryPlayback error:&error];
+  [session setActive:YES error:&error];
+  host::start();
+}
+
+- (void)stop {
+  host::stop();
+}
+
+- (void)setPaused:(BOOL)paused {
+  host::setPaused(paused);
+}
+
+- (void)reset {
+  host::reset();
+}
+
+- (void)setButtons:(double)mask {
+  host::setButtons((uint16_t)mask);
+}
+
+- (NSNumber *)saveState:(double)slot {
+  return @(host::saveState((int)slot));
+}
+
+- (NSNumber *)loadState:(double)slot {
+  return @(host::loadState((int)slot));
+}
+
+- (NSArray<NSString *> *)listRoms {
+  NSMutableArray<NSString *> *roms = [NSMutableArray array];
+  NSString *docs = documentsDirectory();
+  NSDirectoryEnumerator<NSString *> *en = [NSFileManager.defaultManager enumeratorAtPath:docs];
+  for (NSString *rel in en) {
+    NSString *top = [rel componentsSeparatedByString:@"/"].firstObject;
+    if ([top isEqualToString:@"system"] || [top isEqualToString:@"saves"]) {
+      [en skipDescendants];  // BIOS y saves no son ROMs
+      continue;
+    }
+    if (isRomExtension(rel.pathExtension)) {
+      [roms addObject:[docs stringByAppendingPathComponent:rel]];
+    }
+  }
+  return roms;
+}
+
+@end
