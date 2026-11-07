@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
-import { coreForFile } from '../emulator/cores';
+import { coreForConsole } from '../emulator/cores';
 import { layoutFor } from '../input/layouts';
 import { VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
@@ -11,7 +11,8 @@ type Props = { romPath: string; onExit: () => void };
 const SLOTS = [0, 1, 2];
 
 export default function PlayerScreen({ romPath, onExit }: Props) {
-  const core = coreForFile(romPath);
+  // Consola por contenido verificado (nativo), no por extensión
+  const core = useMemo(() => coreForConsole(Libretro.consoleOf(romPath)), [romPath]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -27,7 +28,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
 
   useEffect(() => {
     if (!core) {
-      setError('Formato de ROM no soportado');
+      setError('Esta ROM no tiene una cabecera válida para ninguna consola soportada');
       return;
     }
     try {

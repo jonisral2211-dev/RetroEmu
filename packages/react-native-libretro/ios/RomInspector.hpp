@@ -1,0 +1,22 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+// Inspección de ROMs por contenido (cabecera), no solo por extensión.
+// Necesario porque .bin puede ser GBA o Mega Drive.
+namespace romcheck {
+
+enum class Kind { Unknown, GBA, N64, Sega };
+
+/** Extensiones de ROM reconocidas (en minúsculas, sin punto). */
+bool isRomExtension(const std::string &ext);
+
+/**
+ * Devuelve la consola de la ROM si su cabecera es válida para la extensión.
+ * Unknown = no verificada: no se muestra en la biblioteca.
+ */
+Kind sniff(const std::string &ext, const uint8_t *data, size_t size);
+
+}  // namespace romcheck

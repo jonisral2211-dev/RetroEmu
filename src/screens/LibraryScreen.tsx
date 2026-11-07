@@ -3,32 +3,17 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 import { Libretro } from 'react-native-libretro';
 import {
   Console,
-  CoreId,
-  coreForFile,
   CONSOLE_LABEL,
-  consoleForPath,
+  coreForConsole,
   ENABLED_CORES,
   SYSTEM_NAME,
 } from '../emulator/cores';
 
 type Props = { onPlay: (romPath: string) => void };
 type Filter = 'all' | Console;
+type Entry = { path: string; console: string };
 
 const FILTERS: Filter[] = ['all', 'gba', 'n64', 'sega', 'mame'];
-
-// Alerta descriptiva en vez de intentar cargar la ROM en blanco
-function explainUnavailable(path: string, core: CoreId | null) {
-  const name = path.split('/').pop() ?? path;
-  let message: string;
-  if (core === null) {
-    message = `El formato de "${name}" no tiene núcleo asociado. Extensiones soportadas: .gba/.gb/.gbc, .z64/.n64/.v64 y .md/.gen/.smd/.bin.`;
-  } else if (consoleForPath(path) === 'mame') {
-    message = `"${name}" es un juego de arcade. RetroEmu aún no incluye el núcleo MAME.`;
-  } else {
-    message = `El núcleo de ${SYSTEM_NAME[core]} no está incluido en esta compilación de RetroEmu.`;
-  }
-  Alert.alert('No se puede abrir este juego', message);
-}
 
 // Ruta relativa a Documents (lo que ve el usuario en la app Archivos)
 function relativeToDocuments(path: string): string {
@@ -36,14 +21,31 @@ function relativeToDocuments(path: string): string {
   return i >= 0 ? path.slice(i + '/Documents/'.length) : path.split('/').pop() ?? path;
 }
 
+// Alerta descriptiva en vez de intentar cargar la ROM en blanco
+function explainUnavailable(entry: Entry) {
+  const name = entry.path.split('/').pop() ?? entry.path;
+  const core = coreForConsole(entry.console);
+  let message: string;
+  if (core === null) {
+    message = `"${name}" no tiene una cabecera válida para ninguna consola soportada (GBA, N64 o Mega Drive). Revisa que el archivo esté completo.`;
+  } else if (!ENABLED_CORES.has(core)) {
+    message = `El núcleo de ${SYSTEM_NAME[core]} no está incluido en esta compilación de RetroEmu.`;
+  } else {
+    message = `No se puede abrir "${name}".`;
+  }
+  Alert.alert('No se puede abrir este juego', message);
+}
+
 export default function LibraryScreen({ onPlay }: Props) {
-  const [roms, setRoms] = useState<string[]>([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [error, setError] = useState<string | null>(null);
 
+  // Nativo verifica cada ROM por contenido; aquí solo se agrupan por consola
   const refresh = useCallback(() => {
     try {
-      setRoms(Libretro.listRoms());
+      const list = Libretro.listRoms();
+      setEntries(list.map((path) => ({ path, console: Libretro.consoleOf(path) })));
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -56,16 +58,18 @@ export default function LibraryScreen({ onPlay }: Props) {
 
   const counts = useMemo(() => {
     const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0 };
-    roms.forEach((p) => (c[consoleForPath(p)] += 1));
+    entries.forEach((e) => {
+      if (e.console in c) c[e.console as Console] += 1;
+    });
     return c;
-  }, [roms]);
+  }, [entries]);
 
   const visible = useMemo(
     () =>
-      roms
-        .filter((p) => filter === 'all' || consoleForPath(p) === filter)
-        .sort((a, b) => relativeToDocuments(a).localeCompare(relativeToDocuments(b))),
-    [roms, filter],
+      entries
+        .filter((e) => filter === 'all' || e.console === filter)
+        .sort((a, b) => relativeToDocuments(a.path).localeCompare(relativeToDocuments(b.path))),
+    [entries, filter],
   );
 
   return (
@@ -79,7 +83,8 @@ export default function LibraryScreen({ onPlay }: Props) {
 
       <View style={styles.filters}>
         {FILTERS.map((f) => {
-          const label = f === 'all' ? `Todos (${roms.length})` : `${CONSOLE_LABEL[f]} (${counts[f]})`;
+          const label =
+            f === 'all' ? `Todos (${entries.length})` : `${CONSOLE_LABEL[f]} (${counts[f]})`;
           const active = filter === f;
           return (
             <Pressable
@@ -96,27 +101,26 @@ export default function LibraryScreen({ onPlay }: Props) {
 
       <FlatList
         data={visible}
-        keyExtractor={(path) => path}
+        keyExtractor={(e) => e.path}
         ListEmptyComponent={
           <Text style={styles.hint}>
-            No hay juegos en esta categoría. Copia tus ROMs en la carpeta de su consola (gba, n64,
-            sega, mame) desde Archivos → En mi iPhone → RetroEmu, o déjalas en la raíz. Los .zip
-            se descomprimen solos. Luego pulsa Actualizar.
+            No hay juegos verificados en esta categoría. Copia tus ROMs en la app Archivos →
+            En mi iPhone → RetroEmu (en la raíz o en gba, n64, sega, mame) o en un .zip, y pulsa
+            Actualizar.
           </Text>
         }
         renderItem={({ item }) => {
-          const core = coreForFile(item);
+          const core = coreForConsole(item.console);
           const enabled = core !== null && ENABLED_CORES.has(core);
-          const name = item.split('/').pop() ?? item;
-          const subtitle =
-            core === null
-              ? `${CONSOLE_LABEL[consoleForPath(item)]} · sin núcleo para este formato`
-              : enabled
-                ? `${SYSTEM_NAME[core]} · ${relativeToDocuments(item)}`
-                : `${SYSTEM_NAME[core]} · núcleo no incluido en esta build`;
+          const name = item.path.split('/').pop() ?? item.path;
+          const subtitle = core
+            ? enabled
+              ? `${SYSTEM_NAME[core]} · ${relativeToDocuments(item.path)}`
+              : `${SYSTEM_NAME[core]} · núcleo no incluido en esta build`
+            : 'Sin consola verificada';
           return (
             <Pressable
-              onPress={() => (enabled ? onPlay(item) : explainUnavailable(item, core))}
+              onPress={() => (enabled ? onPlay(item.path) : explainUnavailable(item))}
               style={[styles.row, !enabled && styles.rowDisabled]}>
               <Text style={styles.rowTitle} numberOfLines={1}>
                 {name}

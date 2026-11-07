@@ -6,5 +6,6 @@
 #   args    = argumentos extra (ej. platform=ios para make, -D... para cmake)
 #   enabled = true | false
 mgba_libretro|https://github.com/libretro/mgba.git|master|cmake|mgba_libretro|-DBUILD_LIBRETRO=ON -DBUILD_SHARED=ON -DBUILD_STATIC=OFF -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DBUILD_HEADLESS=OFF -DUSE_FFMPEG=OFF -DUSE_EPOXY=OFF -DUSE_SQLITE3=OFF -DUSE_LIBZIP=OFF|true
-genesis_plus_gx_libretro|https://github.com/libretro/Genesis-Plus-GX.git|master|make||platform=ios|false
+genesis_plus_gx_libretro|https://github.com/libretro/Genesis-Plus-GX.git|master|make||-f Makefile.libretro platform=ios-arm64|true
 mupen64plus_next_libretro|https://github.com/libretro/mupen64plus-libretro-nx.git|master|make||platform=ios-arm64 CPPFLAGS=-Irnl-shim SYSTEM_ZLIB=1|true
+mame2003_plus_libretro|https://github.com/libretro/mame2003-plus-libretro.git|master|make||platform=ios-arm64 CPPFLAGS=-Irnl-shim|true

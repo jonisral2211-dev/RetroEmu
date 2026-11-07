@@ -13,6 +13,7 @@
 
 #include "LibretroHost.hpp"
 #include "RomArchive.hpp"
+#include "RomInspector.hpp"
 
 static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -47,23 +48,33 @@ static NSString *normalizeRomPath(NSString *raw) {
   return path;
 }
 
-// Extensión -> carpeta de consola (los zips se extraen a la carpeta de su ROM)
-static NSDictionary<NSString *, NSString *> *extensionFolders(void) {
-  return @{
-    @"gba" : @"gba", @"gb" : @"gba", @"gbc" : @"gba",
-    @"z64" : @"n64", @"n64" : @"n64", @"v64" : @"n64",
-    @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"bin" : @"sega",
-  };
+// Carpetas de consola dentro de Documents (destino de los zips extraídos)
+static romzip::Folders romFolders(NSString *docs) {
+  romzip::Folders f;
+  f.gba = [docs stringByAppendingPathComponent:@"gba"].UTF8String;
+  f.n64 = [docs stringByAppendingPathComponent:@"n64"].UTF8String;
+  f.sega = [docs stringByAppendingPathComponent:@"sega"].UTF8String;
+  return f;
 }
 
-static BOOL isRomExtension(NSString *ext) {
-  static NSSet<NSString *> *exts;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    exts = [NSSet setWithArray:@[ @"gba", @"gb", @"gbc", @"md", @"gen", @"smd",
-                                  @"bin", @"z64", @"n64", @"v64" ]];
-  });
-  return [exts containsObject:ext.lowercaseString];
+// Consola de un tipo de ROM verificado por contenido (nil = no verificada)
+static NSString *consoleForKind(romcheck::Kind kind) {
+  switch (kind) {
+    case romcheck::Kind::GBA: return @"gba";
+    case romcheck::Kind::N64: return @"n64";
+    case romcheck::Kind::Sega: return @"sega";
+    default: return nil;
+  }
+}
+
+// Lee solo la cabecera del archivo y la inspecciona según su extensión
+static romcheck::Kind sniffFile(NSString *path) {
+  NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
+  if (!handle) return romcheck::Kind::Unknown;
+  NSData *head = [handle readDataOfLength:0x200];
+  [handle closeFile];
+  std::string ext = path.pathExtension.lowercaseString.UTF8String;
+  return romcheck::sniff(ext, static_cast<const uint8_t *>(head.bytes), head.length);
 }
 
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
@@ -130,6 +141,7 @@ RCT_EXPORT_MODULE(Libretro)
     @"mgba" : @"mgba_libretro",
     @"genesis" : @"genesis_plus_gx_libretro",
     @"mupen64" : @"mupen64plus_next_libretro",
+    @"mame" : @"mame2003_plus_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
@@ -201,21 +213,16 @@ RCT_EXPORT_MODULE(Libretro)
   return @(host::loadState((int)slot));
 }
 
+// Solo ROMs verificadas por contenido. Los zips se inspeccionan por dentro y se extraen
+// a la carpeta de su consola; los zips sin ROM reconocible son candidatos arcade.
 - (NSArray<NSString *> *)listRoms {
   NSFileManager *fm = NSFileManager.defaultManager;
   NSString *docs = documentsDirectory();
   createConsoleFolders(docs);  // por si no existían al arrancar
-
-  // Mapa extensión -> carpeta absoluta para el extractor de zips
-  std::map<std::string, std::string> extToDir;
-  NSDictionary *folders = extensionFolders();
-  for (NSString *ext in folders) {
-    NSString *dir = [docs stringByAppendingPathComponent:folders[ext]];
-    extToDir[ext.UTF8String] = dir.UTF8String;
-  }
+  romzip::Folders folders = romFolders(docs);
 
   NSMutableArray<NSString *> *roms = [NSMutableArray array];
-  NSMutableArray<NSString *> *zipsWithoutRom = [NSMutableArray array];
+  NSMutableArray<NSString *> *arcade = [NSMutableArray array];
   NSDirectoryEnumerator<NSString *> *en = [fm enumeratorAtPath:docs];
   for (NSString *rel in en) {
     NSString *top = [rel componentsSeparatedByString:@"/"].firstObject;
@@ -226,23 +233,28 @@ RCT_EXPORT_MODULE(Libretro)
     NSString *ext = rel.pathExtension.lowercaseString;
     NSString *full = [docs stringByAppendingPathComponent:rel];
     if ([ext isEqualToString:@"zip"]) {
-      // Zip con ROM: se extrae a su carpeta de consola y se lista la ROM extraída
-      std::string extracted = romzip::extractRom(full.UTF8String, extToDir);
+      std::string extracted = romzip::extractRom(full.UTF8String, folders);
       if (!extracted.empty()) {
         [roms addObject:[NSString stringWithUTF8String:extracted.c_str()]];
       } else {
-        [zipsWithoutRom addObject:full];  // arcade u otro zip sin ROM conocida
+        [arcade addObject:full];  // el core de arcade lo valida al cargar
       }
       continue;
     }
-    if (isRomExtension(ext)) {
+    if (romcheck::isRomExtension(ext.UTF8String) && consoleForKind(sniffFile(full)) != nil) {
       [roms addObject:full];
     }
   }
-  // Zips sin ROM conocida: se listan como arcade (no hay núcleo, la UI lo indica)
-  [roms addObjectsFromArray:zipsWithoutRom];
+  [roms addObjectsFromArray:arcade];
   // Un ROM extraído puede aparecer dos veces en la misma pasada: deduplicar
   return [[NSOrderedSet orderedSetWithArray:roms] array];
+}
+
+// Consola a la que pertenece una ROM: 'gba' | 'n64' | 'sega' | 'mame' | '' (no verificada)
+- (NSString *)consoleOf:(NSString *)romPath {
+  NSString *path = normalizeRomPath(romPath);
+  if ([path.pathExtension.lowercaseString isEqualToString:@"zip"]) return @"mame";
+  return consoleForKind(sniffFile(path)) ?: @"";
 }
 
 @end

@@ -149,5 +149,8 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean): PadLayout {
       return genesisSixButton ? GENESIS6_LAYOUT : GENESIS3_LAYOUT;
     case 'mupen64':
       return N64_LAYOUT;
+    case 'mame':
+      // Arcade: D-Pad, dos botones y Start/Select (layout de GBA)
+      return GBA_LAYOUT;
   }
 }

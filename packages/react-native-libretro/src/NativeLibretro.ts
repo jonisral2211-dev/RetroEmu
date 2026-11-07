@@ -19,6 +19,8 @@ export interface Spec extends TurboModule {
   loadState(slot: number): boolean;
   /** Rutas absolutas de ROMs encontradas en Documents. */
   listRoms(): string[];
+  /** Consola verificada por contenido: 'gba' | 'n64' | 'sega' | 'mame', o '' si no es válida. */
+  consoleOf(romPath: string): string;
   /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
   lastError(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */

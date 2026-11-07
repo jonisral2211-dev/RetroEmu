@@ -1,19 +1,24 @@
 #pragma once
 
-#include <map>
 #include <string>
 
-// Extracción de ROMs desde .zip (lectura del directorio central + zlib raw inflate).
+// Extracción de ROMs desde .zip: lectura del directorio central + zlib raw inflate.
 // Soporta entradas 'stored' y 'deflate'. No soporta Zip64 ni cifrado.
 namespace romzip {
 
+// Carpetas de destino por consola (rutas absolutas dentro de Documents)
+struct Folders {
+  std::string gba;
+  std::string n64;
+  std::string sega;
+};
+
 /**
- * Busca en `zipPath` la primera entrada cuya extensión esté en `extToDir`
- * (p. ej. "gba" -> "/.../gba") y la extrae en esa carpeta con su nombre base.
- * Si el archivo ya existe no vuelve a extraerlo.
- * Devuelve la ruta de la ROM, o cadena vacía si el zip no contiene ninguna ROM conocida.
+ * Recorre las entradas del zip con extensión de ROM, las inspecciona por contenido
+ * (romcheck::sniff) y extrae la primera ROM verificada a la carpeta de su consola.
+ * Si el archivo ya existe en alguna carpeta de consola no vuelve a extraerlo.
+ * Devuelve la ruta de la ROM, o cadena vacía si el zip no contiene ninguna ROM verificada.
  */
-std::string extractRom(const std::string &zipPath,
-                       const std::map<std::string, std::string> &extToDir);
+std::string extractRom(const std::string &zipPath, const Folders &folders);
 
 }  // namespace romzip
