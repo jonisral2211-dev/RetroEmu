@@ -61,6 +61,15 @@ build_core() {
 
   case "$build" in
     make)
+      # zlib (y libpng) integrados: si TARGET_OS_MAC está definido usan macros de Mac clásico
+      # (fdopen -> NULL) que rompen el SDK de iOS. Un header forzado define fdopen como macro
+      # de sí mismo, así que su '#ifndef fdopen' queda sin efecto.
+      cat > "$dir/rnl-shim/rnl.h" <<'RNL'
+#define fdopen(fd, mode) fdopen(fd, mode)
+RNL
+      export CFLAGS="-include $dir/rnl-shim/rnl.h"
+      export CPPFLAGS="-include $dir/rnl-shim/rnl.h"
+      export CXXFLAGS="-include $dir/rnl-shim/rnl.h"
       # shellcheck disable=SC2086
       make -C "$dir" -j"$JOBS" $target $args \
         CC="$CC_IOS $CFLAGS_IOS" CXX="$CXX_IOS $CFLAGS_IOS" AR="$AR_IOS"
