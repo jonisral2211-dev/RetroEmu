@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Libretro } from 'react-native-libretro';
+import { onRomImported } from '../downloads/DownloadManager';
 import {
   Console,
   CONSOLE_LABEL,
@@ -55,6 +56,9 @@ export default function LibraryScreen({ onPlay }: Props) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Una descarga terminada se añade a la biblioteca sin reiniciar la app
+  useEffect(() => onRomImported(() => refresh()), [refresh]);
 
   const counts = useMemo(() => {
     const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0 };

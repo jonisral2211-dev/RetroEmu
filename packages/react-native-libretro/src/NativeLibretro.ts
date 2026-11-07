@@ -21,6 +21,12 @@ export interface Spec extends TurboModule {
   listRoms(): string[];
   /** Consola verificada por contenido: 'gba' | 'n64' | 'sega' | 'mame', o '' si no es válida. */
   consoleOf(romPath: string): string;
+  /**
+   * Importa un archivo descargado (ruta temporal): zip -> extrae la ROM a su carpeta de consola
+   * (o lo deja en mame/ si no hay ROM); ROM suelta -> la mueve a su carpeta de consola.
+   * Devuelve la ruta final, o '' si falla (motivo en lastError()). Elimina el origen si se importa.
+   */
+  importRom(downloadedPath: string): string;
   /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
   lastError(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */

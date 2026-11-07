@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include <cstring>
 #include <map>
 
 #include "LibretroHost.hpp"
@@ -75,6 +76,16 @@ static romcheck::Kind sniffFile(NSString *path) {
   [handle closeFile];
   std::string ext = path.pathExtension.lowercaseString.UTF8String;
   return romcheck::sniff(ext, static_cast<const uint8_t *>(head.bytes), head.length);
+}
+
+// Mueve src a dest; si dest ya existe descarta src y devuelve dest (no sobrescribe ROMs del usuario)
+static BOOL moveIntoPlace(NSString *src, NSString *dest, NSError **error) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  if ([fm fileExistsAtPath:dest]) {
+    [fm removeItemAtPath:src error:nil];
+    return YES;
+  }
+  return [fm moveItemAtPath:src toPath:dest error:error];
 }
 
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
@@ -248,6 +259,65 @@ RCT_EXPORT_MODULE(Libretro)
   [roms addObjectsFromArray:arcade];
   // Un ROM extraído puede aparecer dos veces en la misma pasada: deduplicar
   return [[NSOrderedSet orderedSetWithArray:roms] array];
+}
+
+// Importa una descarga: zip -> extrae la ROM a su consola (o lo deja en mame/ si no hay ROM);
+// ROM suelta -> la mueve a su carpeta de consola. Devuelve la ruta final o '' (ver lastError).
+- (NSString *)importRom:(NSString *)downloadedPath {
+  _romError = nil;
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *src = normalizeRomPath(downloadedPath);
+  BOOL isDir = NO;
+  if (![fm fileExistsAtPath:src isDirectory:&isDir] || isDir) {
+    _romError = @"No se encuentra el archivo descargado";
+    return @"";
+  }
+  NSString *docs = documentsDirectory();
+  createConsoleFolders(docs);
+  romzip::Folders folders = romFolders(docs);
+  NSString *name = src.lastPathComponent;
+  NSString *ext = src.pathExtension.lowercaseString;
+
+  if ([ext isEqualToString:@"zip"]) {
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:src];
+    NSData *magic = [handle readDataOfLength:4];
+    [handle closeFile];
+    const uint8_t sig[4] = {'P', 'K', 3, 4};
+    if (magic.length < 4 || memcmp(magic.bytes, sig, 4) != 0) {
+      _romError = [NSString stringWithFormat:@"\"%@\" no es un .zip válido (la descarga pudo fallar)", name];
+      return @"";
+    }
+    std::string extracted = romzip::extractRom(src.UTF8String, folders);
+    if (!extracted.empty()) {
+      [fm removeItemAtPath:src error:nil];
+      return [NSString stringWithUTF8String:extracted.c_str()];
+    }
+    // Zip sin ROM reconocible: candidato arcade, se guarda en mame/
+    NSString *dest = [[docs stringByAppendingPathComponent:@"mame"] stringByAppendingPathComponent:name];
+    NSError *error = nil;
+    if (!moveIntoPlace(src, dest, &error)) {
+      _romError = error.localizedDescription;
+      return @"";
+    }
+    return dest;
+  }
+
+  if (!romcheck::isRomExtension(ext.UTF8String)) {
+    _romError = [NSString stringWithFormat:@"Formato no soportado: .%@", ext];
+    return @"";
+  }
+  NSString *console = consoleForKind(sniffFile(src));
+  if (!console) {
+    _romError = [NSString stringWithFormat:@"\"%@\" no tiene una cabecera válida para GBA, N64 o Mega Drive", name];
+    return @"";
+  }
+  NSString *dest = [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name];
+  NSError *error = nil;
+  if (!moveIntoPlace(src, dest, &error)) {
+    _romError = error.localizedDescription;
+    return @"";
+  }
+  return dest;
 }
 
 // Consola a la que pertenece una ROM: 'gba' | 'n64' | 'sega' | 'mame' | '' (no verificada)
