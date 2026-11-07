@@ -54,6 +54,11 @@ build_core() {
   git -C "$dir" checkout -q -f FETCH_HEAD
   git -C "$dir" submodule update -q --init --depth 1 --recursive || true
 
+  # Shim para cores con libpng integrado: su rama 'TARGET_OS_MAC' incluye <fp.h>,
+  # que solo existe en Mac clásico y no en el SDK de iOS. Un fp.h vacío basta.
+  mkdir -p "$dir/rnl-shim"
+  : > "$dir/rnl-shim/fp.h"
+
   case "$build" in
     make)
       # shellcheck disable=SC2086
