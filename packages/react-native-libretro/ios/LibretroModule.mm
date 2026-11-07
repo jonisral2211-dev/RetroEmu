@@ -94,6 +94,7 @@ static BOOL moveIntoPlace(NSString *src, NSString *dest, NSError **error) {
 @implementation Libretro {
   BOOL _listening;        // JS tiene listeners de gamepadStatus
   NSString *_romError;    // motivo del último fallo al abrir la ROM (nativo)
+  NSString *_coreId;      // núcleo cargado ('mgba' | 'genesis' | 'mupen64' | 'mame')
 }
 
 RCT_EXPORT_MODULE(Libretro)
@@ -156,6 +157,7 @@ RCT_EXPORT_MODULE(Libretro)
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
+  _coreId = coreId;
   NSString *path = [NSString stringWithFormat:@"%@/%@.framework/%@",
                                               NSBundle.mainBundle.privateFrameworksPath, name, name];
   return @(host::loadCore(path.UTF8String));
@@ -174,6 +176,8 @@ RCT_EXPORT_MODULE(Libretro)
     _romError = [NSString stringWithFormat:@"Sin permiso de lectura para: %@", path];
     return @NO;
   }
+  NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
+  NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
   return @(host::loadGame(path.UTF8String));
 }
 

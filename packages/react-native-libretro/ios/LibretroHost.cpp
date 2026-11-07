@@ -1,6 +1,7 @@
 #include "LibretroHost.hpp"
 
 #include <dlfcn.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <atomic>
@@ -337,6 +338,7 @@ bool loadCore(const char *frameworkBinaryPath) {
 
 bool loadGame(const char *romPath) {
   g_lastError.clear();
+  std::fprintf(stderr, "[RetroEmu] loadGame path=%s\n", romPath);
   if (!g_core.handle) {
     g_lastError = "No hay ningún núcleo cargado";
     return false;
@@ -367,7 +369,14 @@ bool loadGame(const char *romPath) {
     game.size = g_romData.size();
   }
   if (!g_core.loadGame(&game)) {
-    g_lastError = "El núcleo no ha aceptado esta ROM (retro_load_game devolvió false). "
+    // Diagnóstico visible en la app: núcleo, ruta exacta y tamaño verificado en disco
+    struct stat st {};
+    const long long fileSize = stat(path.c_str(), &st) == 0 ? static_cast<long long>(st.st_size) : -1;
+    const char *coreName = info.library_name ? info.library_name : "desconocido";
+    std::fprintf(stderr, "[RetroEmu] retro_load_game=false core=%s path=%s size=%lld\n",
+                 coreName, romPath, fileSize);
+    g_lastError = std::string("El núcleo ") + coreName + " no ha aceptado la ROM (retro_load_game devolvió false).\n" +
+                  "Ruta: " + path + "\nTamaño: " + std::to_string(fileSize) + " bytes\n" +
                   "Comprueba que el archivo esté completo y sea de la consola correcta.";
     return false;
   }
