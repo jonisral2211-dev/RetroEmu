@@ -13,7 +13,7 @@ import { evaluateZones, Pt } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 
 type Size = { w: number; h: number };
-type Touch = { identifier: number; locationX: number; locationY: number };
+type Touch = { identifier: string | number; locationX: number; locationY: number };
 
 // Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
 // en cada evento se recalcula el estado completo a partir de todos los dedos activos.
