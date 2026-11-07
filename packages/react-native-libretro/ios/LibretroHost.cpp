@@ -65,6 +65,11 @@ std::atomic<int16_t> g_axisY{0};
 std::atomic<uint16_t> g_padButtons{0};
 std::atomic<int16_t> g_padX{0};
 std::atomic<int16_t> g_padY{0};
+// Diagnóstico: qué lee realmente el core (se vacía en cada debugState())
+std::atomic<uint32_t> g_dbgJoyHits{0};  // bit id = el core pidió ese botón y recibió 1
+std::atomic<int16_t> g_dbgAxisX{0};     // último valor devuelto para el stick (X/Y)
+std::atomic<int16_t> g_dbgAxisY{0};
+std::atomic<uint32_t> g_dbgReads{0};    // lecturas de input_state desde la última instantánea
 bool g_isN64 = false;
 FrameBuffer g_frame;
 AudioOutput g_audio;
@@ -204,17 +209,23 @@ static size_t onAudioBatch(const int16_t *data, size_t frames) {
 static void onInputPoll(void) {}
 
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+  g_dbgReads.fetch_add(1, std::memory_order_relaxed);
   if (port != 0) return 0;
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
     // El stick del mando tiene prioridad sobre el táctil cuando está en uso
     const int16_t padX = g_padX.load(), padY = g_padY.load();
     const bool usePad = padX != 0 || padY != 0;
-    if (id == RETRO_DEVICE_ID_ANALOG_X) return usePad ? padX : g_axisX.load();
-    if (id == RETRO_DEVICE_ID_ANALOG_Y) return usePad ? padY : g_axisY.load();
-    return 0;
+    int16_t value = 0;
+    if (id == RETRO_DEVICE_ID_ANALOG_X) value = usePad ? padX : g_axisX.load();
+    if (id == RETRO_DEVICE_ID_ANALOG_Y) value = usePad ? padY : g_axisY.load();
+    if (id == RETRO_DEVICE_ID_ANALOG_X) g_dbgAxisX.store(value, std::memory_order_relaxed);
+    if (id == RETRO_DEVICE_ID_ANALOG_Y) g_dbgAxisY.store(value, std::memory_order_relaxed);
+    return value;
   }
   if (device != RETRO_DEVICE_JOYPAD || index != 0 || id > 15) return 0;
-  return static_cast<int16_t>(((g_buttons.load() | g_padButtons.load()) >> id) & 1);
+  const int16_t pressed = static_cast<int16_t>(((g_buttons.load() | g_padButtons.load()) >> id) & 1);
+  if (pressed) g_dbgJoyHits.fetch_or(1u << id, std::memory_order_relaxed);
+  return pressed;
 }
 
 }  // extern "C"
@@ -490,5 +501,19 @@ bool loadState(int slot) {
 FrameBuffer &frame() { return g_frame; }
 
 std::string lastError() { return g_lastError; }
+
+// Instantánea para la pantalla de depuración: lo que escribe la UI y lo que pidió el core
+std::string debugState() {
+  const uint32_t hits = g_dbgJoyHits.exchange(0, std::memory_order_relaxed);
+  const uint32_t reads = g_dbgReads.exchange(0, std::memory_order_relaxed);
+  char buf[256];
+  std::snprintf(buf, sizeof(buf),
+                "UI btn=%04x pad=%04x ax=%d ay=%d\n"
+                "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
+                "stick devuelto x=%d y=%d",
+                g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), hits, reads,
+                g_dbgAxisX.load(), g_dbgAxisY.load());
+  return buf;
+}
 
 }  // namespace host

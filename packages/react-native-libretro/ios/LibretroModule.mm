@@ -181,6 +181,10 @@ RCT_EXPORT_MODULE(Libretro)
   return @(host::loadGame(path.UTF8String));
 }
 
+- (NSString *)debugState {
+  return [NSString stringWithUTF8String:host::debugState().c_str()];
+}
+
 - (NSString *)lastError {
   if (_romError) return _romError;
   std::string error = host::lastError();

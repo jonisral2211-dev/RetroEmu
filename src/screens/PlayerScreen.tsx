@@ -29,6 +29,15 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   useEffect(() => setTouchOverride(null), [pad.dualSense]);
   const touchVisible = touchOverride ?? !pad.dualSense;
 
+  // Diagnóstico de entrada en pantalla (sin Mac no hay otra forma de ver los logs nativos)
+  const [debugOn, setDebugOn] = useState(false);
+  const [debugText, setDebugText] = useState<string | null>(null);
+  useEffect(() => {
+    if (!debugOn) return;
+    const id = setInterval(() => setDebugText(Libretro.debugState()), 500);
+    return () => clearInterval(id);
+  }, [debugOn]);
+
   useEffect(() => {
     if (!core) {
       setError('Esta ROM no tiene una cabecera válida para ninguna consola soportada');
@@ -105,12 +114,16 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         style={styles.button}>
         <Text style={styles.buttonText}>Cargar</Text>
       </Pressable>
+      <Pressable onPress={() => setDebugOn((v) => !v)} style={styles.button}>
+        <Text style={styles.buttonText}>{debugOn ? 'Ocultar debug' : 'Debug'}</Text>
+      </Pressable>
     </View>
   );
 
   const notices = (
     <>
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+      {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {pad.connected && pad.dualSense ? (
         <Text style={styles.notice}>DualSense conectado: {pad.name || 'PS5'}</Text>
       ) : null}
@@ -161,6 +174,7 @@ const styles = StyleSheet.create({
   button: { backgroundColor: '#222', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
   buttonText: { color: '#fff', fontWeight: '600' },
   notice: { color: '#8f8', textAlign: 'center', paddingBottom: 4 },
+  debug: { color: '#ff0', fontSize: 11, paddingHorizontal: 8, paddingBottom: 4 },
   screenPortrait: { width: '100%', aspectRatio: 4 / 3, backgroundColor: '#000' },
   padPortrait: { flex: 1 },
 });

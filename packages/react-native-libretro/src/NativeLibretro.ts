@@ -29,6 +29,8 @@ export interface Spec extends TurboModule {
   importRom(downloadedPath: string): string;
   /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
   lastError(): string;
+  /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */
+  debugState(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */
   hasDualSense(): boolean;
   // Requeridos por NativeEventEmitter para el evento 'gamepadStatus'
