@@ -74,6 +74,7 @@ std::string g_systemDir;
 std::string g_saveDir;
 std::string g_romBase;
 std::vector<uint8_t> g_romData;
+std::string g_lastError;  // motivo del último fallo de loadCore/loadGame
 
 // ---- Callbacks de Libretro (la API es C: deben tener enlace C) -------------
 extern "C" {
@@ -286,6 +287,7 @@ bool loadCore(const char *frameworkBinaryPath) {
   g_isN64 = std::strstr(frameworkBinaryPath, "mupen64") != nullptr;
   void *handle = dlopen(frameworkBinaryPath, RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
+    g_lastError = std::string("No se pudo cargar el núcleo: ") + dlerror();
     std::fprintf(stderr, "[libretro] dlopen: %s\n", dlerror());
     return false;
   }
@@ -334,7 +336,11 @@ bool loadCore(const char *frameworkBinaryPath) {
 }
 
 bool loadGame(const char *romPath) {
-  if (!g_core.handle) return false;
+  g_lastError.clear();
+  if (!g_core.handle) {
+    g_lastError = "No hay ningún núcleo cargado";
+    return false;
+  }
   stop();
 
   std::lock_guard<std::mutex> lock(g_coreMutex);
@@ -353,13 +359,18 @@ bool loadGame(const char *romPath) {
   game.path = romPath;
   if (!info.need_fullpath) {
     if (!readFile(path, g_romData)) {
+      g_lastError = "No se pudo leer el archivo de la ROM: " + path;
       std::fprintf(stderr, "[libretro] no se pudo leer %s\n", romPath);
       return false;
     }
     game.data = g_romData.data();
     game.size = g_romData.size();
   }
-  if (!g_core.loadGame(&game)) return false;
+  if (!g_core.loadGame(&game)) {
+    g_lastError = "El núcleo no ha aceptado esta ROM (retro_load_game devolvió false). "
+                  "Comprueba que el archivo esté completo y sea de la consola correcta.";
+    return false;
+  }
   g_gameLoaded = true;
 
   retro_system_av_info av{};
@@ -442,5 +453,7 @@ bool loadState(int slot) {
 }
 
 FrameBuffer &frame() { return g_frame; }
+
+std::string lastError() { return g_lastError; }
 
 }  // namespace host

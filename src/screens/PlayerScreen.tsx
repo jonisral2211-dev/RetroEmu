@@ -31,8 +31,12 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       return;
     }
     try {
-      if (!Libretro.loadCore(core)) throw new Error(`No se pudo cargar el núcleo "${core}"`);
-      if (!Libretro.loadGame(romPath)) throw new Error('No se pudo abrir la ROM');
+      if (!Libretro.loadCore(core)) {
+        throw new Error(Libretro.lastError() || `No se pudo cargar el núcleo "${core}"`);
+      }
+      if (!Libretro.loadGame(romPath)) {
+        throw new Error(Libretro.lastError() || 'No se pudo abrir la ROM');
+      }
       Libretro.start();
       setReady(true);
     } catch (e) {

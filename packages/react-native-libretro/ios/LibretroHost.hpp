@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "FrameBuffer.hpp"
 
@@ -30,6 +31,9 @@ void reset();
 
 bool saveState(int slot);
 bool loadState(int slot);
+
+/** Motivo del último fallo de loadCore/loadGame (cadena vacía si no hubo fallo). */
+std::string lastError();
 
 /** Último frame producido. Leer bajo frame.mutex. */
 FrameBuffer &frame();

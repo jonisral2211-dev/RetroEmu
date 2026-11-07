@@ -19,6 +19,8 @@ export interface Spec extends TurboModule {
   loadState(slot: number): boolean;
   /** Rutas absolutas de ROMs encontradas en Documents. */
   listRoms(): string[];
+  /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
+  lastError(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */
   hasDualSense(): boolean;
   // Requeridos por NativeEventEmitter para el evento 'gamepadStatus'

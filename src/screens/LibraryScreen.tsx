@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Libretro } from 'react-native-libretro';
 import {
   Console,
+  CoreId,
   coreForFile,
   CONSOLE_LABEL,
   consoleForPath,
@@ -14,6 +15,20 @@ type Props = { onPlay: (romPath: string) => void };
 type Filter = 'all' | Console;
 
 const FILTERS: Filter[] = ['all', 'gba', 'n64', 'sega', 'mame'];
+
+// Alerta descriptiva en vez de intentar cargar la ROM en blanco
+function explainUnavailable(path: string, core: CoreId | null) {
+  const name = path.split('/').pop() ?? path;
+  let message: string;
+  if (core === null) {
+    message = `El formato de "${name}" no tiene núcleo asociado. Extensiones soportadas: .gba/.gb/.gbc, .z64/.n64/.v64 y .md/.gen/.smd/.bin.`;
+  } else if (consoleForPath(path) === 'mame') {
+    message = `"${name}" es un juego de arcade. RetroEmu aún no incluye el núcleo MAME.`;
+  } else {
+    message = `El núcleo de ${SYSTEM_NAME[core]} no está incluido en esta compilación de RetroEmu.`;
+  }
+  Alert.alert('No se puede abrir este juego', message);
+}
 
 // Ruta relativa a Documents (lo que ve el usuario en la app Archivos)
 function relativeToDocuments(path: string): string {
@@ -101,8 +116,7 @@ export default function LibraryScreen({ onPlay }: Props) {
                 : `${SYSTEM_NAME[core]} · núcleo no incluido en esta build`;
           return (
             <Pressable
-              onPress={() => onPlay(item)}
-              disabled={!enabled}
+              onPress={() => (enabled ? onPlay(item) : explainUnavailable(item, core))}
               style={[styles.row, !enabled && styles.rowDisabled]}>
               <Text style={styles.rowTitle} numberOfLines={1}>
                 {name}

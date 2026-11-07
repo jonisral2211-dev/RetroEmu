@@ -23,6 +23,30 @@ static NSArray<NSString *> *consoleFolders(void) {
   return @[ @"gba", @"n64", @"sega", @"mame" ];
 }
 
+// Crea las subcarpetas por consola (idempotente)
+static void createConsoleFolders(NSString *docs) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  for (NSString *folder in consoleFolders()) {
+    [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:folder]
+        withIntermediateDirectories:YES
+                         attributes:nil
+                              error:nil];
+  }
+}
+
+// Limpia la ruta que llega desde JS: quita 'file://' y decodifica %20 si el original no existe
+static NSString *normalizeRomPath(NSString *raw) {
+  NSString *path = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if ([path hasPrefix:@"file://"]) {
+    path = [path substringFromIndex:@"file://".length];
+  }
+  if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
+    NSString *decoded = [path stringByRemovingPercentEncoding];
+    if (decoded) path = decoded;
+  }
+  return path;
+}
+
 // Extensión -> carpeta de consola (los zips se extraen a la carpeta de su ROM)
 static NSDictionary<NSString *, NSString *> *extensionFolders(void) {
   return @{
@@ -46,7 +70,8 @@ static BOOL isRomExtension(NSString *ext) {
 @end
 
 @implementation Libretro {
-  BOOL _listening;  // JS tiene listeners de gamepadStatus
+  BOOL _listening;        // JS tiene listeners de gamepadStatus
+  NSString *_romError;    // motivo del último fallo al abrir la ROM (nativo)
 }
 
 RCT_EXPORT_MODULE(Libretro)
@@ -84,12 +109,7 @@ RCT_EXPORT_MODULE(Libretro)
     [fm createDirectoryAtPath:system withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:nil];
     // Carpetas por consola, visibles en la app Archivos (UIFileSharingEnabled)
-    for (NSString *folder in consoleFolders()) {
-      [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:folder]
-          withIntermediateDirectories:YES
-                           attributes:nil
-                                error:nil];
-    }
+    createConsoleFolders(docs);
     host::configure(system.UTF8String, saves.UTF8String);
 
     __weak Libretro *weakSelf = self;
@@ -119,7 +139,25 @@ RCT_EXPORT_MODULE(Libretro)
 }
 
 - (NSNumber *)loadGame:(NSString *)romPath {
-  return @(host::loadGame(romPath.UTF8String));
+  _romError = nil;
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *path = normalizeRomPath(romPath);
+  BOOL isDir = NO;
+  if (![fm fileExistsAtPath:path isDirectory:&isDir] || isDir) {
+    _romError = [NSString stringWithFormat:@"No existe el archivo de la ROM: %@", path];
+    return @NO;
+  }
+  if (![fm isReadableFileAtPath:path]) {
+    _romError = [NSString stringWithFormat:@"Sin permiso de lectura para: %@", path];
+    return @NO;
+  }
+  return @(host::loadGame(path.UTF8String));
+}
+
+- (NSString *)lastError {
+  if (_romError) return _romError;
+  std::string error = host::lastError();
+  return [NSString stringWithUTF8String:error.c_str()];
 }
 
 - (void)unloadGame {
@@ -166,6 +204,7 @@ RCT_EXPORT_MODULE(Libretro)
 - (NSArray<NSString *> *)listRoms {
   NSFileManager *fm = NSFileManager.defaultManager;
   NSString *docs = documentsDirectory();
+  createConsoleFolders(docs);  // por si no existían al arrancar
 
   // Mapa extensión -> carpeta absoluta para el extractor de zips
   std::map<std::string, std::string> extToDir;
