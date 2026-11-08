@@ -134,6 +134,17 @@ static bool onEnvironment(unsigned cmd, void *data) {
           var->value = "angrylion";
           return true;
         }
+        // Sin estas dos opciones mupen deja astick_sensitivity = 0 y el radio del stick es siempre 0
+        // (ver emulate_game_controller_via_libretro.c): el stick nunca mueve a Mario.
+        // Valores por defecto del propio core (libretro_core_options.h).
+        if (std::strcmp(var->key, "mupen64plus-astick-sensitivity") == 0) {
+          var->value = "100";
+          return true;
+        }
+        if (std::strcmp(var->key, "mupen64plus-astick-deadzone") == 0) {
+          var->value = "15";
+          return true;
+        }
         if (std::strcmp(var->key, "mupen64plus-cpucore") == 0) {
           var->value = "pure_interpreter";
           return true;

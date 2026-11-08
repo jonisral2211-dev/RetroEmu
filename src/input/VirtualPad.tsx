@@ -185,7 +185,7 @@ function ZoneView({
 
   if (zone.kind === 'button') {
     const pressed = isPressed(zone, active);
-    const tint = zone.tint ?? '#ffffff';
+    const tint = zone.tint ?? 'rgba(255,255,255,0.25)';
     const common = [
       styles.key,
       { borderColor: tint },
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderTopColor: 'rgba(255,255,255,0.75)',
     borderBottomColor: 'rgba(0,0,0,0.5)',
-    backgroundColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 14,
     shadowColor: '#000',
     shadowOpacity: 0.4,
