@@ -153,7 +153,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     // translúcidos sobre los extremos de la pantalla
     return (
       <View style={styles.root}>
-        <LibretroView style={StyleSheet.absoluteFill} filter={false} />
+        <LibretroView style={StyleSheet.absoluteFill} filter={core === 'mupen64'} />
         {/* El pad va antes que el HUD: así los botones de arriba reciben sus propios toques */}
         {touchVisible ? (
           <VirtualPad
@@ -176,7 +176,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     <View style={styles.root}>
       {hud}
       {notices}
-      <LibretroView style={styles.screenPortrait} filter={false} />
+      <LibretroView style={styles.screenPortrait} filter={core === 'mupen64'} />
       {touchVisible ? <VirtualPad key={padLayout.name + dirMode} layout={padLayout} style={styles.padPortrait} /> : null}
     </View>
   );
