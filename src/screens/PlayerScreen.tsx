@@ -19,6 +19,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [genesisSix, setGenesisSix] = useState(false);
+  // N64: un solo direccional a la izquierda (stick o cruceta)
+  const [dirMode, setDirMode] = useState<'stick' | 'dpad'>('stick');
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
 
@@ -85,6 +87,14 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   }
 
   const layout = layoutFor(core, genesisSix);
+  // Solo se muestra un direccional: el stick o la cruceta, según el modo elegido
+  const padLayout =
+    core === 'mupen64'
+      ? {
+          ...layout,
+          clusters: layout.clusters.filter((c) => c.id !== (dirMode === 'stick' ? 'dpad' : 'stick')),
+        }
+      : layout;
 
   const hud = (
     <View style={[styles.hud, landscape && styles.hudLandscape]}>
@@ -114,6 +124,13 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         style={styles.button}>
         <Text style={styles.buttonText}>Cargar</Text>
       </Pressable>
+      {core === 'mupen64' ? (
+        <Pressable
+          onPress={() => setDirMode((m) => (m === 'stick' ? 'dpad' : 'stick'))}
+          style={styles.button}>
+          <Text style={styles.buttonText}>{dirMode === 'stick' ? 'Stick' : 'D-Pad'}</Text>
+        </Pressable>
+      ) : null}
       <Pressable onPress={() => setDebugOn((v) => !v)} style={styles.button}>
         <Text style={styles.buttonText}>{debugOn ? 'Ocultar debug' : 'Debug'}</Text>
       </Pressable>
@@ -130,7 +147,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     </>
   );
 
-  if (landscape) {
+  // Horizontal, o vertical con el pad oculto: la imagen ocupa toda la pantalla
+  if (landscape || !touchVisible) {
     // Horizontal: imagen centrada a altura completa (el nativo letterboxa) y controles
     // translúcidos sobre los extremos de la pantalla
     return (
@@ -139,8 +157,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         {/* El pad va antes que el HUD: así los botones de arriba reciben sus propios toques */}
         {touchVisible ? (
           <VirtualPad
-            key={layout.name}
-            layout={layout}
+            key={padLayout.name + dirMode}
+            layout={padLayout}
             style={StyleSheet.absoluteFill}
             opacity={0.45}
           />
@@ -159,7 +177,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       {hud}
       {notices}
       <LibretroView style={styles.screenPortrait} filter={false} />
-      {touchVisible ? <VirtualPad key={layout.name} layout={layout} style={styles.padPortrait} /> : null}
+      {touchVisible ? <VirtualPad key={padLayout.name + dirMode} layout={padLayout} style={styles.padPortrait} /> : null}
     </View>
   );
 }

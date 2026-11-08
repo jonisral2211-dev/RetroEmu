@@ -106,7 +106,7 @@ export const N64_LAYOUT: PadLayout = {
   name: 'Nintendo 64',
   clusters: [
     {
-      id: 'top', x: 0, y: 0, w: 1, h: 0.22,
+      id: 'top', x: 0, y: 0, w: 1, h: 0.14,
       zones: [
         rect('Z', 0.02, 0.1, 0.26, 0.8, Btn.L2, '#8a8f98'),
         rect('L', 0.36, 0.1, 0.26, 0.8, Btn.SELECT),
