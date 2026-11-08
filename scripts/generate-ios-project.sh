@@ -18,6 +18,11 @@ rm -rf "$ROOT/ios"
 cp -R "$TMP/RetroEmu/ios" "$ROOT/ios"
 cp "$ROOT/ios-overlay/Podfile" "$ROOT/ios/Podfile"
 
+# Icono JL: assets/AppIcon.appiconset (generado con scripts/make-app-icon.mjs)
+ICON_DST="$ROOT/ios/RetroEmu/Images.xcassets/AppIcon.appiconset"
+mkdir -p "$ICON_DST"
+cp -R "$ROOT/assets/AppIcon.appiconset/." "$ICON_DST/"
+
 # Acceso desde la app Archivos (para copiar ROMs) y en Documents
 PLIST="$ROOT/ios/RetroEmu/Info.plist"
 pb() {
