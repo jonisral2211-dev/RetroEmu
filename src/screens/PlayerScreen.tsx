@@ -86,7 +86,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     );
   }
 
-  const layout = layoutFor(core, genesisSix);
+  const layout = layoutFor(core, genesisSix, landscape);
   // Solo se muestra un direccional: el stick o la cruceta, según el modo elegido
   const padLayout =
     core === 'mupen64'

@@ -141,7 +141,52 @@ export const N64_LAYOUT: PadLayout = {
   ],
 };
 
-export function layoutFor(core: CoreId, genesisSixButton: boolean): PadLayout {
+// N64 en horizontal: pad translúcido sobre toda la pantalla. Stick abajo a la izquierda,
+// C en diamante a la izquierda de A/B, Z y L arriba a la izquierda, R arriba a la derecha.
+export const N64_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Nintendo 64 (horizontal)',
+  clusters: [
+    {
+      id: 'top-left', x: 0, y: 0, w: 0.3, h: 0.16,
+      zones: [
+        rect('Z', 0.02, 0.1, 0.46, 0.8, Btn.L2, '#8a8f98'),
+        rect('L', 0.52, 0.1, 0.46, 0.8, Btn.SELECT),
+      ],
+    },
+    {
+      id: 'top-right', x: 0.7, y: 0, w: 0.3, h: 0.16,
+      zones: [rect('R', 0.02, 0.1, 0.96, 0.8, Btn.R2)],
+    },
+    {
+      id: 'stick', x: 0, y: 0.5, w: 0.3, h: 0.5,
+      zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.5, w: 0.3, h: 0.5,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: false }],
+    },
+    {
+      id: 'cbuttons', x: 0.3, y: 0.45, w: 0.22, h: 0.55,
+      zones: [
+        circle('C▲', 0.5, 0.18, 0.34, Btn.X, C_YELLOW),
+        circle('C◀', 0.14, 0.5, 0.34, Btn.L, C_YELLOW),
+        circle('C▶', 0.86, 0.5, 0.34, Btn.R, C_YELLOW),
+        circle('C▼', 0.5, 0.82, 0.34, Btn.A, C_YELLOW),
+      ],
+    },
+    {
+      id: 'face', x: 0.72, y: 0.42, w: 0.28, h: 0.58,
+      zones: [
+        circle('A', 0.7, 0.55, 0.42, Btn.B, '#3b82f6'),
+        circle('B', 0.3, 0.4, 0.36, Btn.Y, '#ef4444'),
+        rect('START', 0.25, 0.86, 0.5, 0.12, Btn.START),
+      ],
+    },
+  ],
+};
+
+export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
+  if (core === 'mupen64' && landscape) return N64_LANDSCAPE_LAYOUT;
   switch (core) {
     case 'mgba':
       return GBA_LAYOUT;
