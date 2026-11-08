@@ -10,6 +10,8 @@ type Props = { romPath: string; onExit: () => void };
 
 // Ranura única de guardado rápido
 const SAVE_SLOT = 0;
+// Ranura reservada para el auto-guardado al salir (no la usan los guardados manuales)
+const AUTO_SLOT = 99;
 
 export default function PlayerScreen({ romPath, onExit }: Props) {
   // Consola por contenido verificado (nativo), no por extensión
@@ -52,13 +54,16 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       if (!Libretro.loadGame(romPath)) {
         throw new Error(Libretro.lastError() || 'No se pudo abrir la ROM');
       }
+      // Reanuda donde se dejó (si hay auto-guardado de la última salida)
+      Libretro.loadState(AUTO_SLOT);
       Libretro.start();
       setReady(true);
     } catch (e) {
       setError(String(e));
     }
     return () => {
-      // Para y persiste la SRAM antes de descargar
+      // Auto-guardado al salir, mientras el core aún corre; luego para y persiste la SRAM
+      Libretro.saveState(AUTO_SLOT);
       Libretro.stop();
       Libretro.unloadGame();
     };

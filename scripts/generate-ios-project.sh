@@ -27,4 +27,10 @@ pb() {
 pb UIFileSharingEnabled bool true
 pb LSSupportsOpeningDocumentsInPlace bool true
 
+# Nombre visible en el iPhone
+for key in CFBundleDisplayName CFBundleName; do
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :$key string 'JL Emulator'" "$PLIST"
+done
+
 echo "ios/ generado en $ROOT/ios"

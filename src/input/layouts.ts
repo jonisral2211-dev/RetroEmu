@@ -185,6 +185,41 @@ export const N64_LANDSCAPE_LAYOUT: PadLayout = {
   ],
 };
 
+// ---- PlayStation (PCSX ReARMed) --------------------------------------------
+// Mapeo del core: Cruz=B, Círculo=A, Triángulo=X, Cuadrado=Y (pcsx frontend/libretro.c).
+// Gatillos L1/L2 a la izquierda y R1/R2 a la derecha, en una franja delgada arriba.
+export const PS1_LAYOUT: PadLayout = {
+  name: 'PlayStation',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.14,
+      zones: [
+        rect('L2', 0.02, 0.1, 0.22, 0.8, Btn.L2, '#8a8f98'),
+        rect('L1', 0.26, 0.1, 0.22, 0.8, Btn.L, '#8a8f98'),
+        rect('R1', 0.52, 0.1, 0.22, 0.8, Btn.R, '#8a8f98'),
+        rect('R2', 0.76, 0.1, 0.22, 0.8, Btn.R2, '#8a8f98'),
+      ],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.22, w: 0.36, h: 0.42,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: false }],
+    },
+    {
+      id: 'center', x: 0.38, y: 0.5, w: 0.24, h: 0.5,
+      zones: [rect('SEL', 0, 0.2, 1, 0.25, Btn.SELECT), rect('START', 0, 0.6, 1, 0.25, Btn.START)],
+    },
+    {
+      id: 'face', x: 0.6, y: 0.22, w: 0.4, h: 0.78,
+      zones: [
+        circle('△', 0.5, 0.2, 0.32, Btn.X, '#4ade80'),
+        circle('□', 0.2, 0.5, 0.32, Btn.Y, '#f0abfc'),
+        circle('○', 0.8, 0.5, 0.32, Btn.A, '#f87171'),
+        circle('✕', 0.5, 0.8, 0.32, Btn.B, '#60a5fa'),
+      ],
+    },
+  ],
+};
+
 export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
   if (core === 'mupen64' && landscape) return N64_LANDSCAPE_LAYOUT;
   switch (core) {
@@ -198,7 +233,6 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       // Arcade: D-Pad, dos botones y Start/Select (layout de GBA)
       return GBA_LAYOUT;
     case 'pcsx':
-      // PS1: provisional con el layout de GBA hasta el layout táctil de PlayStation (paso 2)
-      return GBA_LAYOUT;
+      return PS1_LAYOUT;
   }
 }
