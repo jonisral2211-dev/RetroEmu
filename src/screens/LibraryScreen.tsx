@@ -14,7 +14,7 @@ type Props = { onPlay: (romPath: string) => void };
 type Filter = 'all' | Console;
 type Entry = { path: string; console: string };
 
-const FILTERS: Filter[] = ['all', 'gba', 'n64', 'sega', 'mame'];
+const FILTERS: Filter[] = ['all', 'gba', 'n64', 'sega', 'mame', 'ps1'];
 
 // Ruta relativa a Documents (lo que ve el usuario en la app Archivos)
 function relativeToDocuments(path: string): string {
@@ -61,7 +61,7 @@ export default function LibraryScreen({ onPlay }: Props) {
   useEffect(() => onRomImported(() => refresh()), [refresh]);
 
   const counts = useMemo(() => {
-    const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0 };
+    const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0, ps1: 0 };
     entries.forEach((e) => {
       if (e.console in c) c[e.console as Console] += 1;
     });

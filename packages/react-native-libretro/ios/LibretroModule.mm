@@ -22,7 +22,7 @@ static NSString *documentsDirectory(void) {
 
 // Carpetas por consola dentro de Documents
 static NSArray<NSString *> *consoleFolders(void) {
-  return @[ @"gba", @"n64", @"sega", @"mame" ];
+  return @[ @"gba", @"n64", @"sega", @"mame", @"ps1" ];
 }
 
 // Crea las subcarpetas por consola (idempotente)
@@ -64,6 +64,7 @@ static NSString *consoleForKind(romcheck::Kind kind) {
     case romcheck::Kind::GBA: return @"gba";
     case romcheck::Kind::N64: return @"n64";
     case romcheck::Kind::Sega: return @"sega";
+    case romcheck::Kind::PS1: return @"ps1";
     default: return nil;
   }
 }
@@ -72,7 +73,7 @@ static NSString *consoleForKind(romcheck::Kind kind) {
 static romcheck::Kind sniffFile(NSString *path) {
   NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
   if (!handle) return romcheck::Kind::Unknown;
-  NSData *head = [handle readDataOfLength:0x200];
+  NSData *head = [handle readDataOfLength:romcheck::kHeadSize];
   [handle closeFile];
   std::string ext = path.pathExtension.lowercaseString.UTF8String;
   return romcheck::sniff(ext, static_cast<const uint8_t *>(head.bytes), head.length);
@@ -86,6 +87,30 @@ static BOOL moveIntoPlace(NSString *src, NSString *dest, NSError **error) {
     return YES;
   }
   return [fm moveItemAtPath:src toPath:dest error:error];
+}
+
+// Bin al que apunta un .cue (primera línea FILE). Devuelve la ruta absoluta o nil.
+static NSString *cueReferencedBin(NSString *cuePath) {
+  NSString *text = [NSString stringWithContentsOfFile:cuePath encoding:NSUTF8StringEncoding error:nil];
+  if (!text) text = [NSString stringWithContentsOfFile:cuePath encoding:NSISOLatin1StringEncoding error:nil];
+  if (!text) return nil;
+  NSString *name = nil;
+  for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+    NSString *t = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (![t hasPrefix:@"FILE "]) continue;
+    NSString *rest = [t substringFromIndex:5];
+    NSRange open = [rest rangeOfString:@"\""];
+    if (open.location != NSNotFound) {
+      NSString *after = [rest substringFromIndex:open.location + 1];
+      NSRange close = [after rangeOfString:@"\""];
+      if (close.location != NSNotFound) name = [after substringToIndex:close.location];
+    } else {
+      name = [rest componentsSeparatedByString:@" "].firstObject;
+    }
+    break;
+  }
+  if (name.length == 0) return nil;
+  return [[cuePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:name];
 }
 
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
@@ -154,6 +179,7 @@ RCT_EXPORT_MODULE(Libretro)
     @"genesis" : @"genesis_plus_gx_libretro",
     @"mupen64" : @"mupen64plus_next_libretro",
     @"mame" : @"mame2003_plus_libretro",
+    @"pcsx" : @"pcsx_rearmed_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
@@ -242,6 +268,14 @@ RCT_EXPORT_MODULE(Libretro)
 
   NSMutableArray<NSString *> *roms = [NSMutableArray array];
   NSMutableArray<NSString *> *arcade = [NSMutableArray array];
+  // Pistas .cue: su .bin lo carga el .cue, así que ese .bin no se lista por separado
+  NSMutableSet<NSString *> *cueBins = [NSMutableSet set];
+  for (NSString *rel in [fm subpathsOfDirectoryAtPath:docs error:nil]) {
+    if ([rel.pathExtension.lowercaseString isEqualToString:@"cue"]) {
+      NSString *bin = cueReferencedBin([docs stringByAppendingPathComponent:rel]);
+      if (bin) [cueBins addObject:bin];
+    }
+  }
   NSDirectoryEnumerator<NSString *> *en = [fm enumeratorAtPath:docs];
   for (NSString *rel in en) {
     NSString *top = [rel componentsSeparatedByString:@"/"].firstObject;
@@ -262,6 +296,13 @@ RCT_EXPORT_MODULE(Libretro)
       }
       continue;
     }
+    if ([ext isEqualToString:@"cue"]) {
+      NSString *bin = cueReferencedBin(full);
+      NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
+      if (console) [roms addObject:full];
+      continue;
+    }
+    if ([cueBins containsObject:full]) continue;  // lo carga su .cue
     if (romcheck::isRomExtension(ext.UTF8String) && consoleForKind(sniffFile(full)) != nil) {
       [roms addObject:full];
     }
@@ -341,6 +382,11 @@ RCT_EXPORT_MODULE(Libretro)
   NSString *path = normalizeRomPath(romPath);
   if ([path.pathExtension.lowercaseString isEqualToString:@"zip"]) {
     return romzip::foreignEntry(path.UTF8String).empty() ? @"mame" : @"";
+  }
+  if ([path.pathExtension.lowercaseString isEqualToString:@"cue"]) {
+    NSString *bin = cueReferencedBin(path);
+    NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
+    return console ?: @"";
   }
   return consoleForKind(sniffFile(path)) ?: @"";
 }

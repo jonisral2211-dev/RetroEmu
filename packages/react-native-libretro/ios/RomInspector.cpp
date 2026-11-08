@@ -30,11 +30,20 @@ bool isSmd(const uint8_t *d, size_t n) {
   return n >= 0x200 && d[8] == 0xAA && d[9] == 0xBB;
 }
 
+// PlayStation: identificador "PLAYSTATION" en la cabecera del sector 16 del disco.
+// .iso (2048 bytes por sector): 0x8000 + 8. .bin crudo (2352 bytes por sector): 0x9300 + 16.
+bool isPs1(const uint8_t *d, size_t n) {
+  static const char kId[] = "PLAYSTATION";
+  if (n >= 0x8008 + 11 && std::memcmp(d + 0x8008, kId, 11) == 0) return true;
+  return n >= 0x9310 + 11 && std::memcmp(d + 0x9310, kId, 11) == 0;
+}
+
 }  // namespace
 
 bool isRomExtension(const std::string &ext) {
   return ext == "gba" || ext == "agb" || ext == "bin" || ext == "z64" || ext == "n64" ||
-         ext == "v64" || ext == "md" || ext == "gen" || ext == "smd";
+         ext == "v64" || ext == "md" || ext == "gen" || ext == "smd" || ext == "iso" ||
+         ext == "cue";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
@@ -43,6 +52,7 @@ Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
   if ((ext == "z64" || ext == "n64" || ext == "v64") && isN64(data, size)) return Kind::N64;
   if ((ext == "md" || ext == "gen" || ext == "bin") && isMegaDrive(data, size)) return Kind::Sega;
   if (ext == "smd" && (isSmd(data, size) || isMegaDrive(data, size))) return Kind::Sega;
+  if ((ext == "iso" || ext == "bin") && isPs1(data, size)) return Kind::PS1;
   return Kind::Unknown;
 }
 

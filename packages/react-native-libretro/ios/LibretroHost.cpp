@@ -102,6 +102,16 @@ void coreLog(enum retro_log_level level, const char *fmt, ...) {
 // ---- Callbacks de Libretro (la API es C: deben tener enlace C) -------------
 extern "C" {
 
+// BIOS de PlayStation real presente en system/. Sin él, PCSX ReARMed usa su BIOS HLE.
+bool hasPs1Bios() {
+  static const char *const kBios[] = {"scph5501.bin", "scph1001.bin", "scph7001.bin", "scph5500.bin"};
+  for (const char *name : kBios) {
+    struct stat st {};
+    if (stat((g_systemDir + "/" + name).c_str(), &st) == 0) return true;
+  }
+  return false;
+}
+
 static bool onEnvironment(unsigned cmd, void *data) {
   switch (cmd) {
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
@@ -128,6 +138,10 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
       auto *var = static_cast<struct retro_variable *>(data);
       // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
+      if (var && var->key && std::strcmp(var->key, "pcsx_rearmed_bios") == 0 && !hasPs1Bios()) {
+        var->value = "HLE";  // PCSX ReARMed: BIOS HLE si no hay BIOS real
+        return true;
+      }
       if (g_isN64 && var && var->key) {
         // Claves reales del core: CORE_NAME = "mupen64plus" (ver mupen64plus-next_common.h)
         if (std::strcmp(var->key, "mupen64plus-rdp-plugin") == 0) {

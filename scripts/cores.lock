@@ -9,3 +9,4 @@ mgba_libretro|https://github.com/libretro/mgba.git|master|cmake|mgba_libretro|-D
 genesis_plus_gx_libretro|https://github.com/libretro/Genesis-Plus-GX.git|master|make||-f Makefile.libretro platform=ios-arm64|true
 mupen64plus_next_libretro|https://github.com/libretro/mupen64plus-libretro-nx.git|master|make||platform=ios-arm64 CPPFLAGS=-Irnl-shim SYSTEM_ZLIB=1|true
 mame2003_plus_libretro|https://github.com/libretro/mame2003-plus-libretro.git|master|make||platform=ios-arm64 CPPFLAGS=-Irnl-shim|true
+pcsx_rearmed_libretro|https://github.com/libretro/pcsx_rearmed.git|master|make||-f Makefile.libretro platform=ios-arm64|true

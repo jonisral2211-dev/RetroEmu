@@ -8,7 +8,10 @@
 // Necesario porque .bin puede ser GBA o Mega Drive.
 namespace romcheck {
 
-enum class Kind { Unknown, GBA, N64, Sega };
+enum class Kind { Unknown, GBA, N64, Sega, PS1 };
+
+/** Bytes de cabecera necesarios para inspeccionar PS1 (sector 16 de un .bin crudo + margen). */
+constexpr size_t kHeadSize = 0x9400;
 
 /** Extensiones de ROM reconocidas (en minúsculas, sin punto). */
 bool isRomExtension(const std::string &ext);

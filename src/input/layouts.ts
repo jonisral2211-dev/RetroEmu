@@ -197,5 +197,8 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
     case 'mame':
       // Arcade: D-Pad, dos botones y Start/Select (layout de GBA)
       return GBA_LAYOUT;
+    case 'pcsx':
+      // PS1: provisional con el layout de GBA hasta el layout táctil de PlayStation (paso 2)
+      return GBA_LAYOUT;
   }
 }
