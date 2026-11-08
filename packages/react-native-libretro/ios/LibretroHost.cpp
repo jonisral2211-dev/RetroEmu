@@ -71,6 +71,9 @@ std::atomic<int16_t> g_dbgAxisX{0};     // último valor devuelto para el stick 
 std::atomic<int16_t> g_dbgAxisY{0};
 std::atomic<uint32_t> g_dbgReads{0};    // lecturas de input_state desde la última instantánea
 std::atomic<uint32_t> g_dbgUiHits{0};   // botones escritos desde la UI desde la última instantánea
+std::atomic<uint32_t> g_dbgFrameW{0};   // último frame recibido del core
+std::atomic<uint32_t> g_dbgFrameH{0};
+std::atomic<uint32_t> g_dbgFramePitch{0};
 bool g_isN64 = false;
 FrameBuffer g_frame;
 AudioOutput g_audio;
@@ -182,6 +185,10 @@ static bool onEnvironment(unsigned cmd, void *data) {
 
 static void onVideo(const void *data, unsigned width, unsigned height, size_t pitch) {
   if (!data || !width || !height) return;  // NULL = frame duplicado, nada nuevo
+  // Diagnóstico de tamaño/pitch por frame (franjas en el borde = pitch o ancho inesperado)
+  g_dbgFrameW.store(width, std::memory_order_relaxed);
+  g_dbgFrameH.store(height, std::memory_order_relaxed);
+  g_dbgFramePitch.store(static_cast<uint32_t>(pitch), std::memory_order_relaxed);
   const auto *src = static_cast<const uint8_t *>(data);
   const auto fmt = g_pixelFormat;
 
@@ -536,14 +543,16 @@ std::string debugState() {
   const uint32_t hits = g_dbgJoyHits.exchange(0, std::memory_order_relaxed);
   const uint32_t reads = g_dbgReads.exchange(0, std::memory_order_relaxed);
   const uint32_t uiHits = g_dbgUiHits.exchange(0, std::memory_order_relaxed);
-  char buf[320];
+  char buf[400];
   std::snprintf(buf, sizeof(buf),
                 "UI ahora btn=%04x pad=%04x ax=%d ay=%d\n"
                 "UI pulsado (ult. 0.5s) btn=%04x\n"
                 "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
-                "stick devuelto x=%d y=%d",
+                "stick devuelto x=%d y=%d\n"
+                "frame %ux%u pitch=%u (esperado %u)",
                 g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
-                reads, g_dbgAxisX.load(), g_dbgAxisY.load());
+                reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_dbgFrameW.load(), g_dbgFrameH.load(),
+                g_dbgFramePitch.load(), g_dbgFrameW.load() * 4);
   return buf;
 }
 
