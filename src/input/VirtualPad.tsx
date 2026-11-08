@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.75)',
     borderBottomColor: 'rgba(0,0,0,0.5)',
     backgroundColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 10,
+    borderRadius: 14,
     shadowColor: '#000',
     shadowOpacity: 0.4,
     shadowRadius: 3,
@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
   },
   keyPressed: { backgroundColor: 'rgba(255,255,255,0.4)' },
   round: { borderRadius: 999 },
-  label: { color: '#fff', fontWeight: '700', fontSize: 12, textShadowColor: '#000', textShadowRadius: 3 },
+  label: { color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 12, textShadowColor: '#000', textShadowRadius: 3 },
   ring: {
     position: 'absolute',
     borderWidth: 2,
