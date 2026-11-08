@@ -18,6 +18,12 @@ type Touch = { identifier: string | number; locationX: number; locationY: number
 // Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
 // en cada evento se recalcula el estado completo a partir de todos los dedos activos.
 // Es estado puro (sin acumular), así un evento perdido no deja botones pegados.
+// Diagnóstico del último cálculo (se muestra en el panel Debug de PlayerScreen)
+let padDebugText = '';
+export function getPadDebug(): string {
+  return padDebugText;
+}
+
 export function VirtualPad({
   layout,
   style,
@@ -40,6 +46,7 @@ export function VirtualPad({
     let bits = 0;
     let ax = 0;
     let ay = 0;
+    let stickPts = 0;
     for (const c of layout.clusters) {
       const cx = c.x * W;
       const cy = c.y * H;
@@ -54,11 +61,17 @@ export function VirtualPad({
       }
       const r = evaluateZones(c.zones, pts, cw, ch);
       bits |= r.bits;
+      if (c.zones.some((z: Zone) => z.kind === 'stick')) stickPts = pts.length;
       if (c.zones.some((z: Zone) => z.kind === 'stick')) {
         ax = r.ax;
         ay = r.ay;
       }
     }
+
+    padDebugText =
+      `pad: toques=${touches.length} ` +
+      touches.map((t) => `(${Math.round(t.locationX)},${Math.round(t.locationY)})`).join(' ') +
+      ` W=${Math.round(W)} H=${Math.round(H)} enStick=${stickPts}`;
 
     if (bits !== mask.current) {
       mask.current = bits;

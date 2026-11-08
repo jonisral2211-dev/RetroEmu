@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-na
 import { Libretro, LibretroView } from 'react-native-libretro';
 import { coreForConsole } from '../emulator/cores';
 import { layoutFor } from '../input/layouts';
-import { VirtualPad } from '../input/VirtualPad';
+import { getPadDebug, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 
 type Props = { romPath: string; onExit: () => void };
@@ -34,7 +34,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   const [debugText, setDebugText] = useState<string | null>(null);
   useEffect(() => {
     if (!debugOn) return;
-    const id = setInterval(() => setDebugText(Libretro.debugState()), 500);
+    const id = setInterval(() => setDebugText(`${Libretro.debugState()}\n${getPadDebug()}`), 500);
     return () => clearInterval(id);
   }, [debugOn]);
 
