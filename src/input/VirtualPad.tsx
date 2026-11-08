@@ -9,21 +9,23 @@ import {
   ViewStyle,
 } from 'react-native';
 import { Libretro } from 'react-native-libretro';
+import { Btn } from '../emulator/buttons';
 import { evaluateZones, Pt } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 
 type Size = { w: number; h: number };
 type Touch = { identifier: string | number; locationX: number; locationY: number };
+type Knob = { x: number; y: number }; // desplazamiento normalizado del stick [-1, 1]
 
-// Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
-// en cada evento se recalcula el estado completo a partir de todos los dedos activos.
-// Es estado puro (sin acumular), así un evento perdido no deja botones pegados.
 // Diagnóstico del último cálculo (se muestra en el panel Debug de PlayerScreen)
 let padDebugText = '';
 export function getPadDebug(): string {
   return padDebugText;
 }
 
+// Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
+// en cada evento se recalcula el estado completo a partir de todos los dedos activos.
+// Es estado puro (sin acumular), así un evento perdido no deja botones pegados.
 export function VirtualPad({
   layout,
   style,
@@ -34,6 +36,8 @@ export function VirtualPad({
   opacity?: number;
 }) {
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
+  const [active, setActive] = useState(0); // máscara pintada (feedback al pulsar)
+  const [knob, setKnob] = useState<Knob>({ x: 0, y: 0 }); // posición del puck del stick
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const mask = useRef(0);
   const axis = useRef({ x: 0, y: 0 });
@@ -61,10 +65,10 @@ export function VirtualPad({
       }
       const r = evaluateZones(c.zones, pts, cw, ch);
       bits |= r.bits;
-      if (c.zones.some((z: Zone) => z.kind === 'stick')) stickPts = pts.length;
       if (c.zones.some((z: Zone) => z.kind === 'stick')) {
         ax = r.ax;
         ay = r.ay;
+        stickPts = pts.length;
       }
     }
 
@@ -76,10 +80,12 @@ export function VirtualPad({
     if (bits !== mask.current) {
       mask.current = bits;
       Libretro.setButtons(bits);
+      setActive(bits);
     }
     if (ax !== axis.current.x || ay !== axis.current.y) {
       axis.current = { x: ax, y: ay };
       Libretro.setAnalog(ax, ay);
+      setKnob({ x: ax, y: ay });
     }
   };
 
@@ -113,13 +119,23 @@ export function VirtualPad({
       onTouchCancel={(e) => compute(remaining(e))}
       style={[styles.pad, style, { opacity }]}>
       {layout.clusters.map((c) => (
-        <ClusterView key={c.id} cluster={c} size={size} />
+        <ClusterView key={c.id} cluster={c} size={size} active={active} knob={knob} />
       ))}
     </View>
   );
 }
 
-function ClusterView({ cluster, size }: { cluster: Cluster; size: Size }) {
+function ClusterView({
+  cluster,
+  size,
+  active,
+  knob,
+}: {
+  cluster: Cluster;
+  size: Size;
+  active: number;
+  knob: Knob;
+}) {
   return (
     <View
       pointerEvents="none"
@@ -133,29 +149,60 @@ function ClusterView({ cluster, size }: { cluster: Cluster; size: Size }) {
         },
       ]}>
       {cluster.zones.map((z, i) => (
-        <ZoneView key={i} zone={z} w={size.w * cluster.w} h={size.h * cluster.h} />
+        <ZoneView
+          key={i}
+          zone={z}
+          w={size.w * cluster.w}
+          h={size.h * cluster.h}
+          active={active}
+          knob={knob}
+        />
       ))}
     </View>
   );
 }
 
-function ZoneView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
+// Un botón está pulsado si todos sus bits están en la máscara activa
+function isPressed(zone: { bits: number }, active: number): boolean {
+  return zone.bits !== 0 && (active & zone.bits) === zone.bits;
+}
+
+function ZoneView({
+  zone,
+  w,
+  h,
+  active,
+  knob,
+}: {
+  zone: Zone;
+  w: number;
+  h: number;
+  active: number;
+  knob: Knob;
+}) {
   if (w <= 0) return null; // esperar al primer layout
   const m = Math.min(w, h);
 
   if (zone.kind === 'button') {
+    const pressed = isPressed(zone, active);
+    const tint = zone.tint ?? '#ffffff';
+    const common = [
+      styles.key,
+      { borderColor: tint },
+      pressed && styles.keyPressed,
+    ];
     if (zone.shape === 'rect') {
       return (
         <View
           pointerEvents="none"
           style={[
-            styles.key,
+            common,
             {
               left: zone.x * w,
               top: zone.y * h,
               width: zone.w * w,
               height: zone.h * h,
-              borderColor: zone.tint,
+              transform: [{ scale: pressed ? 0.92 : 1 }],
             },
           ]}>
           <Text style={styles.label}>{zone.label}</Text>
@@ -167,14 +214,14 @@ function ZoneView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
       <View
         pointerEvents="none"
         style={[
-          styles.key,
+          common,
           styles.round,
           {
             left: zone.x * w - d / 2,
             top: zone.y * h - d / 2,
             width: d,
             height: d,
-            borderColor: zone.tint,
+            transform: [{ scale: pressed ? 0.92 : 1 }],
           },
         ]}>
         <Text style={styles.label}>{zone.label}</Text>
@@ -182,25 +229,47 @@ function ZoneView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
     );
   }
 
-  const d = 2 * zone.r * m;
-  const left = zone.cx * w - d / 2;
-  const top = zone.cy * h - d / 2;
-
   if (zone.kind === 'dpad') {
+    const d = 2 * zone.r * m;
+    const pressed = (active & (Btn.UP | Btn.DOWN | Btn.LEFT | Btn.RIGHT)) !== 0;
     return (
       <View
         pointerEvents="none"
-        style={[styles.ring, styles.round, { left, top, width: d, height: d }]}>
+        style={[
+          styles.ring,
+          styles.round,
+          pressed && styles.ringPressed,
+          { left: zone.cx * w - d / 2, top: zone.cy * h - d / 2, width: d, height: d },
+        ]}>
         <Text style={styles.arrow}>✚</Text>
       </View>
     );
   }
 
+  // Stick 3D: base cóncava translúcida + puck que sigue el pulgar dentro del radio
+  const baseD = 2 * zone.r * m;
+  const puckD = baseD * 0.5;
+  const travel = baseD / 2 - puckD / 2; // desplazamiento máximo del centro del puck
   return (
     <View
       pointerEvents="none"
-      style={[styles.ring, styles.round, { left, top, width: d, height: d }]}>
-      <View style={styles.stickKnob} />
+      style={[
+        styles.stickBase,
+        styles.round,
+        { left: zone.cx * w - baseD / 2, top: zone.cy * h - baseD / 2, width: baseD, height: baseD },
+      ]}>
+      <View
+        style={[
+          styles.puck,
+          styles.round,
+          {
+            width: puckD,
+            height: puckD,
+            left: baseD / 2 - puckD / 2 + knob.x * travel,
+            top: baseD / 2 - puckD / 2 + knob.y * travel,
+          },
+        ]}
+      />
     </View>
   );
 }
@@ -208,29 +277,52 @@ function ZoneView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
 const styles = StyleSheet.create({
   pad: { position: 'relative', width: '100%' },
   cluster: { position: 'absolute' },
+  // Botón translúcido con relieve: borde claro arriba, sombra abajo
   key: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.35)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderTopColor: 'rgba(255,255,255,0.75)',
+    borderBottomColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     borderRadius: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
   },
+  keyPressed: { backgroundColor: 'rgba(255,255,255,0.4)' },
   round: { borderRadius: 999 },
-  label: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  label: { color: '#fff', fontWeight: '700', fontSize: 12, textShadowColor: '#000', textShadowRadius: 3 },
   ring: {
     position: 'absolute',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  ringPressed: { backgroundColor: 'rgba(255,255,255,0.2)' },
   arrow: { color: 'rgba(255,255,255,0.5)', fontSize: 18 },
-  stickKnob: {
-    width: '40%',
-    height: '40%',
-    borderRadius: 999,
+  // Base del stick: fondo oscuro translúcido con borde biselado
+  stickBase: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderTopColor: 'rgba(255,255,255,0.2)',
+    borderBottomColor: 'rgba(255,255,255,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.38)',
+  },
+  // Puck: relieve con sombra proyectada
+  puck: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderTopColor: 'rgba(255,255,255,0.8)',
+    borderBottomColor: 'rgba(0,0,0,0.4)',
     backgroundColor: 'rgba(255,255,255,0.35)',
+    shadowColor: '#000',
+    shadowOpacity: 0.55,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 3 },
   },
 });

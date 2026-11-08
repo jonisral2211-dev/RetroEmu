@@ -114,7 +114,7 @@ export const N64_LAYOUT: PadLayout = {
       ],
     },
     {
-      id: 'stick', x: 0, y: 0.22, w: 0.36, h: 0.42,
+      id: 'stick', x: 0, y: 0.22, w: 0.42, h: 0.46,
       zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }],
     },
     {
