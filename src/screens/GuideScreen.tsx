@@ -109,6 +109,7 @@ const CARDS: Card[] = [
       'Jugador 2: abre el mismo juego → engranaje → Jugar en línea → escribe el código en "Unirse con código o IP" → Unirse.',
       'Al conectar, el Jugador 2 recibe la partida del Jugador 1 y empezáis juntos. Arriba verás el ping en milisegundos.',
       'En la misma Wi-Fi también puedes usar "Crear sala local" y unirte escribiendo la IP que aparece.',
+      'Jugador 2 sin la app (Mando Web): en Jugar en línea toca "Crear mando web para el Jugador 2" y comparte el enlace. Tu amigo lo abre en Safari o Chrome, elige el tipo de mando (Arcade, PlayStation/PSP, N64 o GBA) y su móvil se convierte en el mando del Jugador 2 de tu partida, sin instalar nada ni tener el juego.',
       'Peleas y carreras (KOF 2002, Dragon Ball GT, Mega Drive, GBA, PS1) usan rollback: tus botones responden al instante y la app corrige en silencio si la red se retrasa. N64 y PSP usan retardo adaptable.',
     ],
     tip: 'Durante la partida en línea el juego no se pausa ni se pueden cargar estados (desincronizaría a los dos).',

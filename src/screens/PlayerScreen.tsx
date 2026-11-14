@@ -47,7 +47,16 @@ import { getPadDebug, PointerRect, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 import { theme } from '../theme';
 import { Slider } from '../ui/Slider';
-import { FilterMode, GameMenu, GearButton, NetState, parseNetStatus, TouchMode } from './GameMenu';
+import {
+  FilterMode,
+  GameMenu,
+  GearButton,
+  NetState,
+  parseNetStatus,
+  parseWebPadStatus,
+  TouchMode,
+  WebPadState,
+} from './GameMenu';
 import ControllerScreen from './ControllerScreen';
 import GuideScreen from './GuideScreen';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -216,6 +225,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Netplay: estado consultado al nativo (barato y síncrono)
   const [net, setNet] = useState<NetState>({ phase: 'idle', message: '', code: '', ping: -1 });
+  const [webPad, setWebPad] = useState<WebPadState>({ phase: 0, code: '', message: '' });
   useEffect(() => {
     if (!ready) return;
     const poll = () =>
@@ -225,10 +235,21 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           ? prev
           : next;
       });
+    const pollPad = () =>
+      setWebPad((prev) => {
+        const next = parseWebPadStatus(Libretro.webPadStatus());
+        return next.phase === prev.phase && next.code === prev.code && next.message === prev.message ? prev : next;
+      });
     poll();
-    const id = setInterval(poll, 700);
+    pollPad();
+    const id = setInterval(() => {
+      poll();
+      pollPad();
+    }, 700);
     return () => clearInterval(id);
   }, [ready]);
+  // Al salir del juego se cierra el mando web
+  useEffect(() => () => Libretro.webPadStop(), []);
   const online = net.phase !== 'idle';
 
   // Modo TV: pantalla externa (HDMI / AirPlay). El juego sale solo por la TV y el iPhone hace de
@@ -488,6 +509,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {online && !menuOpen ? <Text style={styles.netNotice}>{net.message}</Text> : null}
+      {webPad.phase === 3 && !menuOpen ? <Text style={styles.netNotice}>J2 conectado (mando web)</Text> : null}
       {airplayAudioOnly && !airplayNoticeHidden && !menuOpen ? (
         <Pressable onPress={() => setAirplayNoticeHidden(true)} style={styles.airplayNotice}>
           <Text style={styles.airplayText}>
@@ -667,6 +689,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
         Libretro.setPaused(paused || editing);
       }}
       onControllerTest={() => setControllerTest(true)}
+      webPad={webPad}
     />
   ) : null;
   const controllerScreen = controllerTest ? (

@@ -13,7 +13,7 @@ from pathlib import Path
 import oci
 
 NAME = "jl-relay"
-PORTS = [22, 55436]
+PORTS = [22, 55436, 8080]  # SSH, salas (TCP), mando web (HTTP/WebSocket)
 
 config = oci.config.from_file()
 tenancy = config["tenancy"]
@@ -67,7 +67,7 @@ have = {(r.protocol, r.tcp_options.destination_port_range.min if r.tcp_options a
         for r in sl.ingress_security_rules}
 new_rules = [oci.core.models.IngressSecurityRule(
     protocol="6", source="0.0.0.0/0", source_type="CIDR_BLOCK", is_stateless=False,
-    description=f"JL Relay {p}" if p != 22 else "SSH",
+    description={22: "SSH", 8080: "JL mando web"}.get(p, f"JL Relay {p}"),
     tcp_options=oci.core.models.TcpOptions(destination_port_range=oci.core.models.PortRange(min=p, max=p)))
     for p in PORTS if ("6", p) not in have]
 if new_rules:

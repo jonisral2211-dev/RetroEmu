@@ -4,7 +4,7 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import type { DirMode } from '../input/layouts';
 import type { GamepadStatus } from '../input/useGamepadStatus';
-import { isRoomCode, loadRelay, parseRelay, saveRelay } from '../net/relaySettings';
+import { isRoomCode, loadRelay, parseRelay, saveRelay, WEBPAD_HTTP_PORT } from '../net/relaySettings';
 import { theme } from '../theme';
 
 export const NET_PORT = 55435;
@@ -12,6 +12,13 @@ export const NET_PORT = 55435;
 export type TouchMode = 'auto' | 'show' | 'hide';
 export type FilterMode = 'sharp' | 'smooth';
 export type NetState = { phase: string; message: string; code: string; ping: number };
+/** Mando web del Jugador 2: fase 0 apagado, 1 conectando, 2 esperando, 3 conectado. */
+export type WebPadState = { phase: number; code: string; message: string };
+
+export function parseWebPadStatus(raw: string): WebPadState {
+  const [phase = '0', code = '', ...rest] = raw.split('|');
+  return { phase: Number(phase) || 0, code, message: rest.join('|') };
+}
 type Option<T extends string> = { id: T; label: string };
 
 // "fase|mensaje|código|ping"
@@ -147,7 +154,12 @@ export type GameMenuProps = {
   forceController: boolean;
   onForceController: (v: boolean) => void;
   onControllerTest: () => void;
+  webPad: WebPadState;
 };
+
+function webPadLink(host: string, code: string): string {
+  return `http://${host}:${WEBPAD_HTTP_PORT}/play?code=${code}`;
+}
 
 export function GameMenu(p: GameMenuProps) {
   const [address, setAddress] = useState('');
@@ -333,6 +345,53 @@ export function GameMenu(p: GameMenuProps) {
             </Text>
           </Section>
 
+          <Section title="Invitar Jugador 2 sin app (Mando Web)">
+            <Text style={styles.note}>
+              Tu amigo abre un enlace en Safari o Chrome de su móvil y usa la pantalla como mando del Jugador 2,
+              sin instalar nada y sin tener el juego. Ideal para jugar a dobles mirando la TV o la misma pantalla.
+            </Text>
+            {p.webPad.phase === 0 ? (
+              <Action
+                label="Crear mando web para el Jugador 2"
+                primary
+                disabled={!relay || online}
+                onPress={() => relay && Libretro.webPadStart(relay.host, relay.port)}
+              />
+            ) : (
+              <>
+                <Text style={[styles.status, p.webPad.phase === 3 && styles.statusOn]}>{p.webPad.message}</Text>
+                {p.webPad.code && relay ? (
+                  <View style={styles.codeBox}>
+                    <Text style={styles.codeLabel}>CÓDIGO DEL MANDO WEB</Text>
+                    <Text style={styles.code} selectable>
+                      {p.webPad.code}
+                    </Text>
+                    <Text style={styles.link} selectable>
+                      {webPadLink(relay.host, p.webPad.code)}
+                    </Text>
+                    <View style={styles.grid}>
+                      <Action label="Copiar enlace" onPress={() => Libretro.copyToClipboard(webPadLink(relay.host, p.webPad.code))} />
+                      <Action
+                        label="Compartir enlace / código"
+                        primary
+                        onPress={() =>
+                          Share.share({
+                            message:
+                              `¡Juega conmigo ${p.title} en JL Emulator! Abre este enlace en tu móvil y serás el ` +
+                              `Jugador 2 (no hace falta instalar nada): ${webPadLink(relay.host, p.webPad.code)} ` +
+                              `(código ${p.webPad.code})`,
+                          }).catch(() => {})
+                        }
+                      />
+                    </View>
+                  </View>
+                ) : null}
+                <Action label="Cerrar mando web" onPress={() => Libretro.webPadStop()} danger />
+              </>
+            )}
+            {online ? <Text style={styles.note}>No disponible durante una partida en línea entre dos apps.</Text> : null}
+          </Section>
+
           <Section title="TV y AirPlay">
             <Text style={[styles.status, p.tvConnected && styles.statusOn]}>
               {p.tvConnected ? 'TV conectada: el juego se ve en la TV' : 'Sin TV conectada'}
@@ -508,6 +567,7 @@ const styles = StyleSheet.create({
   codeLabel: { color: theme.amber, fontSize: 11, fontWeight: '800', letterSpacing: 2 },
   code: { color: theme.text, fontSize: 34, fontWeight: '900', letterSpacing: 8 },
   warnText: { color: theme.amber, fontSize: 13, lineHeight: 18, fontWeight: '600' },
+  link: { color: theme.titaniumHi, fontSize: 13, textAlign: 'center' },
   playerRow: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
   input: {
     flex: 1,

@@ -1459,6 +1459,80 @@ bool netJoin(const char *address, int port) {
   return true;
 }
 
+// ---- Mando web del Jugador 2 (navegador, sin app) ------------------------------------------
+// La app abre "JLRL1 PADHOST" en el relay y recibe líneas "P botones lx ly" del navegador del
+// Jugador 2, que se inyectan en el puerto 1 de Libretro como si fuera un segundo mando.
+std::atomic<int> g_webPadFd{-1};
+std::atomic<int> g_webPadPhase{0};  // 0 = apagado, 1 = conectando, 2 = esperando jugador, 3 = jugador conectado
+std::string g_webPadCode;           // protegido por g_netMutex
+std::string g_webPadMessage;
+
+void webPadSet(int phase, const std::string &message) {
+  std::lock_guard<std::mutex> lock(g_netMutex);
+  g_webPadPhase = phase;
+  g_webPadMessage = message;
+  if (phase == 0) g_webPadCode.clear();
+}
+
+void webPadStop() {
+  closeFd(g_webPadFd);
+  setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
+  webPadSet(0, "Mando web cerrado");
+}
+
+bool webPadStart(const char *relayHost, int relayPort) {
+  if (!relayHost) return false;
+  webPadStop();
+  webPadSet(1, "Abriendo mando web…");
+  const std::string relay(relayHost);
+  std::thread([relay, relayPort]() {
+    std::string error, line;
+    const int fd = connectTcp(relay, relayPort, 8000, error);
+    if (fd < 0) {
+      webPadSet(0, "Servidor de salas no disponible: " + error);
+      return;
+    }
+    const char hello[] = "JLRL1 PADHOST\n";
+    if (!sendAll(fd, hello, sizeof hello - 1) || !recvLine(fd, line, 10000) || line.rfind("CODE ", 0) != 0) {
+      ::close(fd);
+      webPadSet(0, "El servidor de salas no respondió");
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(g_netMutex);
+      g_webPadCode = line.substr(5);
+    }
+    g_webPadFd = fd;
+    webPadSet(2, "Esperando al Jugador 2 en el navegador…");
+    while (g_webPadFd.load() == fd) {
+      if (!recvLine(fd, line, 45000)) break;  // el relay manda PING cada 20 s
+      if (line == "J") {
+        webPadSet(3, "Jugador 2 conectado desde el navegador");
+      } else if (line == "L") {
+        setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
+        webPadSet(2, "El Jugador 2 salió · esperando…");
+      } else if (line.rfind("P ", 0) == 0) {
+        unsigned b = 0;
+        int lx = 0, ly = 0;
+        if (std::sscanf(line.c_str() + 2, "%u %d %d", &b, &lx, &ly) == 3) {
+          setGamepadPort(1, uint16_t(b), lx / 32767.0, ly / 32767.0, 0, 0, 0, 0);
+        }
+      }
+    }
+    if (g_webPadFd.load() == fd) {
+      closeFd(g_webPadFd);
+      setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
+      webPadSet(0, "Se cortó la conexión del mando web");
+    }
+  }).detach();
+  return true;
+}
+
+std::string webPadStatus() {
+  std::lock_guard<std::mutex> lock(g_netMutex);
+  return std::to_string(g_webPadPhase.load()) + "|" + g_webPadCode + "|" + g_webPadMessage;
+}
+
 bool netJoinCode(const char *code, const char *relayHost, int relayPort) {
   if (!g_gameLoaded || !code || !relayHost) return false;
   netStopLocked("Sin conexión");

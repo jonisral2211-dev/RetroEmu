@@ -46,6 +46,11 @@ bool netJoinCode(const char *code, const char *relayHost, int relayPort);
 void netStop();
 /** "fase|mensaje|código|ping_ms" (fase: idle, waiting, connecting, syncing, playing). */
 std::string netStatus();
+/** Mando web del Jugador 2: abre una sala en el relay; las pulsaciones llegan al puerto 1. */
+bool webPadStart(const char *relayHost, int relayPort);
+void webPadStop();
+/** "fase|código|mensaje" (fase 0 apagado, 1 conectando, 2 esperando, 3 jugador conectado). */
+std::string webPadStatus();
 /** IPv4 de la Wi-Fi (o de la primera interfaz activa). */
 std::string localAddress();
 void reset();

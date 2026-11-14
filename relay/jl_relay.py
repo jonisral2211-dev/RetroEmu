@@ -8,13 +8,17 @@ Protocolo (líneas de texto; después, bytes en bruto en ambos sentidos):
   Anfitrión -> "JLRL1 HOST\\n"        servidor -> "CODE ABC123\\n"  (y "PING\\n" cada 20 s)
   Invitado  -> "JLRL1 JOIN ABC123\\n" servidor -> "PAIRED\\n" a los dos, o "ERR motivo\\n"
 
-Uso: python3 jl_relay.py [--port 55436] [--delay-ms 0]
+Mando web (Jugador 2 sin app): página /play en --http-port (8080), ver webpad.py.
+
+Uso: python3 jl_relay.py [--port 55436] [--http-port 8080] [--delay-ms 0]
 """
 import argparse
 import asyncio
 import secrets
 import socket
 import time
+
+import webpad
 
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin 0/O ni 1/I: fácil de dictar
 ROOM_TTL = 3600  # una sala espera al invitado como mucho 1 hora
@@ -140,6 +144,9 @@ async def handle(reader, writer, delay):
         return
     if line[:2] == ["JLRL1", "HOST"]:
         await host_room(reader, writer, delay)
+    elif line[:2] == ["JLRL1", "PADHOST"]:
+        # Mando web: la app recibe aquí las pulsaciones del Jugador 2 desde el navegador
+        await webpad.pad_host(reader, writer, rooms)
     elif line[:2] == ["JLRL1", "JOIN"] and len(line) == 3:
         room = rooms.pop(line[2].upper(), None)
         if room is None or room.guest.done():
@@ -158,12 +165,16 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=55436)
     ap.add_argument("--delay-ms", type=int, default=0, help="latencia artificial por sentido (pruebas)")
+    ap.add_argument("--http-port", type=int, default=8080, help="página /play del mando web (0 = desactivada)")
     args = ap.parse_args()
     delay = args.delay_ms / 1000
     server = await asyncio.start_server(lambda r, w: handle(r, w, delay), "0.0.0.0", args.port)
     print(f"JL Relay escuchando en el puerto {args.port}", flush=True)
-    async with server:
-        await server.serve_forever()
+    servers = [server]
+    if args.http_port:
+        servers.append(await asyncio.start_server(webpad.http_handle, "0.0.0.0", args.http_port))
+        print(f"Mando web en http://0.0.0.0:{args.http_port}/play", flush=True)
+    await asyncio.gather(*(srv.serve_forever() for srv in servers))
 
 
 if __name__ == "__main__":

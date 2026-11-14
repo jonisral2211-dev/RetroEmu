@@ -50,6 +50,11 @@ export interface Spec extends TurboModule {
   netHostRelay(relayHost: string, port: number): boolean;
   /** Netplay a distancia: entra en la sala con su código. */
   netJoinCode(code: string, relayHost: string, port: number): boolean;
+  /** Mando web del Jugador 2 (sin app): abre una sala en el relay; el navegador manda al puerto 1. */
+  webPadStart(relayHost: string, port: number): boolean;
+  webPadStop(): void;
+  /** "fase|código|mensaje" (0 apagado, 1 conectando, 2 esperando, 3 jugador conectado). */
+  webPadStatus(): string;
   /** Copia texto al portapapeles del iPhone. */
   copyToClipboard(text: string): void;
   netStop(): void;

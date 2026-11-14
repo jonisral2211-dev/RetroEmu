@@ -1,14 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Servidor de salas (JL Relay) para jugar a distancia sin abrir puertos: "host:puerto".
-// El servidor está en relay/ del repositorio (Docker). Vacío = solo conexión directa por IP.
+// El servidor está en relay/ del repositorio (Docker).
 const KEY = 'jl.relay.v1';
-export const DEFAULT_RELAY = '';
+// Servidor JL Relay en Oracle Cloud (IP fija). El usuario puede cambiarlo en Jugar en línea.
+export const DEFAULT_RELAY = '193.122.221.98:55436';
+/** Puerto HTTP de la página del mando web (/play) en el mismo servidor. */
+export const WEBPAD_HTTP_PORT = 8080;
 export const RELAY_PORT = 55436;
 
 export async function loadRelay(): Promise<string> {
   try {
-    return (await AsyncStorage.getItem(KEY)) ?? DEFAULT_RELAY;
+    return (await AsyncStorage.getItem(KEY)) || DEFAULT_RELAY;
   } catch {
     return DEFAULT_RELAY;
   }

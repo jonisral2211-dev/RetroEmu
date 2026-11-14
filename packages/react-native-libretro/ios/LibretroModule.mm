@@ -814,6 +814,19 @@ RCT_EXPORT_MODULE(Libretro)
   return @(host::netJoinCode(code.uppercaseString.UTF8String, relayHost.UTF8String, (int)port));
 }
 
+// Mando web del Jugador 2 (navegador): sus pulsaciones llegan al puerto 1
+- (NSNumber *)webPadStart:(NSString *)relayHost port:(double)port {
+  return @(host::webPadStart(relayHost.UTF8String, (int)port));
+}
+
+- (void)webPadStop {
+  host::webPadStop();
+}
+
+- (NSString *)webPadStatus {
+  return [NSString stringWithUTF8String:host::webPadStatus().c_str()];
+}
+
 - (void)copyToClipboard:(NSString *)text {
   dispatch_async(dispatch_get_main_queue(), ^{
     UIPasteboard.generalPasteboard.string = text;

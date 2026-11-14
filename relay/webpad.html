@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0D0E12">
+<title>JL Emulator · Mando</title>
+<style>
+  :root { --bg:#0D0E12; --surface:#15171D; --border:#2A2E37; --text:#ECEDEF; --dim:#7D828C; --gold:#D4AF37; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; touch-action:none; overscroll-behavior:none; }
+  #join { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:24px; }
+  .brand { font-weight:900; letter-spacing:4px; color:var(--gold); font-size:26px; }
+  .brand span { color:var(--text); font-weight:300; }
+  .sub { color:var(--dim); font-size:14px; text-align:center; max-width:340px; line-height:1.4; }
+  input { width:min(320px,90vw); font-size:34px; letter-spacing:10px; text-align:center; text-transform:uppercase;
+    background:var(--surface); color:var(--text); border:1px solid var(--gold); border-radius:14px; padding:12px; outline:none; -webkit-user-select:text; user-select:text; }
+  .types { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:360px; }
+  .type { padding:10px 14px; border-radius:20px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:14px; font-weight:600; }
+  .type.on { background:var(--gold); color:var(--bg); border-color:var(--gold); }
+  .go { padding:14px 34px; border-radius:24px; border:none; background:var(--gold); color:var(--bg); font-size:17px; font-weight:900; }
+  #msg { min-height:20px; color:#F87171; font-size:14px; text-align:center; }
+  #pad { position:fixed; inset:0; display:none; }
+  #status { position:absolute; top:max(8px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); font-size:12px; color:#4ADE80; font-weight:700; white-space:nowrap; }
+  #leave { position:absolute; top:max(6px,env(safe-area-inset-top)); right:max(10px,env(safe-area-inset-right)); font-size:12px; color:var(--gold); border:1px solid var(--gold); border-radius:14px; padding:5px 10px; background:transparent; }
+  .ctl { position:absolute; display:flex; align-items:center; justify-content:center; border-radius:50%;
+    border:2px solid rgba(255,255,255,.28); background:rgba(255,255,255,.08); color:rgba(255,255,255,.88);
+    font-weight:800; transform:translate(-50%,-50%); pointer-events:none; text-shadow:0 1px 3px #000; }
+  .ctl.rect { border-radius:12px; }
+  .ctl.on { background:rgba(255,255,255,.42); transform:translate(-50%,-50%) scale(.93); }
+  .base { border-color:rgba(212,175,55,.6); background:rgba(0,0,0,.35); }
+  .knob { position:absolute; width:46%; height:46%; border-radius:50%; background:rgba(255,255,255,.35); border:2px solid rgba(255,255,255,.7); left:27%; top:27%; }
+  #rotate { position:fixed; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:30px; background:rgba(13,14,18,.92); color:var(--gold); font-weight:800; font-size:18px; }
+  @media (orientation: portrait) { body.playing #rotate { display:flex; } }
+</style>
+</head>
+<body>
+<div id="join">
+  <div class="brand">JL <span>EMULATOR</span></div>
+  <div class="sub">Mando del Jugador 2. Escribe el código que te ha enviado el Jugador 1 y elige el tipo de mando.</div>
+  <input id="code" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="CÓDIGO" inputmode="text">
+  <div class="types" id="types"></div>
+  <button class="go" id="go">Conectar</button>
+  <div id="msg"></div>
+</div>
+<div id="pad"><div id="status"></div><button id="leave">Salir</button></div>
+<div id="rotate">Gira el móvil en horizontal para usar el mando</div>
+<script>
+'use strict';
+// Bits RETRO_DEVICE_ID_JOYPAD_*
+const B = { B:1, Y:2, SELECT:4, START:8, UP:16, DOWN:32, LEFT:64, RIGHT:128, A:256, X:512, L:1024, R:2048, L2:4096, R2:8192 };
+const GRAY = '#9aa0a8';
+// Controles: x/y = centro en % de la pantalla (horizontal); s = tamaño en % del lado menor
+const LAYOUTS = {
+  arcade: { name: 'Arcade / Neo Geo', controls: [
+    { k: 'stick', x: 20, y: 60, s: 52, digital: true },
+    { k: 'btn', t: 'A', b: B.B, x: 62, y: 70, s: 19, c: '#f87171' }, { k: 'btn', t: 'B', b: B.A, x: 76, y: 62, s: 19, c: '#facc15' },
+    { k: 'btn', t: 'C', b: B.Y, x: 62, y: 44, s: 19, c: '#f0abfc' }, { k: 'btn', t: 'D', b: B.X, x: 76, y: 36, s: 19, c: '#60a5fa' },
+    { k: 'btn', t: 'E', b: B.L, x: 90, y: 54, s: 16 }, { k: 'btn', t: 'F', b: B.R, x: 90, y: 28, s: 16 },
+    { k: 'rect', t: 'COIN', b: B.SELECT, x: 40, y: 12, w: 16, h: 9, c: '#facc15' }, { k: 'rect', t: 'START', b: B.START, x: 60, y: 12, w: 16, h: 9 },
+  ] },
+  ps: { name: 'PlayStation / PSP', controls: [
+    { k: 'dpad', x: 16, y: 44, s: 40 }, { k: 'stick', x: 33, y: 76, s: 34 },
+    { k: 'btn', t: '△', b: B.X, x: 84, y: 30, s: 17, c: '#22c55e' }, { k: 'btn', t: '○', b: B.A, x: 93, y: 50, s: 17, c: '#ef4444' },
+    { k: 'btn', t: '✕', b: B.B, x: 84, y: 70, s: 17, c: '#3b82f6' }, { k: 'btn', t: '□', b: B.Y, x: 75, y: 50, s: 17, c: '#ec4899' },
+    { k: 'rect', t: 'L2', b: B.L2, x: 6, y: 10, w: 10, h: 9, c: GRAY }, { k: 'rect', t: 'L1', b: B.L, x: 19, y: 10, w: 13, h: 9, c: GRAY },
+    { k: 'rect', t: 'R1', b: B.R, x: 81, y: 10, w: 13, h: 9, c: GRAY }, { k: 'rect', t: 'R2', b: B.R2, x: 94, y: 10, w: 10, h: 9, c: GRAY },
+    { k: 'rect', t: 'SELECT', b: B.SELECT, x: 44, y: 88, w: 13, h: 8 }, { k: 'rect', t: 'START', b: B.START, x: 58, y: 88, w: 13, h: 8 },
+  ] },
+  n64: { name: 'Nintendo 64', controls: [
+    { k: 'stick', x: 22, y: 62, s: 48 }, { k: 'dpad', x: 8, y: 22, s: 22 },
+    { k: 'btn', t: 'A', b: B.B, x: 82, y: 70, s: 21, c: '#3b82f6' }, { k: 'btn', t: 'B', b: B.Y, x: 70, y: 56, s: 17, c: '#22c55e' },
+    { k: 'btn', t: 'C▲', b: B.X, x: 82, y: 26, s: 13, c: '#facc15' }, { k: 'btn', t: 'C▼', b: B.A, x: 82, y: 46, s: 13, c: '#facc15' },
+    { k: 'btn', t: 'C◀', b: B.L, x: 73, y: 36, s: 13, c: '#facc15' }, { k: 'btn', t: 'C▶', b: B.R, x: 91, y: 36, s: 13, c: '#facc15' },
+    { k: 'rect', t: 'Z', b: B.L2, x: 22, y: 10, w: 12, h: 9, c: GRAY }, { k: 'rect', t: 'L', b: B.SELECT, x: 36, y: 10, w: 10, h: 9, c: GRAY },
+    { k: 'rect', t: 'R', b: B.R2, x: 85, y: 10, w: 14, h: 9, c: GRAY }, { k: 'rect', t: 'START', b: B.START, x: 52, y: 86, w: 14, h: 9, c: '#ef4444' },
+  ] },
+  gba: { name: 'GBA', controls: [
+    { k: 'dpad', x: 20, y: 56, s: 50 },
+    { k: 'btn', t: 'B', b: B.B, x: 72, y: 64, s: 22 }, { k: 'btn', t: 'A', b: B.A, x: 87, y: 48, s: 22 },
+    { k: 'rect', t: 'L', b: B.L, x: 12, y: 10, w: 18, h: 9 }, { k: 'rect', t: 'R', b: B.R, x: 88, y: 10, w: 18, h: 9 },
+    { k: 'rect', t: 'SELECT', b: B.SELECT, x: 43, y: 86, w: 13, h: 8 }, { k: 'rect', t: 'START', b: B.START, x: 57, y: 86, w: 13, h: 8 },
+  ] },
+};
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let type = params.get('type') || localStorage.getItem('jl.type') || 'arcade';
+if (!LAYOUTS[type]) type = 'arcade';
+$('code').value = (params.get('code') || '').toUpperCase();
+
+function renderTypes() {
+  $('types').innerHTML = '';
+  for (const [id, l] of Object.entries(LAYOUTS)) {
+    const el = document.createElement('button');
+    el.className = 'type' + (id === type ? ' on' : '');
+    el.textContent = l.name;
+    el.onclick = () => { type = id; localStorage.setItem('jl.type', id); renderTypes(); };
+    $('types').appendChild(el);
+  }
+}
+renderTypes();
+
+// ---- Conexión --------------------------------------------------------------------------
+let ws = null, sent = '', state = { b: 0, lx: 0, ly: 0 };
+function send() {
+  const msg = `${state.b},${state.lx},${state.ly}`;
+  if (msg === sent || !ws || ws.readyState !== 1) return;
+  sent = msg; ws.send(msg);
+}
+function connect() {
+  const code = $('code').value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) { $('msg').textContent = 'El código tiene 6 caracteres'; return; }
+  $('msg').style.color = '#7D828C'; $('msg').textContent = 'Conectando…';
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?code=${code}`);
+  ws.onmessage = (e) => {
+    if (e.data === 'ok') { showPad(code); return; }
+    if (String(e.data).startsWith('err:')) { fail(String(e.data).slice(4)); }
+  };
+  ws.onclose = () => { if (document.body.classList.contains('playing')) fail('Conexión cerrada'); else if ($('msg').textContent === 'Conectando…') fail('No se pudo conectar'); };
+}
+function fail(text) {
+  document.body.classList.remove('playing');
+  $('pad').style.display = 'none'; $('join').style.display = 'flex';
+  $('msg').style.color = '#F87171'; $('msg').textContent = text;
+  try { ws && ws.close(); } catch (e) {}
+}
+$('go').onclick = connect;
+$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+$('leave').addEventListener('touchend', (e) => { e.preventDefault(); fail('Desconectado'); });
+$('leave').onclick = () => fail('Desconectado');
+
+// ---- Mando -----------------------------------------------------------------------------
+let controls = [];
+function showPad(code) {
+  document.body.classList.add('playing');
+  $('join').style.display = 'none'; $('pad').style.display = 'block';
+  $('status').textContent = `Jugador 2 · sala ${code} · ${LAYOUTS[type].name}`;
+  buildPad();
+  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+}
+function buildPad() {
+  document.querySelectorAll('.ctl').forEach((n) => n.remove());
+  const W = innerWidth, H = innerHeight, m = Math.min(W, H);
+  controls = LAYOUTS[type].controls.map((c) => {
+    const el = document.createElement('div');
+    el.className = 'ctl' + (c.k === 'rect' ? ' rect' : '') + (c.k === 'stick' || c.k === 'dpad' ? ' base' : '');
+    const cx = (c.x / 100) * W, cy = (c.y / 100) * H;
+    let w, h;
+    if (c.k === 'rect') { w = (c.w / 100) * W; h = (c.h / 100) * H; } else { w = h = (c.s / 100) * m; }
+    Object.assign(el.style, { left: cx + 'px', top: cy + 'px', width: w + 'px', height: h + 'px', fontSize: Math.max(12, Math.min(w, h) * 0.32) + 'px' });
+    if (c.c) el.style.borderColor = c.c;
+    if (c.k === 'btn' || c.k === 'rect') el.textContent = c.t;
+    if (c.k === 'dpad') el.textContent = '✚';
+    let knob = null;
+    if (c.k === 'stick') { knob = document.createElement('div'); knob.className = 'knob'; el.appendChild(knob); }
+    $('pad').appendChild(el);
+    return { ...c, el, knob, cx, cy, w, h, r: Math.min(w, h) / 2 };
+  });
+}
+addEventListener('resize', () => { if (document.body.classList.contains('playing')) buildPad(); });
+
+const owners = new Map(); // touch.identifier -> índice de stick/cruceta que controla
+function dirBits(dx, dy, dead) {
+  let b = 0;
+  if (dx * dx + dy * dy < dead * dead) return 0;
+  const a = Math.atan2(dy, dx), s = Math.round(a / (Math.PI / 4)), i = ((s % 8) + 8) % 8;
+  const map = [B.RIGHT, B.RIGHT | B.DOWN, B.DOWN, B.LEFT | B.DOWN, B.LEFT, B.LEFT | B.UP, B.UP, B.RIGHT | B.UP];
+  return map[i];
+}
+function onTouches(e) {
+  e.preventDefault();
+  const touches = e.touches;
+  const live = new Set();
+  let bits = 0, lx = 0, ly = 0;
+  const knobs = new Map();
+  for (const t of touches) {
+    live.add(t.identifier);
+    let idx = owners.get(t.identifier);
+    if (idx === undefined) {
+      // Nuevo dedo: el control más cercano que lo contenga (zona táctil algo mayor que el dibujo)
+      let best = -1, bestD = Infinity;
+      controls.forEach((c, i) => {
+        let d;
+        if (c.k === 'rect') d = Math.max(Math.abs(t.clientX - c.cx) / (c.w / 2), Math.abs(t.clientY - c.cy) / (c.h / 2));
+        else d = Math.hypot(t.clientX - c.cx, t.clientY - c.cy) / c.r;
+        if (d <= (c.k === 'stick' || c.k === 'dpad' ? 1.4 : 1.25) && d < bestD) { best = i; bestD = d; }
+      });
+      if (best < 0) continue;
+      idx = best;
+      if (controls[idx].k === 'stick' || controls[idx].k === 'dpad') owners.set(t.identifier, idx);
+    }
+    const c = controls[idx];
+    if (c.k === 'btn' || c.k === 'rect') { bits |= c.b; continue; }
+    const dx = (t.clientX - c.cx) / c.r, dy = (t.clientY - c.cy) / c.r, d = Math.hypot(dx, dy), k = d > 1 ? 1 / d : 1;
+    if (c.k === 'dpad') { bits |= dirBits(dx, dy, 0.25); continue; }
+    knobs.set(idx, [dx * k, dy * k]);
+    if (c.digital) bits |= dirBits(dx, dy, 0.3);
+    else if (d > 0.12) { lx = Math.round(dx * k * 32767); ly = Math.round(dy * k * 32767); }
+  }
+  for (const id of [...owners.keys()]) if (!live.has(id)) owners.delete(id);
+  // Pintado y vibración al pulsar algo nuevo
+  const newly = bits & ~state.b;
+  if (newly && navigator.vibrate) navigator.vibrate(12);
+  controls.forEach((c, i) => {
+    if (c.k === 'btn' || c.k === 'rect') c.el.classList.toggle('on', (bits & c.b) !== 0);
+    if (c.k === 'dpad') c.el.classList.toggle('on', (bits & (B.UP | B.DOWN | B.LEFT | B.RIGHT)) !== 0);
+    if (c.knob) {
+      const [kx, ky] = knobs.get(i) || [0, 0];
+      c.knob.style.transform = `translate(${kx * 60}%, ${ky * 60}%)`;
+    }
+  });
+  state = { b: bits, lx, ly };
+  send();
+}
+for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+  $('pad').addEventListener(ev, onTouches, { passive: false });
+}
+// Sin zoom ni gestos del navegador
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault());
+// Latido: reenvía el estado cada segundo (si un paquete se perdiera, los botones no se quedan pegados)
+setInterval(() => { sent = ''; send(); }, 1000);
+if ($('code').value.length === 6 && params.get('code')) $('msg').textContent = 'Elige el tipo de mando y pulsa Conectar';
+</script>
+</body>
+</html>
