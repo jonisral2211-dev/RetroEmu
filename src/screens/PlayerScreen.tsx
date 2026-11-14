@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   Pressable,
@@ -9,7 +9,13 @@ import {
   View,
 } from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
-import { coreForConsole, isMisplacedZip, misplacedZipMessage } from '../emulator/cores';
+import {
+  CoreId,
+  coreForConsole,
+  FALLBACK_CORE,
+  isMisplacedZip,
+  misplacedZipMessage,
+} from '../emulator/cores';
 import { defaultDirMode, DirMode, layoutFor, withDirMode } from '../input/layouts';
 import {
   applyPadPrefs,
@@ -27,17 +33,53 @@ import {
   SCALE_MAX,
   SCALE_MIN,
 } from '../input/padPrefs';
-import { getPadDebug, VirtualPad } from '../input/VirtualPad';
+import { getPadDebug, PointerRect, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 import { theme } from '../theme';
 import { Slider } from '../ui/Slider';
 
-type Props = { romPath: string; onExit: () => void };
+type Props = { romPath: string; coreOverride?: CoreId; onExit: () => void };
 
-// Ranura única de guardado rápido
-const SAVE_SLOT = 0;
-// Ranura reservada para el auto-guardado al salir (no la usan los guardados manuales)
-const AUTO_SLOT = 99;
+// Ranuras de guardado. Un mismo juego abierto con otro núcleo (FBNeo vs MAME, DeSmuME vs
+// melonDS) usa ranuras propias: sus estados no son compatibles entre núcleos.
+function slotsFor(core: CoreId | null): { save: number; auto: number } {
+  const alt = core === 'fbneo' || core === 'desmume';
+  return alt ? { save: 1, auto: 98 } : { save: 0, auto: 99 };
+}
+
+const isNdsCore = (c: CoreId | null) => c === 'melonds' || c === 'desmume';
+
+// Disposición de las dos pantallas de DS: apiladas en vertical, lado a lado en horizontal
+function setNdsLayout(landscape: boolean) {
+  Libretro.setCoreOption('melonds_screen_layout', landscape ? 'Left/Right' : 'Top/Bottom');
+  Libretro.setCoreOption('desmume_screens_layout', landscape ? 'left/right' : 'top/bottom');
+}
+
+// Rectángulo de la imagen dentro de una vista (mismo cálculo que el letterbox de Metal)
+function fitRect(w: number, h: number, aspect: number, stretch: boolean): PointerRect {
+  if (stretch || w <= 0 || h <= 0) return { x: 0, y: 0, w, h };
+  const iw = w / h > aspect ? h * aspect : w;
+  const ih = w / h > aspect ? h : w / aspect;
+  return { x: (w - iw) / 2, y: (h - ih) / 2, w: iw, h: ih };
+}
+
+// Toque directo sobre la imagen como stylus (vista sin pad encima)
+function pointerHandlers(rect: PointerRect) {
+  type T = { locationX: number; locationY: number };
+  const send = (t: T | undefined) => {
+    if (!t || rect.w <= 0 || rect.h <= 0) return Libretro.setPointer(0, 0, false);
+    const inside =
+      t.locationX >= rect.x && t.locationX <= rect.x + rect.w && t.locationY >= rect.y && t.locationY <= rect.y + rect.h;
+    if (!inside) return Libretro.setPointer(0, 0, false);
+    Libretro.setPointer(((t.locationX - rect.x) / rect.w) * 2 - 1, ((t.locationY - rect.y) / rect.h) * 2 - 1, true);
+  };
+  return {
+    onTouchStart: (e: { nativeEvent: { touches: T[] } }) => send(e.nativeEvent.touches[0]),
+    onTouchMove: (e: { nativeEvent: { touches: T[] } }) => send(e.nativeEvent.touches[0]),
+    onTouchEnd: () => Libretro.setPointer(0, 0, false),
+    onTouchCancel: () => Libretro.setPointer(0, 0, false),
+  };
+}
 // Vertical: alto mínimo del pad (los botones no deben quedar diminutos)
 const PAD_MIN_FRACTION = 0.36;
 const PAD_MIN_PX = 250;
@@ -49,9 +91,15 @@ const PS1_RES_KEY = 'pcsx_rearmed_neon_enhancement_enable';
 const DIR_LABEL: Record<DirMode, string> = { stick: 'Stick', dpad: 'D-Pad', both: 'Stick + D-Pad' };
 const NEXT_DIR: Record<DirMode, DirMode> = { stick: 'dpad', dpad: 'both', both: 'stick' };
 
-export default function PlayerScreen({ romPath, onExit }: Props) {
-  // Consola por contenido verificado (nativo), no por extensión
-  const core = useMemo(() => coreForConsole(Libretro.consoleOf(romPath)), [romPath]);
+export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
+  // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
+  const baseCore = useMemo(
+    () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath)),
+    [romPath, coreOverride],
+  );
+  // Núcleo que realmente arrancó (NDS: DeSmuME si melonDS no pudo)
+  const [loadedCore, setLoadedCore] = useState<CoreId | null>(null);
+  const core = loadedCore ?? baseCore;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -61,6 +109,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
   const orientation: Orientation = landscape ? 'landscape' : 'portrait';
+  const landscapeRef = useRef(landscape);
+  landscapeRef.current = landscape;
 
   // Preferencias del pad (por consola y orientación) y de imagen (por orientación)
   const [padPrefs, setPadPrefs] = useState<PadPrefs>(() => defaultPadPrefs(orientation));
@@ -118,7 +168,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   }, [debugOn]);
 
   useEffect(() => {
-    if (!core) {
+    if (!baseCore) {
       setError(
         isMisplacedZip(romPath)
           ? misplacedZipMessage(romPath)
@@ -126,27 +176,45 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       );
       return;
     }
-    try {
-      if (!Libretro.loadCore(core)) {
-        throw new Error(Libretro.lastError() || `No se pudo cargar el núcleo "${core}"`);
+    // Opciones que el core lee al cargar el juego
+    if (isNdsCore(baseCore)) setNdsLayout(landscapeRef.current);
+    let started: CoreId | null = null;
+    const errors: string[] = [];
+    for (const candidate of [baseCore, FALLBACK_CORE[baseCore]]) {
+      if (!candidate) continue;
+      if (!Libretro.loadCore(candidate)) {
+        errors.push(Libretro.lastError() || `No se pudo cargar el núcleo "${candidate}"`);
+        continue;
       }
       if (!Libretro.loadGame(romPath)) {
-        throw new Error(Libretro.lastError() || 'No se pudo abrir la ROM');
+        errors.push(Libretro.lastError() || 'No se pudo abrir la ROM');
+        continue;
       }
-      // Reanuda donde se dejó (si hay auto-guardado de la última salida)
-      Libretro.loadState(AUTO_SLOT);
-      Libretro.start();
-      setReady(true);
-    } catch (e) {
-      setError(String(e));
+      started = candidate;
+      break;
     }
+    if (!started) {
+      setError(errors.join('\n\n'));
+      return;
+    }
+    const slots = slotsFor(started);
+    // Reanuda donde se dejó (si hay auto-guardado de la última salida)
+    Libretro.loadState(slots.auto);
+    Libretro.start();
+    setLoadedCore(started);
+    setReady(true);
     return () => {
       // Auto-guardado al salir, mientras el core aún corre; luego para y persiste la SRAM
-      Libretro.saveState(AUTO_SLOT);
+      Libretro.saveState(slots.auto);
       Libretro.stop();
       Libretro.unloadGame();
     };
-  }, [romPath, core]);
+  }, [romPath, baseCore]);
+
+  // DS: al girar el iPhone las pantallas pasan de apiladas a lado a lado (en caliente)
+  useEffect(() => {
+    if (ready && isNdsCore(core)) setNdsLayout(landscape);
+  }, [ready, core, landscape]);
 
   // PS1: resolución interna 1x (fluido, por defecto) o 2x HD. Se aplica en caliente.
   const [ps1Hd, setPs1Hd] = useState(false);
@@ -231,11 +299,11 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       />
       <HudButton
         label="Guardar"
-        onPress={() => flash(Libretro.saveState(SAVE_SLOT) ? 'Estado guardado' : 'Error al guardar')}
+        onPress={() => flash(Libretro.saveState(slotsFor(core).save) ? 'Estado guardado' : 'Error al guardar')}
       />
       <HudButton
         label="Cargar"
-        onPress={() => flash(Libretro.loadState(SAVE_SLOT) ? 'Estado cargado' : 'Sin estado guardado')}
+        onPress={() => flash(Libretro.loadState(slotsFor(core).save) ? 'Estado cargado' : 'Sin estado guardado')}
       />
       <HudButton label={debugOn ? 'Ocultar debug' : 'Debug'} onPress={() => setDebugOn((v) => !v)} />
     </>
@@ -295,7 +363,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     </View>
   ) : null;
 
-  const padView = (style: object) =>
+  const nds = isNdsCore(core);
+  const padView = (style: object, pointerRect?: PointerRect) =>
     touchVisible ? (
       <VirtualPad
         key={`${padLayout.name}:${dirMode}`}
@@ -304,6 +373,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         opacity={padPrefs.opacity}
         editing={editing}
         onMoveCluster={moveCluster}
+        pointerRect={pointerRect}
       />
     ) : null;
 
@@ -313,9 +383,12 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     return (
       <View style={styles.root}>
         {hud}
-        <View style={styles.flex}>
+        <View
+          style={styles.flex}
+          onLayout={onArea}
+          {...(nds && !touchVisible ? pointerHandlers(fitRect(area.w, area.h, aspect, display.stretch)) : {})}>
           <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
-          {padView(StyleSheet.absoluteFill)}
+          {padView(StyleSheet.absoluteFill, nds ? fitRect(area.w, area.h, aspect, display.stretch) : undefined)}
           {notices}
         </View>
         {editPanel}
@@ -334,11 +407,11 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       <View style={styles.flex} onLayout={onArea}>
         {area.h > 0 ? (
           <>
-            <LibretroView
+            <View
               style={{ width: '100%', height: gameH }}
-              filter={smooth3d}
-              stretch={display.stretch}
-            />
+              {...(nds ? pointerHandlers(fitRect(area.w, gameH, aspect, display.stretch)) : {})}>
+              <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
+            </View>
             {padView(styles.flex)}
           </>
         ) : null}

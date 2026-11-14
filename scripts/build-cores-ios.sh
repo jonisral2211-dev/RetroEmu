@@ -39,9 +39,69 @@ write_plist() {
 PLIST
 }
 
+# Core precompilado del buildbot de libretro: descarga, verificación y empaquetado como
+# framework firmado ad-hoc (Sideloadly/AltStore lo vuelven a firmar con tu certificado).
+prebuilt_core() {
+  local name="$1" url="$2"
+  local tmp="$SRC_DIR/$name-prebuilt"
+  echo "==> $name (precompilado) <- $url"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  curl -fsSL --retry 3 "$url" -o "$tmp/core.zip"
+  unzip -q -o "$tmp/core.zip" -d "$tmp"
+  local lib
+  lib="$(find "$tmp" -name '*.dylib' -type f | head -n 1 || true)"
+  if [[ -z "$lib" ]]; then
+    echo "El zip de $name no contiene ningún .dylib" >&2
+    exit 1
+  fi
+
+  # Verificaciones: arm64, plataforma iOS (LC_BUILD_VERSION platform 2 o LC_VERSION_MIN_IPHONEOS),
+  # API Libretro exportada y dependencias solo del sistema
+  local archs
+  archs="$(lipo -archs "$lib")"
+  [[ " $archs " == *" arm64 "* ]] || { echo "$name: arquitectura '$archs', se esperaba arm64" >&2; exit 1; }
+  local loads exports deps
+  loads="$(otool -l "$lib")"
+  exports="$(nm -gU "$lib")"
+  # otool -L lista primero el install-name del propio dylib (ruta del buildbot): se excluye
+  local self_id
+  self_id="$(otool -D "$lib" | tail -n 1)"
+  deps="$(otool -L "$lib" | tail -n +2 | grep -vF "$self_id" || true)"
+  if ! grep -qE 'platform 2$|LC_VERSION_MIN_IPHONEOS' <<<"$loads"; then
+    echo "$name: el binario no es para iOS" >&2
+    grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN' <<<"$loads" >&2 || true
+    exit 1
+  fi
+  for sym in retro_init retro_load_game retro_run retro_get_system_av_info retro_serialize; do
+    grep -q " _$sym\$" <<<"$exports" || { echo "$name: falta el símbolo $sym" >&2; exit 1; }
+  done
+  echo "    dependencias:"
+  sed 's/^/      /' <<<"$deps"
+  if grep -vqE '/usr/lib/|/System/Library/|@rpath/' <<<"$deps"; then
+    echo "$name: depende de bibliotecas que no están en iOS" >&2
+    exit 1
+  fi
+
+  local fw="$OUT_DIR/$name.framework"
+  rm -rf "$fw"
+  mkdir -p "$fw"
+  cp "$lib" "$fw/$name"
+  codesign --remove-signature "$fw/$name" 2>/dev/null || true
+  install_name_tool -id "@rpath/$name.framework/$name" "$fw/$name"
+  write_plist "$name" "$fw"
+  codesign --force --sign - "$fw/$name"
+  codesign --verify --verbose=1 "$fw/$name"
+  echo "    framework: $fw ($(du -h "$fw/$name" | cut -f1), $archs, firmado ad-hoc)"
+}
+
 build_core() {
   local name="$1" repo="$2" ref="$3" build="$4" target="$5" args="$6"
   local dir="$SRC_DIR/$name"
+  if [[ "$build" == "prebuilt" ]]; then
+    prebuilt_core "$name" "$repo"
+    return
+  fi
 
   echo "==> $name @ $ref ($build)"
   if [[ ! -d "$dir/.git" ]]; then

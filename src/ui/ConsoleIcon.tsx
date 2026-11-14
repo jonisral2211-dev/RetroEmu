@@ -1,7 +1,7 @@
 import React from 'react';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
-export type IconKind = 'all' | 'gba' | 'n64' | 'sega' | 'mame' | 'ps1';
+export type IconKind = 'all' | 'gba' | 'n64' | 'sega' | 'mame' | 'fbneo' | 'ps1' | 'psp' | 'nds' | 'saturn';
 
 // Siluetas vectoriales minimalistas (trazo fino, viewBox 24x24)
 export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?: number; color: string }) {
@@ -57,6 +57,48 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Circle cx={9} cy={14} r={0.8} fill={color} />
           <Circle cx={14} cy={15} r={0.6} fill={color} />
           <Circle cx={15.8} cy={15} r={0.6} fill={color} />
+        </>
+      ) : null}
+      {kind === 'nds' ? (
+        // Portátil de doble pantalla abierta
+        <>
+          <Rect x={5} y={2.5} width={14} height={8.5} rx={1.6} {...stroke} />
+          <Rect x={7.5} y={4.3} width={9} height={5} rx={0.5} {...stroke} />
+          <Rect x={5} y={12.5} width={14} height={9} rx={1.6} {...stroke} />
+          <Rect x={8.5} y={14.3} width={7} height={5.2} rx={0.5} {...stroke} />
+          <Circle cx={6.9} cy={17} r={0.5} fill={color} />
+          <Circle cx={17.1} cy={17} r={0.5} fill={color} />
+        </>
+      ) : null}
+      {kind === 'psp' ? (
+        // Portátil panorámica: pantalla ancha, cruceta y botones a los lados
+        <>
+          <Rect x={1.8} y={7} width={20.4} height={10} rx={5} {...stroke} />
+          <Rect x={7} y={8.8} width={10} height={6.4} rx={0.6} {...stroke} />
+          <Path d="M3.6 12h1.8M4.5 11.1v1.8" {...stroke} />
+          <Circle cx={19.6} cy={11.2} r={0.6} fill={color} />
+          <Circle cx={19.6} cy={12.8} r={0.6} fill={color} />
+        </>
+      ) : null}
+      {kind === 'saturn' ? (
+        // Planeta con anillo
+        <>
+          <Circle cx={12} cy={12} r={5.2} {...stroke} />
+          <Path d="M3.2 15.5c-1-1.6 2.6-4.4 8-6.2s10.4-2 11.4-.4-2.6 4.4-8 6.2-10.4 2-11.4.4z" {...stroke} />
+        </>
+      ) : null}
+      {kind === 'fbneo' ? (
+        // Panel arcade: palanca con bola y seis botones
+        <>
+          <Rect x={2.5} y={11} width={19} height={8.5} rx={1.8} {...stroke} />
+          <Path d="M6.5 15.5V8.5" {...stroke} />
+          <Circle cx={6.5} cy={7} r={2} {...stroke} />
+          <Circle cx={12.5} cy={14} r={0.9} fill={color} />
+          <Circle cx={15.5} cy={13.4} r={0.9} fill={color} />
+          <Circle cx={18.5} cy={12.8} r={0.9} fill={color} />
+          <Circle cx={12.5} cy={17} r={0.9} fill={color} />
+          <Circle cx={15.5} cy={16.4} r={0.9} fill={color} />
+          <Circle cx={18.5} cy={15.8} r={0.9} fill={color} />
         </>
       ) : null}
       {kind === 'ps1' ? (

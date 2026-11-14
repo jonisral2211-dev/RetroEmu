@@ -30,6 +30,24 @@ bool isSmd(const uint8_t *d, size_t n) {
   return n >= 0x200 && d[8] == 0xAA && d[9] == 0xBB;
 }
 
+// Nintendo DS: el mismo logo de Nintendo que GBA, pero en 0xC0 de la cabecera
+bool isNds(const uint8_t *d, size_t n) {
+  return n >= 0xC8 && std::memcmp(d + 0xC0, kGbaLogoStart, 8) == 0;
+}
+
+// Sega Saturn: "SEGA SEGASATURN " al inicio del sector 0 (.iso 2048) o tras la cabecera de
+// sincronía de 16 bytes (.bin crudo 2352)
+bool isSaturn(const uint8_t *d, size_t n) {
+  static const char kId[] = "SEGA SEGASATURN";
+  if (n >= 15 && std::memcmp(d, kId, 15) == 0) return true;
+  return n >= 0x10 + 15 && std::memcmp(d + 0x10, kId, 15) == 0;
+}
+
+// PSP: ISO UMD con "PSP GAME" como identificador de sistema; .cso ("CISO"); .pbp ("\0PBP")
+bool isPspIso(const uint8_t *d, size_t n) {
+  return n >= 0x8008 + 8 && std::memcmp(d + 0x8008, "PSP GAME", 8) == 0;
+}
+
 // PlayStation: identificador "PLAYSTATION" en la cabecera del sector 16 del disco.
 // .iso (2048 bytes por sector): 0x8000 + 8. .bin crudo (2352 bytes por sector): 0x9300 + 16.
 bool isPs1(const uint8_t *d, size_t n) {
@@ -43,11 +61,17 @@ bool isPs1(const uint8_t *d, size_t n) {
 bool isRomExtension(const std::string &ext) {
   return ext == "gba" || ext == "agb" || ext == "bin" || ext == "z64" || ext == "n64" ||
          ext == "v64" || ext == "md" || ext == "gen" || ext == "smd" || ext == "iso" ||
-         ext == "cue" || ext == "chd";
+         ext == "cue" || ext == "chd" || ext == "nds" || ext == "cso" || ext == "pbp";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
   if (!data || size == 0) return Kind::Unknown;
+  if (ext == "nds" && isNds(data, size)) return Kind::NDS;
+  if (ext == "cso" && size >= 4 && std::memcmp(data, "CISO", 4) == 0) return Kind::PSP;
+  if (ext == "pbp" && size >= 4 && std::memcmp(data, "\0PBP", 4) == 0) return Kind::PSP;
+  // Discos: Saturn y PSP antes que PS1/Mega Drive (sus cabeceras no se solapan)
+  if ((ext == "iso" || ext == "bin") && isSaturn(data, size)) return Kind::Saturn;
+  if (ext == "iso" && isPspIso(data, size)) return Kind::PSP;
   if ((ext == "gba" || ext == "agb" || ext == "bin") && isGba(data, size)) return Kind::GBA;
   if ((ext == "z64" || ext == "n64" || ext == "v64") && isN64(data, size)) return Kind::N64;
   if ((ext == "md" || ext == "gen" || ext == "bin") && isMegaDrive(data, size)) return Kind::Sega;

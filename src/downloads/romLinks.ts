@@ -15,6 +15,9 @@ export const ROM_EXTENSIONS = [
   '.cue',
   '.iso',
   '.chd',
+  '.nds',
+  '.cso',
+  '.pbp',
 ];
 
 export function hasRomExtension(name: string): boolean {

@@ -30,6 +30,7 @@ struct CoreApi {
   void (*setEnvironment)(retro_environment_t) = nullptr;
   void (*setVideoRefresh)(retro_video_refresh_t) = nullptr;
   void (*setAudioSampleBatch)(retro_audio_sample_batch_t) = nullptr;
+  void (*setAudioSample)(retro_audio_sample_t) = nullptr;  // opcional en la práctica, pero se registra
   void (*setInputPoll)(retro_input_poll_t) = nullptr;
   void (*setInputState)(retro_input_state_t) = nullptr;
   void (*setControllerPortDevice)(unsigned, unsigned) = nullptr;
@@ -66,6 +67,10 @@ std::atomic<int16_t> g_axisY{0};
 std::atomic<uint16_t> g_padButtons{0};
 std::atomic<int16_t> g_padX{0};
 std::atomic<int16_t> g_padY{0};
+// Puntero táctil (stylus de NDS): coordenadas Libretro [-0x7fff, 0x7fff] sobre el frame completo
+std::atomic<int16_t> g_pointerX{0};
+std::atomic<int16_t> g_pointerY{0};
+std::atomic<bool> g_pointerDown{false};
 // Diagnóstico: qué lee realmente el core (se vacía en cada debugState())
 std::atomic<uint32_t> g_dbgJoyHits{0};  // bit id = el core pidió ese botón y recibió 1
 std::atomic<int16_t> g_dbgAxisX{0};     // último valor devuelto para el stick (X/Y)
@@ -148,6 +153,26 @@ const char *forcedOption(const char *key) {
       // Mupen64Plus (angrylion, RDP por software): antialiasing sin tramado, todos los hilos
       {"mupen64plus-angrylion-vioverlay", "AA+Dedither"},
       {"mupen64plus-angrylion-multithread", "all threads"},
+      // melonDS: sin JIT (prohibido en iOS), render por software en hilo propio, pantalla táctil
+      // por RETRO_DEVICE_POINTER, arranque directo al juego (FreeBIOS si no hay BIOS)
+      {"melonds_jit_enable", "disabled"},
+      {"melonds_opengl_renderer", "disabled"},
+      {"melonds_threaded_renderer", "enabled"},
+      {"melonds_touch_mode", "Touch"},
+      {"melonds_boot_directly", "enabled"},
+      {"melonds_console_mode", "DS"},
+      {"melonds_screen_layout", "Top/Bottom"},
+      {"melonds_screen_gap", "0"},
+      // DeSmuME (respaldo de NDS): intérprete, software, puntero táctil
+      {"desmume_cpu_mode", "interpreter"},
+      {"desmume_opengl_mode", "disabled"},
+      {"desmume_pointer_type", "touch"},
+      {"desmume_internal_resolution", "256x192"},
+      {"desmume_screens_layout", "top/bottom"},
+      {"desmume_screens_gap", "0"},
+      // Yabause (Saturn): render por software multihilo y salto de frames automático
+      {"yabause_frameskip", "enabled"},
+      {"yabause_numthreads", "4"},
   };
   for (const Opt &o : kOptions) {
     if (std::strcmp(key, o.key) == 0) return o.value;
@@ -341,11 +366,31 @@ static size_t onAudioBatch(const int16_t *data, size_t frames) {
   return frames;
 }
 
+// Cores que envían el audio muestra a muestra: se agrupan en bloques para el remuestreador
+static std::vector<int16_t> g_sampleBuf;
+static void onAudioSample(int16_t left, int16_t right) {
+  g_sampleBuf.push_back(left);
+  g_sampleBuf.push_back(right);
+  if (g_sampleBuf.size() >= 512 * 2) {
+    g_audio.push(g_sampleBuf.data(), g_sampleBuf.size() / 2, g_sampleRate);
+    g_sampleBuf.clear();
+  }
+}
+
 static void onInputPoll(void) {}
 
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
   g_dbgReads.fetch_add(1, std::memory_order_relaxed);
   if (port != 0) return 0;
+  if (device == RETRO_DEVICE_POINTER && index == 0) {
+    switch (id) {
+      case RETRO_DEVICE_ID_POINTER_X: return g_pointerX.load();
+      case RETRO_DEVICE_ID_POINTER_Y: return g_pointerY.load();
+      case RETRO_DEVICE_ID_POINTER_PRESSED: return g_pointerDown.load() ? 1 : 0;
+      case RETRO_DEVICE_ID_POINTER_COUNT: return g_pointerDown.load() ? 1 : 0;
+      default: return 0;
+    }
+  }
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
     // El stick del mando tiene prioridad sobre el táctil cuando está en uso
     const int16_t padX = g_padX.load(), padY = g_padY.load();
@@ -476,6 +521,7 @@ bool loadCore(const char *frameworkBinaryPath) {
   LOAD_SYM(setEnvironment, "retro_set_environment");
   LOAD_SYM(setVideoRefresh, "retro_set_video_refresh");
   LOAD_SYM(setAudioSampleBatch, "retro_set_audio_sample_batch");
+  LOAD_SYM(setAudioSample, "retro_set_audio_sample");
   LOAD_SYM(setInputPoll, "retro_set_input_poll");
   LOAD_SYM(setInputState, "retro_set_input_state");
   LOAD_SYM(setControllerPortDevice, "retro_set_controller_port_device");
@@ -502,6 +548,7 @@ bool loadCore(const char *frameworkBinaryPath) {
   c.setEnvironment(onEnvironment);
   c.setVideoRefresh(onVideo);
   c.setAudioSampleBatch(onAudioBatch);
+  if (c.setAudioSample) c.setAudioSample(onAudioSample);
   c.setInputPoll(onInputPoll);
   c.setInputState(onInputState);
   c.init();
@@ -608,6 +655,16 @@ void setAnalog(double x, double y) {
   };
   g_axisX = toAxis(x);
   g_axisY = toAxis(y);
+}
+
+void setPointer(double x, double y, bool pressed) {
+  auto toCoord = [](double v) {
+    v = std::max(-1.0, std::min(1.0, v));
+    return static_cast<int16_t>(v * 32767.0);
+  };
+  g_pointerX = toCoord(x);
+  g_pointerY = toCoord(y);
+  g_pointerDown = pressed;
 }
 
 void setGamepad(uint16_t buttons, double x, double y) {

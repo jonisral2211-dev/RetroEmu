@@ -323,11 +323,136 @@ export const PS1_LANDSCAPE_LAYOUT: PadLayout = {
   }),
 };
 
+// ---- Nintendo DS (melonDS / DeSmuME) --------------------------------------
+// Rombo A (derecha), B (abajo), X (arriba), Y (izquierda), como en la consola. La pantalla
+// táctil se maneja tocando directamente la imagen inferior (puntero), no con el pad.
+const ndsFace = (d: number): Zone[] => [
+  circle('X', 0.5, 0.2, d, Btn.X),
+  circle('Y', 0.2, 0.5, d, Btn.Y),
+  circle('A', 0.8, 0.5, d, Btn.A),
+  circle('B', 0.5, 0.8, d, Btn.B),
+];
+
+export const NDS_LAYOUT: PadLayout = {
+  name: 'Nintendo DS',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.16,
+      zones: [rect('L', 0.02, 0.1, 0.3, 0.8, Btn.L), rect('R', 0.68, 0.1, 0.3, 0.8, Btn.R)],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.2, w: 0.42, h: 0.8,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: false }],
+    },
+    { id: 'face', x: 0.58, y: 0.2, w: 0.42, h: 0.8, zones: ndsFace(0.3) },
+    {
+      id: 'menu', x: 0.42, y: 0.5, w: 0.16, h: 0.5,
+      zones: [rect('SEL', 0, 0.2, 1, 0.25, Btn.SELECT), rect('START', 0, 0.6, 1, 0.25, Btn.START)],
+    },
+  ],
+};
+
+export const NDS_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Nintendo DS (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [trig('L', 0.06, 0.88, Btn.L)],
+    rightTriggers: [trig('R', 0.06, 0.88, Btn.R)],
+    face: ndsFace(0.34),
+    select: footBtn('SELECT', Btn.SELECT),
+    start: footBtn('START', Btn.START),
+    eightWay: false,
+  }),
+};
+
+// ---- Sega Saturn (Yabause) -------------------------------------------------
+// Mapeo del core (yabause/src/libretro/libretro.c): A<-B, B<-A, C<-R, X<-Y, Y<-X, Z<-L,
+// gatillos L/R <- L2/R2.
+const saturnFace = (d: number, top: number, bottom: number): Zone[] => [
+  circle('X', 0.18, top + 0.06, d, Btn.Y),
+  circle('Y', 0.5, top, d, Btn.X),
+  circle('Z', 0.82, top - 0.06, d, Btn.L),
+  circle('A', 0.18, bottom + 0.06, d, Btn.B),
+  circle('B', 0.5, bottom, d, Btn.A),
+  circle('C', 0.82, bottom - 0.06, d, Btn.R),
+];
+
+export const SATURN_LAYOUT: PadLayout = {
+  name: 'Sega Saturn',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.16,
+      zones: [rect('L', 0.02, 0.1, 0.3, 0.8, Btn.L2, GRAY), rect('R', 0.68, 0.1, 0.3, 0.8, Btn.R2, GRAY)],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.22, w: 0.4, h: 0.78,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: true }],
+    },
+    {
+      id: 'start', x: 0.4, y: 0.6, w: 0.18, h: 0.4,
+      zones: [circle('START', 0.5, 0.4, 0.6, Btn.START)],
+    },
+    { id: 'face', x: 0.56, y: 0.2, w: 0.44, h: 0.8, zones: saturnFace(0.28, 0.3, 0.7) },
+  ],
+};
+
+export const SATURN_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Sega Saturn (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [trig('L', 0.06, 0.88, Btn.L2, GRAY)],
+    rightTriggers: [trig('R', 0.06, 0.88, Btn.R2, GRAY)],
+    face: saturnFace(0.3, 0.28, 0.68),
+    start: footBtn('START', Btn.START),
+    eightWay: true,
+  }),
+};
+
+// ---- FinalBurn Neo ---------------------------------------------------------
+// Seis botones A-F con el mapeo estándar de FBNeo: Neo-Geo A/B/C/D = A/B/C/D; en placas de
+// 6 botones (CPS-1/2/3) fila superior C/D/E = puñetazos y fila inferior A/B/F = patadas.
+// COIN = SELECT. Stick arcade (cruceta digital de 8 direcciones) por defecto.
+const fbneoFace = (d: number, top: number, bottom: number): Zone[] => [
+  circle('C', 0.18, top + 0.06, d, Btn.Y, '#f0abfc'),
+  circle('D', 0.5, top, d, Btn.X, '#60a5fa'),
+  circle('E', 0.82, top - 0.06, d, Btn.L),
+  circle('A', 0.18, bottom + 0.06, d, Btn.B, '#f87171'),
+  circle('B', 0.5, bottom, d, Btn.A, '#facc15'),
+  circle('F', 0.82, bottom - 0.06, d, Btn.R),
+];
+
+export const FBNEO_LAYOUT: PadLayout = {
+  name: 'FinalBurn Neo',
+  clusters: [
+    {
+      id: 'menu', x: 0.3, y: 0, w: 0.4, h: 0.16,
+      zones: [rect('COIN', 0.02, 0.15, 0.46, 0.7, Btn.SELECT), rect('START', 0.52, 0.15, 0.46, 0.7, Btn.START)],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.2, w: 0.42, h: 0.8,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: true }],
+    },
+    { id: 'face', x: 0.5, y: 0.2, w: 0.5, h: 0.8, zones: fbneoFace(0.27, 0.3, 0.7) },
+  ],
+};
+
+export const FBNEO_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'FinalBurn Neo (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [],
+    rightTriggers: [],
+    face: fbneoFace(0.3, 0.28, 0.68),
+    select: footBtn('COIN', Btn.SELECT),
+    start: footBtn('START', Btn.START),
+    eightWay: true,
+  }),
+};
+
 export type DirMode = 'stick' | 'dpad' | 'both';
 
 /** Modo direccional por defecto: stick en N64 (analógico real), cruceta en el resto. */
 export function defaultDirMode(core: CoreId): DirMode {
-  return core === 'mupen64' ? 'stick' : 'dpad';
+  if (core === 'mupen64') return 'stick';
+  if (core === 'fbneo') return 'stick'; // stick arcade
+  return 'dpad';
 }
 
 function overlapRatio(a: Cluster, b: Cluster): number {
@@ -378,6 +503,13 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       case 'mgba':
       case 'mame':
         return GBA_LANDSCAPE_LAYOUT;
+      case 'melonds':
+      case 'desmume':
+        return NDS_LANDSCAPE_LAYOUT;
+      case 'yabause':
+        return SATURN_LANDSCAPE_LAYOUT;
+      case 'fbneo':
+        return FBNEO_LANDSCAPE_LAYOUT;
     }
   }
   switch (core) {
@@ -392,5 +524,12 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       return GBA_LAYOUT;
     case 'pcsx':
       return PS1_LAYOUT;
+    case 'melonds':
+    case 'desmume':
+      return NDS_LAYOUT;
+    case 'yabause':
+      return SATURN_LAYOUT;
+    case 'fbneo':
+      return FBNEO_LAYOUT;
   }
 }

@@ -4,12 +4,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { theme } from './theme';
 import BrowserScreen from './screens/BrowserScreen';
 import LibraryScreen from './screens/LibraryScreen';
+import type { CoreId } from './emulator/cores';
 import PlayerScreen from './screens/PlayerScreen';
 
 type Tab = 'library' | 'web';
 
 export default function App() {
-  const [romPath, setRomPath] = useState<string | null>(null);
+  // Juego en curso: ruta y, en arcade, el núcleo elegido (FBNeo o MAME)
+  const [game, setGame] = useState<{ path: string; core?: CoreId } | null>(null);
+  const romPath = game?.path ?? null;
   const [tab, setTab] = useState<Tab>('library');
 
   // Ambas pantallas quedan montadas (la sesión del navegador y la biblioteca se conservan);
@@ -18,11 +21,13 @@ export default function App() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
-        {romPath ? <PlayerScreen romPath={romPath} onExit={() => setRomPath(null)} /> : null}
+        {game ? (
+          <PlayerScreen romPath={game.path} coreOverride={game.core} onExit={() => setGame(null)} />
+        ) : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>
           <View style={styles.root}>
             <View style={[styles.pane, tab !== 'library' && styles.hidden]}>
-              <LibraryScreen onPlay={setRomPath} />
+              <LibraryScreen onPlay={(path, core) => setGame({ path, core })} />
             </View>
             <View style={[styles.pane, tab !== 'web' && styles.hidden]}>
               <BrowserScreen />

@@ -15,6 +15,8 @@ import { evaluateZones, Pt } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 
 type Size = { w: number; h: number };
+/** Rectángulo de la imagen del juego en px relativos al pad (para el puntero táctil). */
+export type PointerRect = { x: number; y: number; w: number; h: number };
 type Touch = { identifier: string | number; locationX: number; locationY: number; pageX: number; pageY: number };
 type Knob = { x: number; y: number }; // desplazamiento normalizado del stick [-1, 1]
 // Arrastre en modo edición: desplazamiento en px desde el inicio del toque
@@ -35,6 +37,7 @@ export function VirtualPad({
   opacity = 1,
   editing = false,
   onMoveCluster,
+  pointerRect,
 }: {
   layout: PadLayout;
   style?: StyleProp<ViewStyle>;
@@ -43,7 +46,10 @@ export function VirtualPad({
   editing?: boolean;
   /** Fin de un arrastre: desplazamiento normalizado al tamaño del pad. */
   onMoveCluster?: (id: string, dx: number, dy: number) => void;
+  /** Si se indica, un toque fuera de los botones y sobre la imagen actúa como puntero (NDS). */
+  pointerRect?: PointerRect;
 }) {
+  const pointerDown = useRef(false);
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
@@ -61,6 +67,8 @@ export function VirtualPad({
     let bits = 0;
     let ax = 0;
     let ay = 0;
+    // Toques que caen en algún cluster: el resto puede ser el stylus
+    const used = new Set<string | number>();
     let stickPts = 0;
     let kx = 0;
     let ky = 0;
@@ -74,7 +82,10 @@ export function VirtualPad({
       for (const t of touches) {
         const px = t.locationX - cx;
         const py = t.locationY - cy;
-        if (px >= 0 && px <= cw && py >= 0 && py <= ch) pts.push({ x: px, y: py });
+        if (px >= 0 && px <= cw && py >= 0 && py <= ch) {
+          pts.push({ x: px, y: py });
+          used.add(t.identifier);
+        }
       }
       const r = evaluateZones(c.zones, pts, cw, ch);
       bits |= r.bits;
@@ -84,6 +95,28 @@ export function VirtualPad({
         kx = r.kx;
         ky = r.ky;
         stickPts = pts.length;
+      }
+    }
+
+    if (pointerRect && pointerRect.w > 0 && pointerRect.h > 0) {
+      const t = touches.find(
+        (tt) =>
+          !used.has(tt.identifier) &&
+          tt.locationX >= pointerRect.x &&
+          tt.locationX <= pointerRect.x + pointerRect.w &&
+          tt.locationY >= pointerRect.y &&
+          tt.locationY <= pointerRect.y + pointerRect.h,
+      );
+      if (t) {
+        pointerDown.current = true;
+        Libretro.setPointer(
+          ((t.locationX - pointerRect.x) / pointerRect.w) * 2 - 1,
+          ((t.locationY - pointerRect.y) / pointerRect.h) * 2 - 1,
+          true,
+        );
+      } else if (pointerDown.current) {
+        pointerDown.current = false;
+        Libretro.setPointer(0, 0, false);
       }
     }
 
@@ -164,6 +197,7 @@ export function VirtualPad({
     () => () => {
       Libretro.setButtons(0);
       Libretro.setAnalog(0, 0);
+      Libretro.setPointer(0, 0, false);
     },
     [],
   );

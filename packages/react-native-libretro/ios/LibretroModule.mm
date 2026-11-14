@@ -22,7 +22,7 @@ static NSString *documentsDirectory(void) {
 
 // Carpetas dentro de Documents: una por consola + states/ (save states)
 static NSArray<NSString *> *consoleFolders(void) {
-  return @[ @"n64", @"gba", @"sega", @"arcade", @"ps1", @"states" ];
+  return @[ @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"states" ];
 }
 
 // BIOS de Neo-Geo para MAME 2003-Plus: no es un juego, nunca se lista
@@ -58,35 +58,42 @@ static void createConsoleFolders(NSString *docs) {
   migrateLegacyArcadeFolder(docs);
 }
 
-static NSString *arcadeDirectory(void) {
-  return [documentsDirectory() stringByAppendingPathComponent:@"arcade"];
+static BOOL isInDocsFolder(NSString *path, NSString *folder) {
+  NSString *dir = [[[documentsDirectory() stringByAppendingPathComponent:folder] stringByStandardizingPath]
+      stringByAppendingString:@"/"];
+  return [path.stringByStandardizingPath hasPrefix:dir];
 }
 
-// true si la ruta está dentro de Documents/arcade/ (solo esos .zip se abren con MAME)
+// true si la ruta está dentro de Documents/arcade/ o Documents/fbneo/ (romsets arcade: solo esos
+// .zip se abren con MAME 2003-Plus o FBNeo)
 static BOOL isInArcadeFolder(NSString *path) {
-  NSString *arcade = [arcadeDirectory().stringByStandardizingPath stringByAppendingString:@"/"];
-  return [path.stringByStandardizingPath hasPrefix:arcade];
+  return isInDocsFolder(path, @"arcade") || isInDocsFolder(path, @"fbneo");
 }
 
 static BOOL isNeoGeoBios(NSString *path) {
   return [path.lastPathComponent.lowercaseString isEqualToString:kNeoGeoBios];
 }
 
-// MAME 2003-Plus busca la BIOS de Neo-Geo junto a la ROM (arcade/). Si el usuario la dejó en
-// system/ (o system/mame2003-plus/), se copia a arcade/ antes de cargar el juego.
-static void ensureNeoGeoBios(NSString *systemDir) {
+// MAME 2003-Plus y FBNeo buscan la BIOS de Neo-Geo junto a la ROM. Se comparte una sola copia:
+// si falta en la carpeta del juego (arcade/ o fbneo/), se copia desde la otra carpeta arcade,
+// system/, system/mame2003-plus/ o system/fbneo/.
+static void ensureNeoGeoBios(NSString *systemDir, NSString *gameDir) {
   NSFileManager *fm = NSFileManager.defaultManager;
-  NSString *dest = [arcadeDirectory() stringByAppendingPathComponent:kNeoGeoBios];
+  NSString *dest = [gameDir stringByAppendingPathComponent:kNeoGeoBios];
   if ([fm fileExistsAtPath:dest]) return;
+  NSString *docs = documentsDirectory();
   NSArray<NSString *> *candidates = @[
+    [[docs stringByAppendingPathComponent:@"arcade"] stringByAppendingPathComponent:kNeoGeoBios],
+    [[docs stringByAppendingPathComponent:@"fbneo"] stringByAppendingPathComponent:kNeoGeoBios],
     [systemDir stringByAppendingPathComponent:kNeoGeoBios],
     [[systemDir stringByAppendingPathComponent:@"mame2003-plus"] stringByAppendingPathComponent:kNeoGeoBios],
+    [[systemDir stringByAppendingPathComponent:@"fbneo"] stringByAppendingPathComponent:kNeoGeoBios],
   ];
   for (NSString *src in candidates) {
     if ([fm fileExistsAtPath:src]) {
       NSError *error = nil;
       if ([fm copyItemAtPath:src toPath:dest error:&error]) {
-        NSLog(@"[RetroEmu] neogeo.zip copiado de %@ a arcade/", src);
+        NSLog(@"[RetroEmu] neogeo.zip copiado de %@ a %@", src, gameDir.lastPathComponent);
       } else {
         NSLog(@"[RetroEmu] no se pudo copiar neogeo.zip: %@", error);
       }
@@ -114,6 +121,7 @@ static romzip::Folders romFolders(NSString *docs) {
   f.gba = [docs stringByAppendingPathComponent:@"gba"].UTF8String;
   f.n64 = [docs stringByAppendingPathComponent:@"n64"].UTF8String;
   f.sega = [docs stringByAppendingPathComponent:@"sega"].UTF8String;
+  f.nds = [docs stringByAppendingPathComponent:@"nds"].UTF8String;
   return f;
 }
 
@@ -124,6 +132,9 @@ static NSString *consoleForKind(romcheck::Kind kind) {
     case romcheck::Kind::N64: return @"n64";
     case romcheck::Kind::Sega: return @"sega";
     case romcheck::Kind::PS1: return @"ps1";
+    case romcheck::Kind::NDS: return @"nds";
+    case romcheck::Kind::Saturn: return @"saturn";
+    case romcheck::Kind::PSP: return @"psp";
     default: return nil;
   }
 }
@@ -272,7 +283,7 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
   NSString *ps1 = [docs stringByAppendingPathComponent:@"ps1"];
   NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:docs error:nil];
 
-  // 1) .cue primero: arrastran sus pistas .bin a ps1/ (si la pista principal es de PS1)
+  // 1) .cue primero: arrastran sus pistas .bin a ps1/ o saturn/ según la pista principal
   NSMutableSet<NSString *> *handled = [NSMutableSet set];
   for (NSString *name in names) {
     if (![name.pathExtension.lowercaseString isEqualToString:@"cue"]) continue;
@@ -280,20 +291,25 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
     NSArray<NSString *> *tracks = cueReferencedFiles(cue);
     if (tracks.count == 0) continue;
     NSString *first = tracks.firstObject;
-    const BOOL firstIsPs1 = [fm fileExistsAtPath:first]
-                                ? sniffFile(first) == romcheck::Kind::PS1
-                                : [fm fileExistsAtPath:[ps1 stringByAppendingPathComponent:first.lastPathComponent]];
-    if (!firstIsPs1) continue;
+    NSString *destDir = nil;
+    if ([fm fileExistsAtPath:first]) {
+      const romcheck::Kind kind = sniffFile(first);
+      if (kind == romcheck::Kind::PS1) destDir = ps1;
+      if (kind == romcheck::Kind::Saturn) destDir = [docs stringByAppendingPathComponent:@"saturn"];
+    } else if ([fm fileExistsAtPath:[ps1 stringByAppendingPathComponent:first.lastPathComponent]]) {
+      destDir = ps1;
+    }
+    if (!destDir) continue;
     [handled addObject:cue];
     for (NSString *track in tracks) {
       [handled addObject:track];
       // Solo pistas que estén en la raíz (no se tocan subcarpetas del usuario)
       if ([track.stringByDeletingLastPathComponent.stringByStandardizingPath
               isEqualToString:docs.stringByStandardizingPath]) {
-        moveIfFree(track, [ps1 stringByAppendingPathComponent:track.lastPathComponent]);
+        moveIfFree(track, [destDir stringByAppendingPathComponent:track.lastPathComponent]);
       }
     }
-    moveIfFree(cue, [ps1 stringByAppendingPathComponent:name]);
+    moveIfFree(cue, [destDir stringByAppendingPathComponent:name]);
   }
 
   // 2) Resto de archivos de la raíz
@@ -399,6 +415,10 @@ RCT_EXPORT_MODULE(Libretro)
     @"mupen64" : @"mupen64plus_next_libretro",
     @"mame" : @"mame2003_plus_libretro",
     @"pcsx" : @"pcsx_rearmed_libretro",
+    @"melonds" : @"melonds_libretro",
+    @"desmume" : @"desmume_libretro",
+    @"yabause" : @"yabause_libretro",
+    @"fbneo" : @"fbneo_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
@@ -421,13 +441,14 @@ RCT_EXPORT_MODULE(Libretro)
     _romError = [NSString stringWithFormat:@"Sin permiso de lectura para: %@", path];
     return @NO;
   }
-  if ([_coreId isEqualToString:@"mame"]) {
+  if ([_coreId isEqualToString:@"mame"] || [_coreId isEqualToString:@"fbneo"]) {
     if (!isInArcadeFolder(path)) {
-      _romError = [NSString stringWithFormat:@"\"%@\" está fuera de la carpeta arcade/. Los .zip de arcade "
-                                             @"(MAME, Neo-Geo) deben estar en Documents/arcade/.",
+      _romError = [NSString stringWithFormat:@"\"%@\" está fuera de las carpetas arcade/ y fbneo/. Los .zip de "
+                                             @"arcade (MAME, FBNeo, Neo-Geo) deben estar en una de ellas.",
                                              path.lastPathComponent];
       return @NO;
     }
+    NSString *gameDir = path.stringByDeletingLastPathComponent;
     // Comprobaciones antes de arrancar MAME, con el motivo exacto para el usuario
     const unsigned long long bytes = fileSizeAt(path);
     if (bytes < kMinArcadeZipBytes) {
@@ -437,20 +458,20 @@ RCT_EXPORT_MODULE(Libretro)
                                 path.lastPathComponent, bytes / 1024.0];
       return @NO;
     }
-    ensureNeoGeoBios(_systemDir);  // KOF, Metal Slug… necesitan neogeo.zip junto a la ROM
+    ensureNeoGeoBios(_systemDir, gameDir);  // KOF, Metal Slug… necesitan neogeo.zip junto a la ROM
     if (isNeoGeoSet(path.lastPathComponent)) {
-      NSString *bios = [arcadeDirectory() stringByAppendingPathComponent:kNeoGeoBios];
+      NSString *bios = [gameDir stringByAppendingPathComponent:kNeoGeoBios];
       if (![fm fileExistsAtPath:bios]) {
         _romError = [NSString stringWithFormat:
-                                  @"\"%@\" es un juego de Neo-Geo y falta la BIOS neogeo.zip. Cópiala en la "
-                                  @"carpeta arcade/ (o en system/) con la app Archivos y vuelve a abrir el juego.",
+                                  @"\"%@\" es un juego de Neo-Geo y falta la BIOS neogeo.zip. Cópiala en "
+                                  @"arcade/, fbneo/ o system/ con la app Archivos y vuelve a abrir el juego.",
                                   path.lastPathComponent];
         return @NO;
       }
       if (fileSizeAt(bios) < kMinArcadeZipBytes) {
         _romError = [NSString stringWithFormat:
-                                  @"neogeo.zip pesa solo %.1f KB: la BIOS de Neo-Geo está dañada. Sustitúyela en "
-                                  @"arcade/ por una copia completa.",
+                                  @"neogeo.zip pesa solo %.1f KB: la BIOS de Neo-Geo está dañada. Sustitúyela "
+                                  @"por una copia completa.",
                                   fileSizeAt(bios) / 1024.0];
         return @NO;
       }
@@ -459,6 +480,10 @@ RCT_EXPORT_MODULE(Libretro)
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
   return @(host::loadGame(path.UTF8String));
+}
+
+- (void)setPointer:(double)x y:(double)y pressed:(BOOL)pressed {
+  host::setPointer(x, y, pressed);
 }
 
 - (void)setCoreOption:(NSString *)key value:(NSString *)value {
@@ -552,7 +577,7 @@ RCT_EXPORT_MODULE(Libretro)
     if ([ext isEqualToString:@"zip"]) {
       if (isNeoGeoBios(full)) continue;  // BIOS de Neo-Geo, no es un juego
       if (isInArcadeFolder(full)) {
-        // arcade/: siempre MAME, sin extraer (el core valida el romset al cargar)
+        // arcade/ y fbneo/: romsets, sin extraer (el core valida el romset al cargar)
         if (romzip::foreignEntry(full.UTF8String).empty()) [arcade addObject:full];
         continue;
       }
@@ -658,7 +683,15 @@ RCT_EXPORT_MODULE(Libretro)
   NSString *console = consoleForKind(sniffFile(src));
   // PS1: la hoja .cue y los .chd van a ps1/; las pistas .bin de audio (sin cabecera de datos)
   // también, si algún .cue de ps1/ las referencia
-  if (!console && ([ext isEqualToString:@"cue"] || [ext isEqualToString:@"chd"])) console = @"ps1";
+  if (!console && [ext isEqualToString:@"cue"]) {
+    // La hoja .cue sola no tiene cabecera: se mira su primera pista si ya está descargada
+    NSString *bin = cueReferencedBin(src);
+    NSString *saturnBin = bin ? [[docs stringByAppendingPathComponent:@"saturn"]
+                                    stringByAppendingPathComponent:bin.lastPathComponent]
+                              : nil;
+    console = (saturnBin && [fm fileExistsAtPath:saturnBin]) ? @"saturn" : @"ps1";
+  }
+  if (!console && [ext isEqualToString:@"chd"]) console = @"ps1";
   if (!console && [ext isEqualToString:@"bin"]) {
     NSString *ps1 = [docs stringByAppendingPathComponent:@"ps1"];
     for (NSString *f in [fm contentsOfDirectoryAtPath:ps1 error:nil]) {
@@ -669,7 +702,7 @@ RCT_EXPORT_MODULE(Libretro)
     }
   }
   if (!console) {
-    _romError = [NSString stringWithFormat:@"\"%@\" no tiene una cabecera válida para GBA, N64, Mega Drive o PS1", name];
+    _romError = [NSString stringWithFormat:@"\"%@\" no tiene una cabecera válida de ninguna consola soportada", name];
     return @"";
   }
   NSString *dest = [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name];
@@ -681,18 +714,26 @@ RCT_EXPORT_MODULE(Libretro)
   return dest;
 }
 
-// Consola a la que pertenece una ROM: 'gba' | 'n64' | 'sega' | 'mame' | 'ps1' | '' (no verificada)
+// Consola de una ROM: 'gba' | 'n64' | 'sega' | 'mame' | 'fbneo' | 'ps1' | 'nds' | 'saturn' |
+// 'psp' | '' (no verificada)
 - (NSString *)consoleOf:(NSString *)romPath {
   NSString *path = normalizeRomPath(romPath);
-  if ([path.pathExtension.lowercaseString isEqualToString:@"zip"]) {
-    // Solo los .zip de Documents/arcade/ van a MAME 2003-Plus; fuera de ahí, '' (la UI avisa)
+  NSString *ext = path.pathExtension.lowercaseString;
+  if ([ext isEqualToString:@"zip"]) {
+    // Solo los .zip de arcade/ (MAME) y fbneo/ (FBNeo) son romsets; fuera, '' (la UI avisa)
     if (!isInArcadeFolder(path) || isNeoGeoBios(path)) return @"";
-    return romzip::foreignEntry(path.UTF8String).empty() ? @"mame" : @"";
+    if (!romzip::foreignEntry(path.UTF8String).empty()) return @"";
+    return isInDocsFolder(path, @"fbneo") ? @"fbneo" : @"mame";
   }
-  if ([path.pathExtension.lowercaseString isEqualToString:@"cue"]) {
+  if ([ext isEqualToString:@"cue"]) {
     NSString *bin = cueReferencedBin(path);
     NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
     return console ?: @"";
+  }
+  // .chd: comprimido, sin cabecera legible; decide la carpeta (saturn/ o ps1/)
+  if ([ext isEqualToString:@"chd"]) {
+    if (!(sniffFile(path) == romcheck::Kind::PS1)) return @"";
+    return isInDocsFolder(path, @"saturn") ? @"saturn" : @"ps1";
   }
   return consoleForKind(sniffFile(path)) ?: @"";
 }

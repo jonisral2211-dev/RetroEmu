@@ -14,6 +14,10 @@ const SYSTEM_DIR: Record<string, string> = {
   sega: 'Sega - Mega Drive - Genesis',
   ps1: 'Sony - PlayStation',
   mame: 'MAME',
+  fbneo: 'FBNeo - Arcade Games',
+  psp: 'Sony - PlayStation Portable',
+  nds: 'Nintendo - Nintendo DS',
+  saturn: 'Sega - Saturn',
 };
 
 /** Nombre de archivo según la convención de libretro-thumbnails: &*\/:`<>?\|" -> _ */

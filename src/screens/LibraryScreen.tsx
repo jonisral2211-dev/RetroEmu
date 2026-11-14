@@ -10,14 +10,18 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import { subscribeCover } from '../covers/CoverCache';
 import { onRomImported } from '../downloads/DownloadManager';
 import {
+  ARCADE_CORES,
   Console,
   CONSOLE_LABEL,
+  CoreId,
   coreForConsole,
+  isArcadeConsole,
   ENABLED_CORES,
   FOLDER_GUIDE,
   isMisplacedZip,
@@ -27,11 +31,52 @@ import {
 import { theme } from '../theme';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
 
-type Props = { onPlay: (romPath: string) => void };
+type Props = { onPlay: (romPath: string, core?: CoreId) => void };
 type Filter = 'all' | Console;
 type Entry = { path: string; console: string };
 
-const FILTERS: Filter[] = ['all', 'gba', 'n64', 'sega', 'mame', 'ps1'];
+const FILTERS: Filter[] = ['all', 'gba', 'nds', 'n64', 'sega', 'saturn', 'ps1', 'psp', 'mame', 'fbneo'];
+
+// Núcleo elegido por juego arcade (FBNeo o MAME 2003-Plus), recordado en el dispositivo
+const ARCADE_CHOICE_KEY = 'jl.arcadecore.v1';
+let arcadeChoices: Record<string, CoreId> | null = null;
+
+async function getArcadeChoices(): Promise<Record<string, CoreId>> {
+  if (arcadeChoices) return arcadeChoices;
+  try {
+    const raw = await AsyncStorage.getItem(ARCADE_CHOICE_KEY);
+    arcadeChoices = raw ? JSON.parse(raw) : {};
+  } catch {
+    arcadeChoices = {};
+  }
+  return arcadeChoices!;
+}
+
+function rememberArcadeChoice(path: string, core: CoreId) {
+  arcadeChoices = { ...(arcadeChoices ?? {}), [path]: core };
+  AsyncStorage.setItem(ARCADE_CHOICE_KEY, JSON.stringify(arcadeChoices)).catch(() => {});
+}
+
+// Pregunta con qué núcleo abrir un romset arcade. El de su carpeta va primero (recomendado).
+function chooseArcadeCore(entry: Entry, onPlay: Props['onPlay']) {
+  const preferred = coreForConsole(entry.console);
+  const order = [...ARCADE_CORES].sort((a, b) => (a === preferred ? -1 : b === preferred ? 1 : 0));
+  Alert.alert(
+    'Abrir juego arcade',
+    'Elige el núcleo. FBNeo suele tener mejor rendimiento y sonido; MAME 2003-Plus es la alternativa ' +
+      'si un romset no arranca. Se recordará para este juego (mantén pulsado para cambiarlo).',
+    [
+      ...order.map((core) => ({
+        text: core === 'fbneo' ? 'FinalBurn Neo' : 'MAME 2003-Plus',
+        onPress: () => {
+          rememberArcadeChoice(entry.path, core);
+          onPlay(entry.path, core);
+        },
+      })),
+      { text: 'Cancelar', style: 'cancel' as const },
+    ],
+  );
+}
 const GAP = 12;
 const SIDE = 16;
 
@@ -55,6 +100,15 @@ function explainUnavailable(entry: Entry) {
   const core = coreForConsole(entry.console);
   if (core === null && isMisplacedZip(entry.path)) {
     Alert.alert('Carpeta incorrecta', misplacedZipMessage(entry.path));
+    return;
+  }
+  if (entry.console === 'psp') {
+    Alert.alert(
+      'PSP aún no disponible',
+      `"${name}" está en psp/ y aparecerá aquí, pero esta versión todavía no incluye núcleo de PSP: ` +
+        'PPSSPP no se publica para iOS en el buildbot de libretro y necesita aceleración gráfica ' +
+        '(OpenGL/Vulkan) que JL Emulator aún no ofrece.',
+    );
     return;
   }
   let message: string;
@@ -95,7 +149,17 @@ export default function LibraryScreen({ onPlay }: Props) {
   useEffect(() => onRomImported(() => refresh()), [refresh]);
 
   const counts = useMemo(() => {
-    const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0, ps1: 0 };
+    const c: Record<Console, number> = {
+      gba: 0,
+      n64: 0,
+      sega: 0,
+      mame: 0,
+      fbneo: 0,
+      ps1: 0,
+      psp: 0,
+      nds: 0,
+      saturn: 0,
+    };
     entries.forEach((e) => {
       if (e.console in c) c[e.console as Console] += 1;
     });
@@ -162,7 +226,7 @@ export default function LibraryScreen({ onPlay }: Props) {
             No hay juegos en esta categoría. Copia tus ROMs con la app Archivos → En mi iPhone → JL
             Emulator. Se organizan solas al pulsar Actualizar:{'\n\n'}
             {FOLDER_GUIDE}
-            {'\n\n'}Para Neo-Geo deja también neogeo.zip en arcade/ o system/.
+            {'\n\n'}Para Neo-Geo deja también neogeo.zip en arcade/, fbneo/ o system/.
           </Text>
         }
         renderItem={({ item }) => <GameCard entry={item} width={cardW} onPlay={onPlay} />}
@@ -178,7 +242,7 @@ const GameCard = memo(function GameCard({
 }: {
   entry: Entry;
   width: number;
-  onPlay: (path: string) => void;
+  onPlay: Props['onPlay'];
 }) {
   const [cover, setCover] = useState<string | null>(null);
   const core = coreForConsole(entry.console);
@@ -187,10 +251,25 @@ const GameCard = memo(function GameCard({
 
   useEffect(() => subscribeCover(entry.path, entry.console, setCover), [entry.path, entry.console]);
 
+  const open = async () => {
+    if (!enabled) {
+      explainUnavailable(entry);
+      return;
+    }
+    if (isArcadeConsole(entry.console)) {
+      const saved = (await getArcadeChoices())[entry.path];
+      if (saved) onPlay(entry.path, saved);
+      else chooseArcadeCore(entry, onPlay);
+      return;
+    }
+    onPlay(entry.path);
+  };
+
   const artH = width * 1.3;
   return (
     <Pressable
-      onPress={() => (enabled ? onPlay(entry.path) : explainUnavailable(entry))}
+      onPress={open}
+      onLongPress={() => (enabled && isArcadeConsole(entry.console) ? chooseArcadeCore(entry, onPlay) : undefined)}
       style={({ pressed }) => [styles.card, { width }, pressed && styles.pressed, !enabled && styles.cardDisabled]}>
       <View style={[styles.art, { height: artH }]}>
         <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
@@ -228,7 +307,9 @@ const GameCard = memo(function GameCard({
             ? enabled
               ? relativeToDocuments(entry.path)
               : 'Núcleo no incluido'
-            : 'Sin consola verificada'}
+            : entry.console === 'psp'
+              ? 'PSP · núcleo aún no disponible'
+              : 'Sin consola verificada'}
       </Text>
     </Pressable>
   );

@@ -85,6 +85,8 @@ std::string folderFor(romcheck::Kind kind, const Folders &f) {
       return f.n64;
     case romcheck::Kind::Sega:
       return f.sega;
+    case romcheck::Kind::NDS:
+      return f.nds;
     default:
       return "";
   }

@@ -25,6 +25,8 @@ void setPaused(bool paused);
 void setButtons(uint16_t mask);
 /** Stick analógico izquierdo, x/y en [-1, 1]. */
 void setAnalog(double x, double y);
+/** Puntero táctil (stylus NDS): x/y en [-1, 1] sobre el frame completo del core. */
+void setPointer(double x, double y, bool pressed);
 /** Estado del mando físico: máscara de botones libretro y stick izquierdo en [-1, 1]. */
 void setGamepad(uint16_t buttons, double x, double y);
 void reset();

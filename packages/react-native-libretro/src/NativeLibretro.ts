@@ -29,6 +29,8 @@ export interface Spec extends TurboModule {
   importRom(downloadedPath: string): string;
   /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
   lastError(): string;
+  /** Puntero táctil (stylus de NDS): x/y en [-1, 1] sobre el frame completo del core. */
+  setPointer(x: number, y: number, pressed: boolean): void;
   /** Opción de core elegida por el usuario (p. ej. resolución de PS1). Se aplica en caliente. */
   setCoreOption(key: string, value: string): void;
   /** Relación de aspecto de pantalla que declara el core (ancho/alto); 0 si aún no se conoce. */
