@@ -39,11 +39,13 @@ import {
   SCALE_MAX,
   SCALE_MIN,
 } from '../input/padPrefs';
+import { tvPadFor } from '../input/tvLayouts';
 import { getPadDebug, PointerRect, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 import { theme } from '../theme';
 import { Slider } from '../ui/Slider';
 import { FilterMode, GameMenu, GearButton, NetState, parseNetStatus, TouchMode } from './GameMenu';
+import GuideScreen from './GuideScreen';
 
 type Props = { romPath: string; coreOverride?: CoreId; onExit: () => void };
 
@@ -191,19 +193,45 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   const [filterMode, setFilterMode] = useState<FilterMode | null>(null);
 
   // Netplay: estado consultado al nativo (barato y síncrono)
-  const [net, setNet] = useState<NetState>({ phase: 'idle', message: '' });
+  const [net, setNet] = useState<NetState>({ phase: 'idle', message: '', code: '', ping: -1 });
   useEffect(() => {
     if (!ready) return;
     const poll = () =>
       setNet((prev) => {
         const next = parseNetStatus(Libretro.netStatus());
-        return next.phase === prev.phase && next.message === prev.message ? prev : next;
+        return next.phase === prev.phase && next.message === prev.message && next.code === prev.code && next.ping === prev.ping
+          ? prev
+          : next;
       });
     poll();
     const id = setInterval(poll, 700);
     return () => clearInterval(id);
   }, [ready]);
   const online = net.phase !== 'idle';
+
+  // Modo TV: pantalla externa (HDMI / AirPlay). El juego sale solo por la TV y el iPhone hace de
+  // mando (o muestra el panel de consola si hay mandos físicos).
+  const [tvConnected, setTvConnected] = useState(false);
+  const [tvStretch, setTvStretch] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  useEffect(() => {
+    const poll = () => {
+      try {
+        setTvConnected(Boolean(JSON.parse(Libretro.tvStatus()).connected));
+      } catch {
+        setTvConnected(false);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
+  }, []);
+  const tvSmooth =
+    filterMode !== null ? filterMode === 'smooth' : core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
+  useEffect(() => {
+    Libretro.setTVOptions(tvStretch, tvSmooth, ready);
+  }, [tvStretch, tvSmooth, ready]);
+  useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
 
   // Diagnóstico de entrada en pantalla (sin Mac no hay otra forma de ver los logs nativos)
   const [debugOn, setDebugOn] = useState(false);
@@ -261,8 +289,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
 
   // DS: al girar el iPhone las pantallas pasan de apiladas a lado a lado (en caliente)
   useEffect(() => {
-    if (ready && isNdsCore(core)) setNdsLayout(landscape);
-  }, [ready, core, landscape]);
+    // En la TV las dos pantallas van apiladas (como la consola)
+    if (ready && isNdsCore(core)) setNdsLayout(landscape && !tvConnected);
+  }, [ready, core, landscape, tvConnected]);
 
   // PS1: resolución interna 1x (fluido, por defecto) o 2x HD. Se aplica en caliente.
   const [ps1Hd, setPs1Hd] = useState(false);
@@ -516,7 +545,16 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       net={net}
       debugOn={debugOn}
       onDebug={() => setDebugOn((v) => !v)}
+      tvConnected={tvConnected}
+      tvStretch={tvStretch}
+      onTvStretch={setTvStretch}
+      onGuide={() => setGuideOpen(true)}
     />
+  ) : null;
+  const guide = guideOpen ? (
+    <View style={styles.guideOverlay}>
+      <GuideScreen onClose={() => setGuideOpen(false)} />
+    </View>
   ) : null;
   const gear = editing ? null : (
     <View style={[styles.gearSlot, landscape && styles.gearSlotLandscape]}>
@@ -542,6 +580,62 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       />
     ) : null;
 
+  // ---- Modo TV: el iPhone es el mando (sin vídeo duplicado) ----------------------------------
+  if (tvConnected) {
+    const tv = tvPadFor(core);
+    const trackpad = tv.trackpad
+      ? { x: tv.trackpad.x * area.w, y: tv.trackpad.y * area.h, w: tv.trackpad.w * area.w, h: tv.trackpad.h * area.h }
+      : undefined;
+    const players = pad.players ?? [];
+    return (
+      <View style={styles.root}>
+        <View style={[styles.flex, styles.tvRoot]} onLayout={onArea}>
+          <View style={[styles.tvGlow, { backgroundColor: tv.accent }]} pointerEvents="none" />
+          {pad.connected ? (
+            <View style={styles.consolePanel}>
+              <Text style={styles.consoleKicker}>MODO CONSOLA ACTIVO</Text>
+              <Text style={styles.consoleTitle}>{gameTitle(romPath)}</Text>
+              <Text style={styles.consolePlayers}>
+                {[0, 1]
+                  .map((i) => `J${i + 1} ${players[i] ? `· ${players[i].kind} conectado` : '· sin mando'}`)
+                  .join('     ')}
+              </Text>
+              <View style={styles.consoleActions}>
+                <HudButton label="Configuración" onPress={openMenu} active />
+                <HudButton label="Guardar partida" onPress={() => flash(Libretro.saveState(slot) ? 'Partida guardada' : 'Error al guardar')} />
+                <HudButton label="Cargar partida" onPress={() => flash(Libretro.loadState(slot) ? 'Partida cargada' : 'No hay partida guardada')} />
+                {(pad.count ?? 0) >= 2 ? <HudButton label="Intercambiar J1/J2" onPress={() => Libretro.swapPlayers()} /> : null}
+              </View>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.tvLabel}>
+                Mando · {tv.title} · el juego se ve en la TV
+              </Text>
+              <VirtualPad
+                key={`tv:${tv.layout.name}`}
+                layout={tv.layout}
+                prefs={defaultPadPrefs('landscape')}
+                feel={{ ...feel, haptics: true }}
+                style={StyleSheet.absoluteFill}
+                opacity={1}
+                pointerRect={trackpad}
+                pointerBottom
+                trackpadLabel={trackpad ? 'Pantalla táctil (lápiz)' : undefined}
+              />
+            </>
+          )}
+          {notices}
+        </View>
+        <View style={styles.tvGear}>
+          <GearButton onPress={openMenu} online={online} />
+        </View>
+        {menu}
+        {guide}
+      </View>
+    );
+  }
+
   // Horizontal, o vertical con el pad oculto: barra arriba con margen limpio; debajo, la imagen
   // a todo el área y el pad translúcido encima (gatillos justo bajo la barra)
   if (landscape || !touchVisible) {
@@ -558,6 +652,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
         {gear}
         {editPanel}
         {menu}
+        {guide}
       </View>
     );
   }
@@ -585,6 +680,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       {gear}
       {editPanel}
       {menu}
+      {guide}
     </View>
   );
 }
@@ -687,6 +783,16 @@ const styles = StyleSheet.create({
   },
   panelChipLandscape: { top: 8 },
   gearSlot: { position: 'absolute', top: 8, right: 10 },
+  guideOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.bg },
+  tvRoot: { backgroundColor: '#07080B', overflow: 'hidden' },
+  tvGlow: { position: 'absolute', width: 520, height: 520, borderRadius: 260, opacity: 0.1, alignSelf: 'center', top: '20%' },
+  tvLabel: { position: 'absolute', bottom: 6, alignSelf: 'center', color: theme.textDim, fontSize: 11, letterSpacing: 0.6 },
+  tvGear: { position: 'absolute', top: 8, alignSelf: 'center' },
+  consolePanel: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
+  consoleKicker: { color: theme.amber, fontSize: 13, fontWeight: '900', letterSpacing: 3 },
+  consoleTitle: { color: theme.text, fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  consolePlayers: { color: '#4ADE80', fontSize: 14, fontWeight: '700' },
+  consoleActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 10 },
   gearSlotLandscape: { top: 10, right: 14 },
   netNotice: {
     color: '#4ADE80',

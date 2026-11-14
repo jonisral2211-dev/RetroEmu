@@ -345,6 +345,17 @@ export default function LibraryScreen({ onPlay }: Props) {
             </Text>
           </View>
         </View>
+        <View style={styles.headerActions}>
+        <Pressable
+          onPress={() => Libretro.showAirPlayPicker()}
+          hitSlop={8}
+          accessibilityLabel="Transmitir a TV / AirPlay"
+          style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}>
+          <Svg width={18} height={18} viewBox="0 0 24 24">
+            <Path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1" stroke={theme.amber} strokeWidth={2} fill="none" strokeLinecap="round" />
+            <Path d="M12 15l5 6H7z" fill={theme.amber} />
+          </Svg>
+        </Pressable>
         <Pressable
           onPress={() => refresh(true)}
           hitSlop={8}
@@ -360,6 +371,7 @@ export default function LibraryScreen({ onPlay }: Props) {
             />
           </Svg>
         </Pressable>
+        </View>
       </View>
 
       {unpacking ? (
@@ -730,6 +742,7 @@ const styles = StyleSheet.create({
   title: { color: theme.amber, fontSize: 23, fontWeight: '900', letterSpacing: 2.5 },
   titleLight: { color: theme.text, fontWeight: '300', letterSpacing: 3 },
   subtitle: { color: theme.textDim, fontSize: 12, marginTop: 2, letterSpacing: 0.4 },
+  headerActions: { flexDirection: 'row', gap: 8 },
   refresh: {
     width: 40,
     height: 40,

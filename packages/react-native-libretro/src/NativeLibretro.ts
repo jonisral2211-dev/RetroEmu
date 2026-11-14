@@ -46,11 +46,25 @@ export interface Spec extends TurboModule {
   netHost(port: number): boolean;
   /** Netplay: se une a la sala de otro iPhone por IP (Jugador 2). */
   netJoin(address: string, port: number): boolean;
+  /** Netplay a distancia: crea sala en el servidor relay (código de 6 caracteres en netStatus). */
+  netHostRelay(relayHost: string, port: number): boolean;
+  /** Netplay a distancia: entra en la sala con su código. */
+  netJoinCode(code: string, relayHost: string, port: number): boolean;
+  /** Copia texto al portapapeles del iPhone. */
+  copyToClipboard(text: string): void;
   netStop(): void;
-  /** Estado "fase|mensaje"; fase: idle, waiting, connecting, syncing, playing. */
+  /** "fase|mensaje|código|ping_ms"; fase: idle, waiting, connecting, syncing, playing. */
   netStatus(): string;
   /** IP local (Wi-Fi) de este iPhone. */
   localAddress(): string;
+  /** Pantalla externa (HDMI / AirPlay): JSON {connected, name, width, height}. */
+  tvStatus(): string;
+  /** Imagen en la TV: expandir, filtro suave y si hay partida (sin partida: portada JL). */
+  setTVOptions(stretch: boolean, smooth: boolean, playing: boolean): void;
+  /** Abre el selector nativo de AirPlay. */
+  showAirPlayPicker(): void;
+  /** Intercambia Jugador 1 y Jugador 2 entre los dos mandos físicos. */
+  swapPlayers(): void;
   /** Vibración háptica breve (0..1 = intensidad). */
   haptic(strength: number): void;
   /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */

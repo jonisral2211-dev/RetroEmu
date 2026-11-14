@@ -17,8 +17,11 @@ NS_ASSUME_NONNULL_BEGIN
 /** {connected, dualSense, name, kind (PS5/PS4/Xbox/Mando), rumble} del mando activo. */
 - (NSDictionary *)currentStatus;
 
-/** Vibración del mando activo (0 = parar). Hilo principal. */
-- (void)applyRumble:(float)intensity sharpness:(float)sharpness;
+/** Vibración del mando del jugador `port` (0 = parar). Hilo principal. */
+- (void)applyRumble:(float)intensity sharpness:(float)sharpness port:(unsigned)port;
+
+/** Intercambia Jugador 1 y Jugador 2 (LEDs y puertos). */
+- (void)swapPlayers;
 
 @end
 

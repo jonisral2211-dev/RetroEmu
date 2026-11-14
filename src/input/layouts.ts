@@ -37,10 +37,10 @@ export type Cluster = {
 };
 export type PadLayout = { name: string; clusters: Cluster[] };
 
-const rect = (label: string, x: number, y: number, w: number, h: number, bits: number, tint?: string): ButtonZone =>
+export const rect = (label: string, x: number, y: number, w: number, h: number, bits: number, tint?: string): ButtonZone =>
   ({ kind: 'button', label, shape: 'rect', x, y, w, h, bits, tint });
 
-const circle = (label: string, x: number, y: number, d: number, bits: number, tint?: string): ButtonZone =>
+export const circle = (label: string, x: number, y: number, d: number, bits: number, tint?: string): ButtonZone =>
   ({ kind: 'button', label, shape: 'circle', x, y, w: d, h: d, bits, tint });
 
 // ---- Game Boy Advance -----------------------------------------------------

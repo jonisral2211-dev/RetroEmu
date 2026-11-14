@@ -5,6 +5,7 @@
 #import <React/RCTEventEmitter.h>
 
 #import "GamepadBridge.h"
+#import "TVOutput.h"
 #import <ReactCommon/RCTTurboModule.h>
 #import <RNLibretroSpec/RNLibretroSpec.h>
 
@@ -528,6 +529,9 @@ RCT_EXPORT_MODULE(Libretro)
     [[GamepadBridge sharedBridge] startWithStatusHandler:^(NSDictionary *status) {
       [weakSelf sendStatus:status];
     }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [[TVOutput shared] start];
+    });
   }
   return self;
 }
@@ -755,6 +759,20 @@ RCT_EXPORT_MODULE(Libretro)
   return @(host::netJoin(address.UTF8String, (int)port));
 }
 
+- (NSNumber *)netHostRelay:(NSString *)relayHost port:(double)port {
+  return @(host::netHostRelay(relayHost.UTF8String, (int)port));
+}
+
+- (NSNumber *)netJoinCode:(NSString *)code relayHost:(NSString *)relayHost port:(double)port {
+  return @(host::netJoinCode(code.uppercaseString.UTF8String, relayHost.UTF8String, (int)port));
+}
+
+- (void)copyToClipboard:(NSString *)text {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIPasteboard.generalPasteboard.string = text;
+  });
+}
+
 - (void)netStop {
   host::netStop();
 }
@@ -769,6 +787,24 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (NSDictionary *)gamepadInfo {
   return [[GamepadBridge sharedBridge] currentStatus];
+}
+
+// ---- Modo TV y mandos ---------------------------------------------------------------------
+- (NSString *)tvStatus {
+  NSData *json = [NSJSONSerialization dataWithJSONObject:[[TVOutput shared] status] options:0 error:nil];
+  return json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"{}";
+}
+
+- (void)setTVOptions:(BOOL)stretch smooth:(BOOL)smooth playing:(BOOL)playing {
+  [[TVOutput shared] setStretch:stretch smooth:smooth playing:playing];
+}
+
+- (void)showAirPlayPicker {
+  [[TVOutput shared] showRoutePicker];
+}
+
+- (void)swapPlayers {
+  [[GamepadBridge sharedBridge] swapPlayers];
 }
 
 // Vibración háptica breve al pulsar un botón del pad (Taptic Engine)

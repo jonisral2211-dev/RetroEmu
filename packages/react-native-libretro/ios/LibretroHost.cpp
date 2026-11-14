@@ -15,6 +15,8 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -83,26 +85,39 @@ std::atomic<int16_t> g_padRX{0};
 std::atomic<int16_t> g_padRY{0};
 std::atomic<int16_t> g_padL2{0};
 std::atomic<int16_t> g_padR2{0};
-// Vibración: intensidad pedida por el core (0..0xffff) para el motor fuerte y el débil
-std::atomic<uint16_t> g_rumbleStrong{0};
-std::atomic<uint16_t> g_rumbleWeak{0};
-void (*g_rumbleHandler)(float strong, float weak) = nullptr;
+// Segundo mando físico (Jugador 2, puerto 1)
+std::atomic<uint16_t> g_pad2Buttons{0};
+std::atomic<int16_t> g_pad2X{0};
+std::atomic<int16_t> g_pad2Y{0};
+std::atomic<int16_t> g_pad2RX{0};
+std::atomic<int16_t> g_pad2RY{0};
+std::atomic<int16_t> g_pad2L2{0};
+std::atomic<int16_t> g_pad2R2{0};
+// Vibración: intensidad pedida por el core (0..0xffff) por puerto, motor fuerte y débil
+std::atomic<uint16_t> g_rumbleStrong[2] = {{0}, {0}};
+std::atomic<uint16_t> g_rumbleWeak[2] = {{0}, {0}};
+void (*g_rumbleHandler)(unsigned port, float strong, float weak) = nullptr;
 // Ruta de la ROM cargada y núcleo (para el saludo de netplay)
 std::string g_romPath;
 std::string g_coreFile;
 
-// ---- Netplay (lockstep con retardo de entrada) ------------------------------------------
-// Cada iPhone ejecuta el mismo núcleo con el mismo juego. Por cada frame se envía la entrada
-// local para el frame f + kNetDelay y se espera la del otro jugador para el frame f: ambos
-// emulan exactamente la misma secuencia. Al conectar, el anfitrión envía su save state.
+// ---- Netplay (rollback + retardo de entrada adaptable) -----------------------------------
+// Cada iPhone ejecuta el mismo núcleo con el mismo juego y la misma partida inicial (el anfitrión
+// envía su save state). Cada frame se envía la entrada local para el frame f + retardo. Con
+// rollback, si la entrada del otro jugador aún no ha llegado se predice (se repite la última) y
+// el juego sigue; cuando llega y no coincide, se vuelve al estado guardado de ese frame y se
+// re-emulan en silencio los frames hasta el actual. Sin rollback (núcleos con estados enormes:
+// N64, PSP) se espera la entrada con un retardo que se ajusta al ping.
+// Conexión directa (IP/LAN) o por un servidor relay con código de sala de 6 caracteres.
 struct NetInput {
   uint16_t buttons;
   int16_t lx, ly, rx, ry;
 };
-constexpr uint32_t kNetDelay = 3;
 constexpr uint32_t kNetMagic = 0x504E4C4A;  // "JLNP"
-constexpr uint32_t kNetProto = 1;
-constexpr int kNetTimeoutMs = 30000;
+constexpr uint32_t kNetProto = 2;
+constexpr int kNetTimeoutMs = 20000;
+constexpr uint32_t kNetRing = 32;
+constexpr uint32_t kNetStart = 2;  // frames 0 y 1: entrada vacía en ambos lados
 struct NetHello {
   uint32_t magic;
   uint32_t proto;
@@ -115,16 +130,42 @@ struct NetReply {
   uint32_t ok;
   char message[200];
 };
-std::mutex g_netMutex;           // protege g_netStatus y g_netBlob
+struct NetMsg {
+  uint32_t frame;
+  NetInput in;
+  uint16_t reserved;
+  uint32_t sentMs;  // reloj del emisor
+  uint32_t echoMs;  // sentMs del último mensaje recibido + tiempo retenido (para el ping)
+};
+std::mutex g_netMutex;           // protege g_netStatus, g_netCode y g_netBlob
 std::string g_netStatus = "idle|Sin conexión";
+std::string g_netCode;           // código de sala (relay)
 std::vector<uint8_t> g_netBlob;  // cliente: save state recibido del anfitrión
 std::atomic<int> g_netRole{0};   // 0 = nada, 1 = anfitrión (jugador 1), 2 = cliente (jugador 2)
 std::atomic<int> g_netFd{-1};
 std::atomic<int> g_netListenFd{-1};
 std::atomic<bool> g_netPending{false};  // conexión aceptada; falta sincronizar en el hilo de emulación
 std::atomic<bool> g_netActive{false};
-uint32_t g_netFrame = 0;
-NetInput g_netLocal[64];
+std::atomic<int> g_netPingMs{-1};
+std::atomic<bool> g_replaying{false};  // re-emulación de rollback: sin vídeo, audio ni vibración
+// Sesión (solo hilo de emulación)
+struct NetSession {
+  uint32_t frame = 0;        // siguiente frame a emular
+  uint32_t remoteKnown = 0;  // frames < remoteKnown con entrada remota confirmada
+  uint32_t lastSent = 0;     // último frame local enviado
+  uint32_t delay = 2;        // retardo de entrada local (frames)
+  uint32_t window = 0;       // frames máximos de predicción (0 = sin rollback)
+  NetInput local[kNetRing]{};
+  NetInput remote[kNetRing]{};
+  NetInput used[kNetRing]{};  // entrada remota usada en cada frame (real o predicha)
+  std::vector<uint8_t> states[kNetRing];
+  std::vector<uint8_t> rx;  // bytes recibidos aún sin procesar
+  uint32_t echoBase = 0;    // sentMs del último mensaje del otro
+  uint32_t echoAt = 0;      // cuándo llegó (reloj local)
+  double ping = -1;
+  uint32_t rollbacks = 0;
+};
+NetSession g_ns;
 NetInput g_netCur[2];
 // Puntero táctil (stylus de NDS): coordenadas Libretro [-0x7fff, 0x7fff] sobre el frame completo
 std::atomic<int16_t> g_pointerX{0};
@@ -284,11 +325,30 @@ bool hasPs1Bios() {
 }
 
 static bool onRumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength) {
-  if (port != 0) return true;
-  auto &slot = effect == RETRO_RUMBLE_STRONG ? g_rumbleStrong : g_rumbleWeak;
+  if (port > 1 || g_replaying.load(std::memory_order_relaxed)) return true;
+  auto &slot = effect == RETRO_RUMBLE_STRONG ? g_rumbleStrong[port] : g_rumbleWeak[port];
   if (slot.exchange(strength) == strength) return true;  // sin cambios: no molestar al mando
-  if (g_rumbleHandler) g_rumbleHandler(g_rumbleStrong.load() / 65535.0f, g_rumbleWeak.load() / 65535.0f);
+  if (g_rumbleHandler) {
+    g_rumbleHandler(port, g_rumbleStrong[port].load() / 65535.0f, g_rumbleWeak[port].load() / 65535.0f);
+  }
   return true;
+}
+
+// Jugador 2 en local: solo el segundo mando físico
+static int16_t port2InputState(unsigned device, unsigned index, unsigned id) {
+  if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+    return id == RETRO_DEVICE_ID_ANALOG_X ? g_pad2X.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? g_pad2Y.load() : 0;
+  }
+  if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+    return id == RETRO_DEVICE_ID_ANALOG_X ? g_pad2RX.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? g_pad2RY.load() : 0;
+  }
+  if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_BUTTON && id < 16) {
+    if (id == RETRO_DEVICE_ID_JOYPAD_L2 && g_pad2L2.load()) return g_pad2L2.load();
+    if (id == RETRO_DEVICE_ID_JOYPAD_R2 && g_pad2R2.load()) return g_pad2R2.load();
+    return ((g_pad2Buttons.load() >> id) & 1) ? 0x7fff : 0;
+  }
+  if (device != RETRO_DEVICE_JOYPAD || index != 0 || id > 15) return 0;
+  return static_cast<int16_t>((g_pad2Buttons.load() >> id) & 1);
 }
 
 static bool onEnvironment(unsigned cmd, void *data) {
@@ -389,6 +449,7 @@ size_t bytesPerPixel(enum retro_pixel_format fmt) {
 }
 
 static void onVideo(const void *data, unsigned width, unsigned height, size_t pitch) {
+  if (g_replaying.load(std::memory_order_relaxed)) return;
   if (!data || !width || !height) return;  // NULL = frame duplicado, nada nuevo
   const auto fmt = g_pixelFormat;
   const size_t bpp = bytesPerPixel(fmt);
@@ -463,6 +524,7 @@ static void onVideo(const void *data, unsigned width, unsigned height, size_t pi
 }
 
 static size_t onAudioBatch(const int16_t *data, size_t frames) {
+  if (g_replaying.load(std::memory_order_relaxed)) return frames;
   g_audio.push(data, frames, g_sampleRate);
   return frames;
 }
@@ -470,6 +532,7 @@ static size_t onAudioBatch(const int16_t *data, size_t frames) {
 // Cores que envían el audio muestra a muestra: se agrupan en bloques para el remuestreador
 static std::vector<int16_t> g_sampleBuf;
 static void onAudioSample(int16_t left, int16_t right) {
+  if (g_replaying.load(std::memory_order_relaxed)) return;
   g_sampleBuf.push_back(left);
   g_sampleBuf.push_back(right);
   if (g_sampleBuf.size() >= 512 * 2) {
@@ -499,6 +562,7 @@ static int16_t netInputState(unsigned port, unsigned device, unsigned index, uns
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
   g_dbgReads.fetch_add(1, std::memory_order_relaxed);
   if (g_netActive.load(std::memory_order_relaxed)) return netInputState(port, device, index, id);
+  if (port == 1) return port2InputState(device, index, id);
   if (port != 0) return 0;
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
     if (id == RETRO_DEVICE_ID_ANALOG_X) return g_padRX.load();
@@ -591,18 +655,33 @@ void unloadGameLocked() {
 
 // ---- Netplay ----------------------------------------------------------------------------------
 
+uint32_t nowMs() {
+  using namespace std::chrono;
+  return uint32_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
 void netSetStatus(const std::string &state, const std::string &message) {
   std::lock_guard<std::mutex> lock(g_netMutex);
   g_netStatus = state + "|" + message;
 }
 
+// Envía todo; con el socket sin bloqueo (partida en curso) espera a que haya hueco en vez de
+// cortar un mensaje a medias (eso corrompería el flujo y desincronizaría a los jugadores)
 bool sendAll(int fd, const void *data, size_t size) {
   const auto *p = static_cast<const uint8_t *>(data);
   while (size > 0) {
     const ssize_t n = ::send(fd, p, size, 0);
-    if (n <= 0) return false;
-    p += n;
-    size -= size_t(n);
+    if (n > 0) {
+      p += n;
+      size -= size_t(n);
+      continue;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+      pollfd pfd{fd, POLLOUT, 0};
+      if (::poll(&pfd, 1, kNetTimeoutMs) <= 0) return false;
+      continue;
+    }
+    return false;
   }
   return true;
 }
@@ -620,12 +699,68 @@ bool recvAll(int fd, void *data, size_t size, int timeoutMs) {
   return true;
 }
 
+// Línea de texto del relay (termina en \n), byte a byte para no comerse datos del juego
+bool recvLine(int fd, std::string &line, int timeoutMs) {
+  line.clear();
+  char c = 0;
+  while (line.size() < 256) {
+    if (!recvAll(fd, &c, 1, timeoutMs)) return false;
+    if (c == '\n') return true;
+    if (c != '\r') line += c;
+  }
+  return false;
+}
+
 void closeFd(std::atomic<int> &fd) {
   const int old = fd.exchange(-1);
   if (old >= 0) {
     ::shutdown(old, SHUT_RDWR);
     ::close(old);
   }
+}
+
+void tuneSocket(int fd) {
+  int one = 1;
+  ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+#ifdef SO_NOSIGPIPE
+  ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+}
+
+// Conexión TCP con tiempo límite (no bloquear 75 s si el destino no responde)
+int connectTcp(const std::string &host, int port, int timeoutMs, std::string &error) {
+  addrinfo hints{};
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  addrinfo *res = nullptr;
+  if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
+    error = "No se encuentra " + host + " (¿hay Internet?)";
+    return -1;
+  }
+  int fd = -1;
+  for (addrinfo *a = res; a && fd < 0; a = a->ai_next) {
+    fd = ::socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+    if (fd < 0) continue;
+    ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
+    if (::connect(fd, a->ai_addr, a->ai_addrlen) != 0) {
+      pollfd pfd{fd, POLLOUT, 0};
+      int err = 0;
+      socklen_t len = sizeof err;
+      if (::poll(&pfd, 1, timeoutMs) <= 0 || ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0 || err != 0) {
+        ::close(fd);
+        fd = -1;
+        continue;
+      }
+    }
+    ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+  }
+  ::freeaddrinfo(res);
+  if (fd < 0) {
+    error = "No responde " + host + ":" + std::to_string(port);
+    return -1;
+  }
+  tuneSocket(fd);
+  return fd;
 }
 
 // Huella del juego: tamaño + CRC32 del primer 16 MB (rápido incluso con ISOs de 2 GB)
@@ -662,24 +797,77 @@ std::string compareHello(const NetHello &mine, const NetHello &theirs) {
     return std::string("Núcleo distinto (") + theirs.core + " frente a " + mine.core + ")";
   }
   if (mine.romSize != theirs.romSize || mine.romCrc != theirs.romCrc) {
-    return std::string("El archivo del juego no es idéntico (\"") + theirs.rom + "\" frente a \"" + mine.rom + "\")";
+    return "Los archivos del juego no coinciden; ambos deben usar exactamente la misma ROM";
   }
   return "";
-}
-
-void tuneSocket(int fd) {
-  int one = 1;
-  ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-  ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 }
 
 void netStopLocked(const std::string &message) {
   g_netActive = false;
   g_netPending = false;
   g_netRole = 0;
+  g_netPingMs = -1;
   closeFd(g_netFd);
   closeFd(g_netListenFd);
+  {
+    std::lock_guard<std::mutex> lock(g_netMutex);
+    g_netCode.clear();
+  }
   netSetStatus("idle", message);
+}
+
+// Anfitrión: valida al jugador 2 y, si todo coincide, queda listo para sincronizar
+bool hostHandshake(int fd, const NetHello &mine, std::string &why) {
+  NetHello theirs{};
+  if (!recvAll(fd, &theirs, sizeof theirs, 10000)) {
+    why = "El Jugador 2 no respondió";
+    return false;
+  }
+  why = compareHello(mine, theirs);
+  NetReply reply{};
+  reply.ok = why.empty() ? 1 : 0;
+  std::snprintf(reply.message, sizeof reply.message, "%s", why.c_str());
+  sendAll(fd, &reply, sizeof reply);
+  if (!why.empty()) return false;
+  g_netFd = fd;
+  netSetStatus("syncing", "Jugador 2 conectado · sincronizando partida…");
+  g_netPending = true;
+  return true;
+}
+
+// Cliente: se presenta, espera el visto bueno y recibe la partida del anfitrión
+void clientHandshake(int fd, const NetHello &mine) {
+  NetReply reply{};
+  uint64_t size = 0;
+  if (!sendAll(fd, &mine, sizeof mine) || !recvAll(fd, &reply, sizeof reply, 15000)) {
+    ::close(fd);
+    netStopLocked("El anfitrión no respondió");
+    return;
+  }
+  if (!reply.ok) {
+    ::close(fd);
+    reply.message[sizeof reply.message - 1] = 0;
+    netStopLocked(reply.message);
+    return;
+  }
+  netSetStatus("syncing", "Recibiendo la partida del anfitrión…");
+  if (!recvAll(fd, &size, sizeof size, kNetTimeoutMs) || size == 0 || size > (512ull << 20)) {
+    ::close(fd);
+    netStopLocked("No llegó la partida del anfitrión");
+    return;
+  }
+  std::vector<uint8_t> blob(size);
+  if (!recvAll(fd, blob.data(), blob.size(), kNetTimeoutMs)) {
+    ::close(fd);
+    netStopLocked("Se cortó la conexión al recibir la partida");
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_netMutex);
+    g_netBlob.swap(blob);
+  }
+  g_netFd = fd;
+  g_netPending = true;
 }
 
 NetInput localInput() {
@@ -694,18 +882,26 @@ NetInput localInput() {
   return in;
 }
 
+bool sameInput(const NetInput &a, const NetInput &b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+
+std::string netPlayingMessage() {
+  std::string m = g_netRole == 1 ? "Conectado · Jugador 1" : "Conectado · Jugador 2";
+  m += g_ns.window ? " · rollback" : " · retardo " + std::to_string(g_ns.delay) + " frames";
+  return m;
+}
+
 // Hilo de emulación, con g_coreMutex tomado: arranque de la sesión (estado inicial común)
 void netBeginLocked() {
   g_netPending = false;
   const int fd = g_netFd.load();
   if (fd < 0) return;
+  const size_t size = g_core.serializeSize();
   if (g_netRole == 1) {
-    const size_t size = g_core.serializeSize();
     std::vector<uint8_t> state(size);
     const uint64_t size64 = size;
     if (!size || !g_core.serialize(state.data(), size) || !sendAll(fd, &size64, sizeof size64) ||
         !sendAll(fd, state.data(), size)) {
-      netStopLocked("No se pudo enviar la partida al jugador 2");
+      netStopLocked("No se pudo enviar la partida al Jugador 2");
       return;
     }
   } else {
@@ -719,39 +915,152 @@ void netBeginLocked() {
       return;
     }
   }
-  std::memset(g_netLocal, 0, sizeof g_netLocal);
+  g_ns = NetSession();
+  // Rollback si guardar el estado cada frame es barato (GBA, Mega Drive, arcade, PS1);
+  // N64 y PSP (estados de 16-40 MB) usan retardo adaptable
+  g_ns.window = size <= (2u << 20) ? 8 : size <= (8u << 20) ? 5 : 0;
+  g_ns.delay = g_ns.window ? 1 : 3;
+  g_ns.frame = 0;
+  g_ns.remoteKnown = kNetStart;
+  g_ns.lastSent = kNetStart - 1;
   std::memset(g_netCur, 0, sizeof g_netCur);
-  g_netFrame = 0;
+  // Socket sin bloqueo para leer lo que haya en cada frame
+  ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
   g_netActive = true;
-  netSetStatus("playing", g_netRole == 1 ? "Conectado · eres el Jugador 1" : "Conectado · eres el Jugador 2");
+  netSetStatus("playing", netPlayingMessage());
 }
 
-// Hilo de emulación, con g_coreMutex tomado: entradas de los dos jugadores para este frame
+// Entradas de ambos jugadores para el frame k (la remota predicha si aún no ha llegado)
+void netApplyInputs(uint32_t k) {
+  NetInput loc{}, rem{};
+  if (k >= kNetStart) {
+    loc = g_ns.local[k % kNetRing];
+    if (k < g_ns.remoteKnown) {
+      rem = g_ns.remote[k % kNetRing];
+    } else if (g_ns.remoteKnown > kNetStart) {
+      rem = g_ns.remote[(g_ns.remoteKnown - 1) % kNetRing];  // predicción: repetir la última
+    }
+  }
+  g_ns.used[k % kNetRing] = rem;
+  g_netCur[0] = g_netRole == 1 ? loc : rem;
+  g_netCur[1] = g_netRole == 1 ? rem : loc;
+}
+
+// Lee lo que haya llegado (esperando como mucho timeoutMs). Devuelve el primer frame ya emulado
+// cuya predicción falló (o UINT32_MAX), y false en *lost si la conexión se cortó.
+uint32_t netPump(int fd, int timeoutMs, bool *lost) {
+  uint32_t rollbackFrom = UINT32_MAX;
+  pollfd pfd{fd, POLLIN, 0};
+  if (::poll(&pfd, 1, timeoutMs) > 0) {
+    uint8_t buf[4096];
+    for (;;) {
+      const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
+      if (n > 0) {
+        g_ns.rx.insert(g_ns.rx.end(), buf, buf + n);
+        continue;
+      }
+      if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) *lost = true;
+      break;
+    }
+  }
+  size_t off = 0;
+  const uint32_t now = nowMs();
+  while (g_ns.rx.size() - off >= sizeof(NetMsg)) {
+    NetMsg m;
+    std::memcpy(&m, g_ns.rx.data() + off, sizeof m);
+    off += sizeof m;
+    if (m.frame != g_ns.remoteKnown) continue;  // TCP entrega en orden: solo puede ser el siguiente
+    g_ns.remote[m.frame % kNetRing] = m.in;
+    g_ns.remoteKnown = m.frame + 1;
+    if (m.frame < g_ns.frame && !sameInput(m.in, g_ns.used[m.frame % kNetRing]) && m.frame < rollbackFrom) {
+      rollbackFrom = m.frame;
+    }
+    if (m.echoMs) {
+      const double rtt = double(uint32_t(now - m.echoMs));
+      if (rtt < 5000) g_ns.ping = g_ns.ping < 0 ? rtt : g_ns.ping * 0.9 + rtt * 0.1;
+    }
+    g_ns.echoBase = m.sentMs;
+    g_ns.echoAt = now;
+  }
+  g_ns.rx.erase(g_ns.rx.begin(), g_ns.rx.begin() + long(off));
+  return rollbackFrom;
+}
+
+bool netSaveState(uint32_t k) {
+  const size_t size = g_core.serializeSize();
+  auto &slot = g_ns.states[k % kNetRing];
+  slot.resize(size);
+  return size && g_core.serialize(slot.data(), size);
+}
+
+// Hilo de emulación, con g_coreMutex tomado: prepara el frame g_ns.frame (el llamador lo emula)
 void netStepLocked() {
   const int fd = g_netFd.load();
-  const uint32_t f = g_netFrame;
-  struct Msg {
-    uint32_t frame;
-    NetInput in;
-  } out{f + kNetDelay, localInput()};
-  g_netLocal[(f + kNetDelay) % 64] = out.in;
-  if (!sendAll(fd, &out, sizeof out)) {
-    netStopLocked("Conexión perdida con el otro jugador");
-    return;
-  }
-  NetInput remote{};
-  if (f >= kNetDelay) {
-    Msg in{};
-    if (!recvAll(fd, &in, sizeof in, kNetTimeoutMs) || in.frame != f) {
+  bool lost = false;
+
+  // 1) Entrada local para frame + retardo (se rellenan huecos si el retardo creció)
+  const NetInput L = localInput();
+  const uint32_t now = nowMs();
+  while (g_ns.lastSent < g_ns.frame + g_ns.delay) {
+    ++g_ns.lastSent;
+    g_ns.local[g_ns.lastSent % kNetRing] = L;
+    NetMsg m{};
+    m.frame = g_ns.lastSent;
+    m.in = L;
+    m.sentMs = now ? now : 1;
+    m.echoMs = g_ns.echoBase ? g_ns.echoBase + (now - g_ns.echoAt) : 0;
+    if (!sendAll(fd, &m, sizeof m)) {
       netStopLocked("Conexión perdida con el otro jugador");
       return;
     }
-    remote = in.in;
   }
-  const NetInput local = f >= kNetDelay ? g_netLocal[f % 64] : NetInput{};
-  g_netCur[0] = g_netRole == 1 ? local : remote;
-  g_netCur[1] = g_netRole == 1 ? remote : local;
-  ++g_netFrame;
+
+  // 2) Entradas del otro jugador; si alguna predicción falló, rollback
+  uint32_t rb = netPump(fd, 0, &lost);
+  // 3) Demasiado adelantados (o sin rollback): esperar a que lleguen
+  const uint32_t limit = g_ns.window;
+  const uint32_t t0 = nowMs();
+  while (!lost && g_ns.frame >= g_ns.remoteKnown + limit) {
+    if (uint32_t(nowMs() - t0) > uint32_t(kNetTimeoutMs)) {
+      lost = true;
+      break;
+    }
+    rb = std::min(rb, netPump(fd, 50, &lost));
+  }
+  if (lost) {
+    netStopLocked("Conexión perdida con el otro jugador");
+    return;
+  }
+  if (rb != UINT32_MAX && g_ns.window && rb >= kNetStart) {
+    auto &state = g_ns.states[rb % kNetRing];
+    if (!state.empty() && g_core.unserialize(state.data(), state.size())) {
+      g_replaying = true;
+      for (uint32_t k = rb; k < g_ns.frame; ++k) {
+        if (k != rb) netSaveState(k);
+        netApplyInputs(k);
+        g_core.run();
+      }
+      g_replaying = false;
+      ++g_ns.rollbacks;
+    }
+  }
+
+  // 4) Retardo adaptable según el ping (ida = ping / 2; un frame = 16,7 ms)
+  if (g_ns.ping >= 0) {
+    g_netPingMs = int(g_ns.ping);
+    const double oneWay = g_ns.ping / 2.0 / 16.7;
+    const uint32_t target = g_ns.window ? uint32_t(std::clamp(oneWay * 0.5, 1.0, 3.0))
+                                        : uint32_t(std::clamp(std::ceil(oneWay) + 1.0, 2.0, 12.0));
+    if (target != g_ns.delay) {
+      g_ns.delay = target;
+      netSetStatus("playing", netPlayingMessage());
+    }
+  }
+
+  // 5) Estado antes de este frame (para poder volver) y entradas
+  if (g_ns.window) netSaveState(g_ns.frame);
+  netApplyInputs(g_ns.frame);
+  ++g_ns.frame;
 }
 
 void runLoop() {
@@ -995,7 +1304,27 @@ void setGamepadExtra(double rx, double ry, double l2, double r2) {
   g_padR2 = toAxis(r2);
 }
 
-void setRumbleHandler(void (*handler)(float strong, float weak)) { g_rumbleHandler = handler; }
+void setRumbleHandler(void (*handler)(unsigned port, float strong, float weak)) { g_rumbleHandler = handler; }
+
+void setGamepadPort(int port, uint16_t buttons, double x, double y, double rx, double ry, double l2, double r2) {
+  if (port == 0) {
+    setGamepad(buttons, x, y);
+    setGamepadExtra(rx, ry, l2, r2);
+    return;
+  }
+  if (port != 1) return;
+  auto toAxis = [](double v) {
+    v = std::max(-1.0, std::min(1.0, v));
+    return static_cast<int16_t>(v * 32767.0);
+  };
+  g_pad2Buttons = buttons;
+  g_pad2X = toAxis(x);
+  g_pad2Y = toAxis(y);
+  g_pad2RX = toAxis(rx);
+  g_pad2RY = toAxis(ry);
+  g_pad2L2 = toAxis(l2);
+  g_pad2R2 = toAxis(r2);
+}
 
 std::string localAddress() {
   std::string best;
@@ -1018,7 +1347,8 @@ std::string localAddress() {
 
 std::string netStatus() {
   std::lock_guard<std::mutex> lock(g_netMutex);
-  return g_netStatus;
+  // fase|mensaje|código de sala|ping en ms (-1 = desconocido)
+  return g_netStatus + "|" + g_netCode + "|" + std::to_string(g_netPingMs.load());
 }
 
 void netStop() { netStopLocked("Sin conexión"); }
@@ -1050,27 +1380,62 @@ bool netHost(int port) {
       const int client = ::accept(fd, nullptr, nullptr);
       if (client < 0) break;
       tuneSocket(client);
-      NetHello theirs{};
-      NetReply reply{};
-      if (!recvAll(client, &theirs, sizeof theirs, 10000)) {
+      std::string why;
+      if (!hostHandshake(client, mine, why)) {
         ::close(client);
-        continue;
-      }
-      const std::string why = compareHello(mine, theirs);
-      reply.ok = why.empty() ? 1 : 0;
-      std::snprintf(reply.message, sizeof reply.message, "%s", why.c_str());
-      sendAll(client, &reply, sizeof reply);
-      if (!why.empty()) {
-        ::close(client);
-        netSetStatus("waiting", "Rechazado: " + why + ". Sigue esperando…");
+        netSetStatus("waiting", why + ". Sigue esperando…");
         continue;
       }
       closeFd(g_netListenFd);
-      g_netFd = client;
-      netSetStatus("syncing", "Jugador 2 conectado · sincronizando partida…");
-      g_netPending = true;
       return;
     }
+  }).detach();
+  return true;
+}
+
+bool netHostRelay(const char *relayHost, int relayPort) {
+  if (!g_gameLoaded || !relayHost) return false;
+  netStopLocked("Sin conexión");
+  g_netRole = 1;
+  netSetStatus("connecting", "Creando sala en el servidor…");
+  const NetHello mine = makeHello();
+  const std::string relay(relayHost);
+  std::thread([relay, relayPort, mine]() {
+    std::string error, line;
+    const int fd = connectTcp(relay, relayPort, 8000, error);
+    if (fd < 0) {
+      netStopLocked("Servidor de salas no disponible: " + error);
+      return;
+    }
+    const char hello[] = "JLRL1 HOST\n";
+    if (!sendAll(fd, hello, sizeof hello - 1) || !recvLine(fd, line, 10000) || line.rfind("CODE ", 0) != 0) {
+      ::close(fd);
+      netStopLocked("El servidor de salas no respondió");
+      return;
+    }
+    const std::string code = line.substr(5);
+    {
+      std::lock_guard<std::mutex> lock(g_netMutex);
+      g_netCode = code;
+    }
+    g_netListenFd = fd;  // netStop() lo cierra y cancela la espera
+    netSetStatus("waiting", "Sala " + code + " · comparte el código con el Jugador 2");
+    // Espera al Jugador 2 (la sala dura hasta 1 hora en el servidor)
+    while (g_netListenFd.load() == fd) {
+      pollfd pfd{fd, POLLIN, 0};
+      if (::poll(&pfd, 1, 500) <= 0) continue;
+      if (!recvLine(fd, line, 2000)) break;
+      if (line == "PING") continue;
+      if (line != "PAIRED") break;
+      g_netListenFd = -1;  // el socket pasa a ser el de la partida
+      std::string why;
+      if (!hostHandshake(fd, mine, why)) {
+        ::close(fd);
+        netStopLocked(why);
+      }
+      return;
+    }
+    if (g_netListenFd.load() == fd) netStopLocked("La sala se cerró en el servidor");
   }).detach();
   return true;
 }
@@ -1083,63 +1448,47 @@ bool netJoin(const char *address, int port) {
   const NetHello mine = makeHello();
   const std::string host(address);
   std::thread([host, port, mine]() {
-    addrinfo hints{};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    addrinfo *res = nullptr;
-    if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
-      netStopLocked("Dirección no válida: " + host);
+    std::string error;
+    const int fd = connectTcp(host, port, 8000, error);
+    if (fd < 0) {
+      netStopLocked(error + ". ¿Sala creada en el otro iPhone y puerto abierto?");
       return;
     }
-    const int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    // connect con tiempo límite (no bloquear 75 s si la IP no responde)
-    ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
-    int rc = ::connect(fd, res->ai_addr, res->ai_addrlen);
-    ::freeaddrinfo(res);
-    if (rc != 0) {
-      pollfd pfd{fd, POLLOUT, 0};
-      int err = 0;
-      socklen_t len = sizeof err;
-      if (::poll(&pfd, 1, 8000) <= 0 || ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0 || err != 0) {
-        ::close(fd);
-        netStopLocked("No responde " + host + ":" + std::to_string(port) +
-                      ". ¿Misma red Wi-Fi y sala creada en el otro iPhone?");
-        return;
-      }
-    }
-    ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) & ~O_NONBLOCK);
-    tuneSocket(fd);
-    NetReply reply{};
-    uint64_t size = 0;
-    if (!sendAll(fd, &mine, sizeof mine) || !recvAll(fd, &reply, sizeof reply, 10000)) {
-      ::close(fd);
-      netStopLocked("El anfitrión no respondió");
+    clientHandshake(fd, mine);
+  }).detach();
+  return true;
+}
+
+bool netJoinCode(const char *code, const char *relayHost, int relayPort) {
+  if (!g_gameLoaded || !code || !relayHost) return false;
+  netStopLocked("Sin conexión");
+  g_netRole = 2;
+  netSetStatus("connecting", std::string("Buscando la sala ") + code + "…");
+  const NetHello mine = makeHello();
+  const std::string relay(relayHost), room(code);
+  std::thread([relay, relayPort, room, mine]() {
+    std::string error, line;
+    const int fd = connectTcp(relay, relayPort, 8000, error);
+    if (fd < 0) {
+      netStopLocked("Servidor de salas no disponible: " + error);
       return;
     }
-    if (!reply.ok) {
+    const std::string join = "JLRL1 JOIN " + room + "\n";
+    if (!sendAll(fd, join.data(), join.size()) || !recvLine(fd, line, 10000)) {
       ::close(fd);
-      reply.message[sizeof reply.message - 1] = 0;
-      netStopLocked(std::string("Rechazado: ") + reply.message);
+      netStopLocked("El servidor de salas no respondió");
       return;
     }
-    netSetStatus("syncing", "Recibiendo la partida del anfitrión…");
-    if (!recvAll(fd, &size, sizeof size, kNetTimeoutMs) || size == 0 || size > (512ull << 20)) {
+    if (line != "PAIRED") {
       ::close(fd);
-      netStopLocked("No llegó la partida del anfitrión");
-      return;
-    }
-    std::vector<uint8_t> blob(size);
-    if (!recvAll(fd, blob.data(), blob.size(), kNetTimeoutMs)) {
-      ::close(fd);
-      netStopLocked("Se cortó la conexión al recibir la partida");
+      netStopLocked(line.rfind("ERR ", 0) == 0 ? line.substr(4) : "No se pudo entrar en la sala");
       return;
     }
     {
       std::lock_guard<std::mutex> lock(g_netMutex);
-      g_netBlob.swap(blob);
+      g_netCode = room;
     }
-    g_netFd = fd;
-    g_netPending = true;
+    clientHandshake(fd, mine);
   }).detach();
   return true;
 }

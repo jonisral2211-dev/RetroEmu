@@ -1,21 +1,23 @@
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import type { DirMode } from '../input/layouts';
 import type { GamepadStatus } from '../input/useGamepadStatus';
+import { isRoomCode, loadRelay, parseRelay, saveRelay } from '../net/relaySettings';
 import { theme } from '../theme';
 
 export const NET_PORT = 55435;
 
 export type TouchMode = 'auto' | 'show' | 'hide';
 export type FilterMode = 'sharp' | 'smooth';
-export type NetState = { phase: string; message: string };
+export type NetState = { phase: string; message: string; code: string; ping: number };
 type Option<T extends string> = { id: T; label: string };
 
+// "fase|mensaje|código|ping"
 export function parseNetStatus(raw: string): NetState {
-  const i = raw.indexOf('|');
-  return i < 0 ? { phase: raw || 'idle', message: '' } : { phase: raw.slice(0, i), message: raw.slice(i + 1) };
+  const [phase = 'idle', message = '', code = '', ping = '-1'] = raw.split('|');
+  return { phase, message, code, ping: Number(ping) };
 }
 
 /** Botón de engranaje discreto (única pieza de interfaz sobre el juego). */
@@ -133,12 +135,31 @@ export type GameMenuProps = {
   net: NetState;
   debugOn: boolean;
   onDebug: () => void;
+  tvConnected: boolean;
+  tvStretch: boolean;
+  onTvStretch: (v: boolean) => void;
+  onGuide: () => void;
 };
 
 export function GameMenu(p: GameMenuProps) {
   const [address, setAddress] = useState('');
+  const [relayText, setRelayText] = useState('');
+  useEffect(() => {
+    loadRelay().then(setRelayText);
+  }, []);
+  const relay = parseRelay(relayText);
   const myIp = Libretro.localAddress();
   const online = p.net.phase !== 'idle';
+  // Código de 6 caracteres -> sala del servidor; si no, IP (opcionalmente con :puerto)
+  const join = () => {
+    const v = address.trim();
+    if (isRoomCode(v)) {
+      if (relay) Libretro.netJoinCode(v.toUpperCase(), relay.host, relay.port);
+      return;
+    }
+    const [ip, port] = v.split(':');
+    Libretro.netJoin(ip, Number(port) || NET_PORT);
+  };
 
   const padText = p.pad.connected
     ? `${p.pad.kind === 'PS5' ? 'DualSense (PS5)' : p.pad.kind === 'PS4' ? 'DualShock 4 (PS4)' : p.pad.kind || 'Mando'} conectado` +
@@ -226,49 +247,122 @@ export function GameMenu(p: GameMenuProps) {
           </Section>
 
           <Section title="Jugar en línea (Netplay)">
-            <Text style={[styles.status, online && styles.statusOn]}>{p.net.message || 'Sin conexión'}</Text>
+            <View style={styles.netHead}>
+              <Text style={[styles.status, online && styles.statusOn]}>{p.net.message || 'Sin conexión'}</Text>
+              {p.net.phase === 'playing' && p.net.ping >= 0 ? (
+                <View style={[styles.pingBadge, p.net.ping > 150 && styles.pingBad]}>
+                  <Text style={styles.pingText}>{p.net.ping} ms</Text>
+                </View>
+              ) : null}
+            </View>
+            {p.net.phase === 'waiting' && p.net.code ? (
+              <View style={styles.codeBox}>
+                <Text style={styles.codeLabel}>CÓDIGO DE SALA</Text>
+                <Text style={styles.code} selectable>
+                  {p.net.code}
+                </Text>
+                <View style={styles.grid}>
+                  <Action label="Copiar" onPress={() => Libretro.copyToClipboard(p.net.code)} />
+                  <Action
+                    label="Compartir código"
+                    primary
+                    onPress={() =>
+                      Share.share({
+                        message:
+                          `¡Juguemos ${p.title} en JL Emulator! Abre el mismo juego → engranaje → ` +
+                          `Jugar en línea → Unirse con el código ${p.net.code}`,
+                      }).catch(() => {})
+                    }
+                  />
+                </View>
+              </View>
+            ) : null}
             {online ? (
               <Action label="Desconectar" onPress={() => Libretro.netStop()} danger />
             ) : (
               <>
-                <Action label={`Crear sala (Jugador 1) · ${myIp || 'sin Wi-Fi'}:${NET_PORT}`} onPress={() => Libretro.netHost(NET_PORT)} />
+                <Action
+                  label="Crear sala en línea (código para compartir)"
+                  primary
+                  disabled={!relay}
+                  onPress={() => relay && Libretro.netHostRelay(relay.host, relay.port)}
+                />
+                <Action
+                  label={`Crear sala local (misma Wi-Fi) · ${myIp || 'sin Wi-Fi'}:${NET_PORT}`}
+                  onPress={() => Libretro.netHost(NET_PORT)}
+                />
                 <View style={styles.joinRow}>
                   <TextInput
                     value={address}
                     onChangeText={setAddress}
-                    placeholder="IP del anfitrión (ej. 192.168.1.20)"
+                    placeholder="Código de sala o IP"
                     placeholderTextColor={theme.textDim}
-                    keyboardType="numbers-and-punctuation"
-                    autoCapitalize="none"
+                    autoCapitalize="characters"
                     autoCorrect={false}
                     style={styles.input}
                   />
-                  <Action
-                    label="Unirse"
-                    primary
-                    disabled={!address.trim()}
-                    onPress={() => {
-                      const [ip, port] = address.trim().split(':');
-                      Libretro.netJoin(ip, Number(port) || NET_PORT);
-                    }}
-                  />
+                  <Action label="Unirse" primary disabled={!address.trim()} onPress={join} />
                 </View>
               </>
             )}
+            <Text style={styles.rowLabel}>Servidor de salas (para jugar a distancia)</Text>
+            <TextInput
+              value={relayText}
+              onChangeText={setRelayText}
+              onEndEditing={() => saveRelay(relayText)}
+              placeholder="servidor:55436"
+              placeholderTextColor={theme.textDim}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              style={styles.input}
+            />
             <Text style={styles.note}>
-              Los dos iPhone necesitan la misma versión de JL Emulator, el mismo archivo de juego y el mismo
-              núcleo (se comprueba al conectar). En la misma Wi-Fi funciona directo; por Internet el anfitrión
-              debe abrir el puerto {NET_PORT} (TCP) en su router y compartir su IP pública. Durante la partida en
-              línea el juego no se pausa ni se pueden cargar estados.
+              {relay
+                ? 'Con código de sala no hace falta abrir puertos: los dos iPhone se conectan hacia fuera al servidor, desde cualquier Wi-Fi o datos móviles.'
+                : 'Para jugar a distancia con código escribe aquí la dirección de tu servidor de salas (JL Relay). Sin servidor puedes jugar en la misma Wi-Fi o por IP con el puerto ' + NET_PORT + ' abierto.'}{' '}
+              Ambos necesitan la misma versión de la app y el mismo archivo del juego (se comprueba al conectar).
+              Peleas y carreras usan rollback; N64 y PSP, retardo adaptable. En línea no se pausa ni se cargan estados.
+            </Text>
+          </Section>
+
+          <Section title="TV y AirPlay">
+            <Text style={[styles.status, p.tvConnected && styles.statusOn]}>
+              {p.tvConnected ? 'TV conectada: el juego se ve en la TV' : 'Sin TV conectada'}
+            </Text>
+            <Action label="Transmitir a TV / AirPlay" onPress={() => Libretro.showAirPlayPicker()} />
+            <Segmented
+              label="Imagen en la TV"
+              value={p.tvStretch ? 'fill' : 'orig'}
+              onChange={(v) => p.onTvStretch(v === 'fill')}
+              options={[
+                { id: 'orig', label: '4:3 Original' },
+                { id: 'fill', label: '16:9 Expandir' },
+              ]}
+            />
+            <Text style={styles.note}>
+              Por cable HDMI (adaptador) no hay retraso. Por AirPlay usa Centro de Control → Duplicar pantalla con
+              la TV en la misma Wi-Fi.
             </Text>
           </Section>
 
           <Section title="Mando externo">
             <Text style={[styles.status, p.pad.connected && styles.statusOn]}>{padText}</Text>
+            {(p.pad.players ?? []).map((pl, i) => (
+              <Text key={i} style={styles.playerRow}>
+                J{i + 1} · {pl.kind}
+                {pl.name ? ` · ${pl.name}` : ''}
+              </Text>
+            ))}
+            {(p.pad.count ?? 0) >= 2 ? <Action label="Intercambiar J1 / J2" onPress={() => Libretro.swapPlayers()} /> : null}
             <Text style={styles.note}>
               Botones: Cruz/Círculo/Cuadrado/Triángulo, L1/R1, L2/R2 analógicos, L3/R3, ambos sticks, cruceta,
               Create (Select) y Options (Start). Con el pad táctil en Auto se oculta al conectar el mando.
             </Text>
+          </Section>
+
+          <Section title="Ayuda">
+            <Action label="¿Cómo funciona? / Guía" onPress={p.onGuide} />
           </Section>
 
           <Section title="Diagnóstico">
@@ -371,6 +465,22 @@ const styles = StyleSheet.create({
   status: { color: theme.titaniumHi, fontSize: 13, lineHeight: 18 },
   statusOn: { color: '#4ADE80', fontWeight: '700' },
   joinRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  netHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pingBadge: { backgroundColor: 'rgba(34,197,94,0.18)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  pingBad: { backgroundColor: 'rgba(229,103,91,0.2)' },
+  pingText: { color: theme.text, fontSize: 12, fontWeight: '800' },
+  codeBox: {
+    alignItems: 'center',
+    gap: 8,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.amber,
+    backgroundColor: theme.amberDim,
+  },
+  codeLabel: { color: theme.amber, fontSize: 11, fontWeight: '800', letterSpacing: 2 },
+  code: { color: theme.text, fontSize: 34, fontWeight: '900', letterSpacing: 8 },
+  playerRow: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
   input: {
     flex: 1,
     color: theme.text,

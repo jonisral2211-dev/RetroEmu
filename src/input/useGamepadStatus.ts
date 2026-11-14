@@ -10,6 +10,9 @@ export type GamepadStatus = {
   kind?: string;
   /** El mando tiene motores de vibración. */
   rumble?: boolean;
+  /** Mandos conectados (máx. 2): [0] = Jugador 1, [1] = Jugador 2. */
+  count?: number;
+  players?: { name: string; kind: string; rumble: boolean }[];
 };
 
 const NONE: GamepadStatus = { connected: false, dualSense: false, name: '' };

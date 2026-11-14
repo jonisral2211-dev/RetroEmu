@@ -66,6 +66,8 @@ export function VirtualPad({
   onSelect,
   onMoveControl,
   pointerRect,
+  pointerBottom = false,
+  trackpadLabel,
 }: {
   /** Layout por grupos (consola + modo direccional); aquí se divide en botones sueltos. */
   layout: PadLayout;
@@ -81,7 +83,12 @@ export function VirtualPad({
   onMoveControl?: (id: string, dx: number, dy: number) => void;
   /** Si se indica, un toque fuera de los botones y sobre la imagen actúa como puntero (NDS). */
   pointerRect?: PointerRect;
+  /** El rectángulo del puntero representa solo la pantalla inferior de la DS (trackpad en TV). */
+  pointerBottom?: boolean;
+  /** Dibuja el rectángulo del puntero como trackpad con este texto. */
+  trackpadLabel?: string;
 }) {
+  const stickEdge = useRef(false);
   const pointerDown = useRef(false);
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -178,9 +185,11 @@ export function VirtualPad({
       );
       if (t) {
         pointerDown.current = true;
+        const v = (t.locationY - pointerRect.y) / pointerRect.h;
         Libretro.setPointer(
           ((t.locationX - pointerRect.x) / pointerRect.w) * 2 - 1,
-          ((t.locationY - pointerRect.y) / pointerRect.h) * 2 - 1,
+          // Pantallas apiladas: la inferior ocupa la mitad de abajo del frame ([0, 1])
+          pointerBottom ? v : v * 2 - 1,
           true,
         );
       } else if (pointerDown.current) {
@@ -206,6 +215,10 @@ export function VirtualPad({
       Libretro.setAnalog(ax, ay);
     }
     setKnob((k) => (k.x === kx && k.y === ky ? k : { x: kx, y: ky }));
+    // Vibración suave al llevar el stick al tope
+    const edge = kx * kx + ky * ky > 0.94;
+    if (edge && !stickEdge.current && hapticsRef.current) Libretro.haptic(0.3);
+    stickEdge.current = edge;
   };
 
   // ---- Modo edición: tocar selecciona, arrastrar mueve ----------------------------
@@ -295,6 +308,16 @@ export function VirtualPad({
       onTouchEnd={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
       onTouchCancel={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
       style={[styles.pad, style]}>
+      {trackpadLabel && pointerRect && pointerRect.w > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.trackpad,
+            { left: pointerRect.x, top: pointerRect.y, width: pointerRect.w, height: pointerRect.h },
+          ]}>
+          <Text style={styles.trackpadText}>{trackpadLabel}</Text>
+        </View>
+      ) : null}
       {pad.clusters.map((c) => (
         <ClusterView
           key={c.id}
@@ -467,6 +490,16 @@ function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: numb
 
 const styles = StyleSheet.create({
   pad: { position: 'relative', width: '100%' },
+  trackpad: {
+    position: 'absolute',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: 'rgba(56,189,248,0.6)',
+    backgroundColor: 'rgba(56,189,248,0.07)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackpadText: { color: 'rgba(186,230,253,0.8)', fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   cluster: { position: 'absolute' },
   // Modo edición: contorno ámbar discontinuo en cada control; el seleccionado, dorado y sólido
   editFrame: {

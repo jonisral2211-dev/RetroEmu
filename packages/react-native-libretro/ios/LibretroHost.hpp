@@ -31,14 +31,20 @@ void setPointer(double x, double y, bool pressed);
 void setGamepad(uint16_t buttons, double x, double y);
 /** Stick derecho (x/y en [-1, 1]) y gatillos analógicos L2/R2 (0..1) del mando físico. */
 void setGamepadExtra(double rx, double ry, double l2, double r2);
-/** Vibración que pide el core (0..1 por motor). Se llama desde el hilo de emulación. */
-void setRumbleHandler(void (*handler)(float strong, float weak));
+/** Vibración que pide el core por puerto (0..1 por motor). Se llama desde el hilo de emulación. */
+void setRumbleHandler(void (*handler)(unsigned port, float strong, float weak));
+/** Estado completo de un mando físico en el puerto 0 (Jugador 1) o 1 (Jugador 2). */
+void setGamepadPort(int port, uint16_t buttons, double x, double y, double rx, double ry, double l2, double r2);
 /** Netplay: crea sala en el puerto (anfitrión = Jugador 1). */
 bool netHost(int port);
-/** Netplay: se une a la sala de otro iPhone (Jugador 2). */
+/** Netplay: se une a la sala de otro iPhone por IP (Jugador 2). */
 bool netJoin(const char *address, int port);
+/** Netplay a distancia: crea sala en el servidor relay; el código aparece en netStatus(). */
+bool netHostRelay(const char *relayHost, int relayPort);
+/** Netplay a distancia: entra en la sala con su código de 6 caracteres. */
+bool netJoinCode(const char *code, const char *relayHost, int relayPort);
 void netStop();
-/** Estado "fase|mensaje" (fase: idle, waiting, connecting, syncing, playing). */
+/** "fase|mensaje|código|ping_ms" (fase: idle, waiting, connecting, syncing, playing). */
 std::string netStatus();
 /** IPv4 de la Wi-Fi (o de la primera interfaz activa). */
 std::string localAddress();
