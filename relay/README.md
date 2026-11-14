@@ -21,3 +21,11 @@ Necesita una IP o dominio públicos (VPS, nube o un PC con el puerto 55436 abier
 partida → engranaje → Jugar en línea → "Servidor de salas" = `tu-servidor:55436`.
 
 `--delay-ms N` añade latencia artificial por sentido (solo para pruebas de rollback).
+
+## Despliegue en Oracle Cloud Always Free
+
+`relay/oracle_deploy.py` (SDK `oci`, usa `~/.oci/config`) crea VCN, Internet Gateway, subred
+pública, reglas TCP 22/55436, instancia Ubuntu 24.04 (A1.Flex 1 OCPU/6 GB o E2.1.Micro si no hay
+capacidad) con la llave `~/.ssh/jl_relay_oracle.pub` e IP pública reservada. Después, en la
+instancia: swap de 1 GB, `docker.io`, regla iptables para 55436 antes del REJECT de Oracle
+(`netfilter-persistent save`) y `docker run -d --restart always -p 55436:55436 jl-relay`.
