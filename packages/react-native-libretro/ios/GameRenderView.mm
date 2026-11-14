@@ -115,6 +115,22 @@ static const NSUInteger kTextureRing = 3;
   return self;
 }
 
+// Resolución física completa de la pantalla donde se muestra (iPhone o TV): nativeScale da los
+// píxeles reales del panel (en los Plus/Max, más que `scale`) y, en la TV, los de su modo
+// actual (1080p o 4K). Sin esto la ventana de la TV podía dibujar a la escala del iPhone.
+- (void)didMoveToWindow {
+  [super didMoveToWindow];
+  UIScreen *screen = self.window.windowScene.screen ?: self.window.screen ?: UIScreen.mainScreen;
+  CGFloat scale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale;
+  if (screen != UIScreen.mainScreen && screen.currentMode && screen.bounds.size.width > 0) {
+    // TV: píxeles del modo de vídeo activo / puntos de la pantalla
+    scale = screen.currentMode.size.width / screen.bounds.size.width;
+  }
+  self.contentScaleFactor = scale;
+  _mtkView.contentScaleFactor = scale;
+  _mtkView.autoResizeDrawable = YES;
+}
+
 - (void)setRendering:(BOOL)rendering {
   _mtkView.paused = !rendering;
 }

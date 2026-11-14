@@ -246,13 +246,14 @@ export function VirtualPad({
     const c = t && controlAt(t.locationX, t.locationY);
     if (!c) return;
     onSelect?.(c.id);
-    setDragBoth({ id: c.id, touchId: t.identifier, x0: t.pageX, y0: t.pageY, dx: 0, dy: 0 });
+    // Coordenadas locales del pad (correctas aunque el mando esté girado 90°)
+    setDragBoth({ id: c.id, touchId: t.identifier, x0: t.locationX, y0: t.locationY, dx: 0, dy: 0 });
   };
   const editMove = (e: GestureResponderEvent) => {
     const d = dragRef.current;
     if (!d) return;
     const t = (e.nativeEvent.touches as Touch[]).find((tt) => tt.identifier === d.touchId);
-    if (t) setDragBoth({ ...d, dx: t.pageX - d.x0, dy: t.pageY - d.y0 });
+    if (t) setDragBoth({ ...d, dx: t.locationX - d.x0, dy: t.locationY - d.y0 });
   };
   const editEnd = (e: GestureResponderEvent) => {
     const d = dragRef.current;
@@ -325,7 +326,7 @@ export function VirtualPad({
           size={size}
           active={active}
           knob={knob}
-          opacity={opacity}
+          opacity={opacity * (prefs.alphas?.[c.id] ?? 1)}
           editing={editing}
           selected={editing && selectedId === c.id}
           dragging={drag?.id === c.id}

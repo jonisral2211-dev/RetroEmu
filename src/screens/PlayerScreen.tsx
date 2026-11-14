@@ -29,6 +29,8 @@ import {
   loadFeel,
   loadPadPrefs,
   loadPs1Hd,
+  loadQuality,
+  saveQuality,
   OPACITY_MIN,
   Orientation,
   PadPrefs,
@@ -199,7 +201,18 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Menú de configuración (engranaje) y filtro de imagen elegido
   const [menuOpen, setMenuOpen] = useState(false);
-  const [filterMode, setFilterMode] = useState<FilterMode | null>(null);
+  const [filterMode, setFilterModeState] = useState<FilterMode>('sharp');
+  useEffect(() => {
+    loadQuality().then(setFilterModeState);
+  }, []);
+  const setFilterMode = (q: FilterMode) => {
+    setFilterModeState(q);
+    saveQuality(q);
+  };
+  // Acomodo propio del mando de TV (por consola) y su editor
+  const [tvPrefs, setTvPrefs] = useState<PadPrefs>(() => defaultPadPrefs('tv'));
+  const [tvEditing, setTvEditing] = useState(false);
+  const [tvSelected, setTvSelected] = useState<string | null>(null);
 
   // Netplay: estado consultado al nativo (barato y síncrono)
   const [net, setNet] = useState<NetState>({ phase: 'idle', message: '', code: '', ping: -1 });
@@ -246,17 +259,42 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     const id = setInterval(poll, 1000);
     return () => clearInterval(id);
   }, []);
-  const tvSmooth =
-    filterMode !== null ? filterMode === 'smooth' : core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
+  const tvSmooth = filterMode === 'smooth';
   useEffect(() => {
     Libretro.setTVOptions(tvStretch, tvSmooth, ready);
   }, [tvStretch, tvSmooth, ready]);
   useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
   const controllerMode = tvConnected || forceController;
+  useEffect(() => {
+    let alive = true;
+    if (core) loadPadPrefs(core, 'tv').then((pp) => alive && setTvPrefs(pp));
+    return () => {
+      alive = false;
+    };
+  }, [core]);
+  const updateTvPrefs = (fn: (pp: PadPrefs) => PadPrefs) =>
+    setTvPrefs((prev) => {
+      const next = fn(prev);
+      if (core) savePadPrefs(core, 'tv', next);
+      return next;
+    });
+  // Fuera del modo control no se edita el mando de TV
+  useEffect(() => {
+    if (!controllerMode) {
+      setTvEditing(false);
+      setTvSelected(null);
+    }
+  }, [controllerMode]);
   // Mientras el iPhone es el mando, la interfaz queda bloqueada en vertical
   useEffect(() => {
     Libretro.setOrientationLock(controllerMode);
   }, [controllerMode]);
+  useEffect(() => {
+    if (!controllerMode || !landscape) return;
+    Libretro.setOrientationLock(true);
+    const id = setTimeout(() => Libretro.setOrientationLock(true), 600);
+    return () => clearTimeout(id);
+  }, [controllerMode, landscape]);
   useEffect(() => () => Libretro.setOrientationLock(false), []);
   // Al conectarse una pantalla real ya no hace falta el modo forzado
   useEffect(() => {
@@ -403,8 +441,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   const dirMode: DirMode = padPrefs.dirMode ?? defaultDirMode(core);
   const padLayout = withDirMode(layoutFor(core, genesisSix, landscape), dirMode);
-  const smooth3d =
-    filterMode !== null ? filterMode === 'smooth' : core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
+  const smooth3d = filterMode === 'smooth';
 
   // Resolución: PS1 renderiza a 1x o 2x (GPU NEON); el resto a su resolución nativa y Metal la
   // escala a la pantalla Retina con filtro nítido (sin coste de CPU)
@@ -581,6 +618,12 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       }}
       onEditControls={() => {
         setMenuOpen(false);
+        if (controllerMode) {
+          setTvEditing(true);
+          setTvSelected(null);
+          Libretro.setPaused(true);
+          return;
+        }
         setEditing(true);
         setSelectedId(null);
         setPanelCollapsed(false);
@@ -711,16 +754,30 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // ---- Modo TV: el iPhone es el mando (sin vídeo duplicado) ----------------------------------
   if (controllerMode) {
-    const tv = tvPadFor(core, height > width);
+    // Todas las consolas usan el mando vertical. Si iOS mantiene la interfaz en horizontal (bloqueo
+    // de rotación del usuario), el mando se dibuja girado 90° para que siga siendo vertical.
+    const tv = tvPadFor(core, true);
+    const rotated = area.w > area.h;
+    const padW = rotated ? area.h : area.w;
+    const padH = rotated ? area.w : area.h;
     const trackpad = tv.trackpad
-      ? { x: tv.trackpad.x * area.w, y: tv.trackpad.y * area.h, w: tv.trackpad.w * area.w, h: tv.trackpad.h * area.h }
+      ? { x: tv.trackpad.x * padW, y: tv.trackpad.y * padH, w: tv.trackpad.w * padW, h: tv.trackpad.h * padH }
       : undefined;
     const players = pad.players ?? [];
+    const finishTvEditing = () => {
+      setTvEditing(false);
+      setTvSelected(null);
+      Libretro.setPaused(paused);
+      flash('Botones guardados');
+    };
+    const tvSize = tvSelected ? tvPrefs.sizes?.[tvSelected] ?? 1 : 1;
+    const tvAlpha = tvSelected ? tvPrefs.alphas?.[tvSelected] ?? 1 : 1;
+    const showPad = tvEditing || !(pad.connected && touchMode !== 'show');
     return (
       <View style={styles.root}>
         <View style={[styles.flex, styles.tvRoot]} onLayout={onArea}>
           <View style={[styles.tvGlow, { backgroundColor: tv.accent }]} pointerEvents="none" />
-          {pad.connected && touchMode !== 'show' ? (
+          {!showPad ? (
             <View style={styles.consolePanel}>
               <Text style={styles.consoleKicker}>MODO CONSOLA ACTIVO</Text>
               <Text style={styles.consoleTitle}>{gameTitle(romPath)}</Text>
@@ -737,30 +794,105 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
                 <HudButton label="Mostrar controles táctiles" onPress={() => setTouchMode('show')} />
               </View>
             </View>
-          ) : (
-            <>
+          ) : area.w > 0 ? (
+            <View
+              style={
+                rotated
+                  ? {
+                      position: 'absolute',
+                      width: padW,
+                      height: padH,
+                      left: (area.w - padW) / 2,
+                      top: (area.h - padH) / 2,
+                      transform: [{ rotate: '-90deg' }],
+                    }
+                  : StyleSheet.absoluteFill
+              }>
               <Text style={styles.tvLabel}>
                 Mando · {tv.title} · {tvConnected ? 'el juego se ve en la TV' : 'modo control manual'}
               </Text>
               <VirtualPad
                 key={`tv:${tv.layout.name}`}
                 layout={tv.layout}
-                prefs={defaultPadPrefs('landscape')}
+                prefs={tvPrefs}
                 feel={{ ...feel, haptics: true }}
                 style={StyleSheet.absoluteFill}
-                opacity={1}
+                opacity={tvPrefs.opacity}
+                editing={tvEditing}
+                selectedId={tvSelected}
+                onSelect={setTvSelected}
+                onMoveControl={(id, dx, dy) =>
+                  updateTvPrefs((pp) => {
+                    const prev = pp.offsets[id] ?? pp.offsets[groupOf(id)] ?? { dx: 0, dy: 0 };
+                    return { ...pp, offsets: { ...pp.offsets, [id]: { dx: prev.dx + dx, dy: prev.dy + dy } } };
+                  })
+                }
                 pointerRect={trackpad}
                 pointerBottom
                 trackpadLabel={trackpad ? 'Pantalla táctil (lápiz)' : undefined}
               />
-            </>
-          )}
+            </View>
+          ) : null}
           {notices}
         </View>
-        <View style={styles.tvGear}>
-          <GearButton onPress={openMenu} online={online} />
-        </View>
-        {forceController && !tvConnected ? (
+        {tvEditing ? (
+          <>
+            <View style={styles.tvEditBar}>
+              <HudButton
+                label="Restablecer"
+                onPress={() => {
+                  setTvSelected(null);
+                  updateTvPrefs(() => defaultPadPrefs('tv'));
+                }}
+              />
+              <Text style={styles.tvEditHint}>Arrastra cada botón · tócalo para su tamaño</Text>
+              <HudButton label="Listo / Guardar" onPress={finishTvEditing} active />
+            </View>
+            {tvSelected ? (
+              <View style={styles.tvEditPanel}>
+                <View style={styles.editHeader}>
+                  <Text style={styles.selectedTitle}>{controlLabel(tvSelected)}</Text>
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() =>
+                      updateTvPrefs((pp) => {
+                        const offsets = { ...pp.offsets };
+                        const sizes = { ...(pp.sizes ?? {}) };
+                        const alphas = { ...(pp.alphas ?? {}) };
+                        delete offsets[tvSelected];
+                        delete sizes[tvSelected];
+                        delete alphas[tvSelected];
+                        return { ...pp, offsets, sizes, alphas };
+                      })
+                    }>
+                    <Text style={styles.editCollapse}>Restablecer botón</Text>
+                  </Pressable>
+                </View>
+                <Slider
+                  label="Tamaño"
+                  value={tvSize}
+                  min={0.75}
+                  max={1.5}
+                  format={pct}
+                  onChange={(v) => updateTvPrefs((pp) => ({ ...pp, sizes: { ...(pp.sizes ?? {}), [tvSelected]: v } }))}
+                />
+                <Slider
+                  label="Opacidad"
+                  value={tvAlpha}
+                  min={0.2}
+                  max={1}
+                  format={pct}
+                  onChange={(v) => updateTvPrefs((pp) => ({ ...pp, alphas: { ...(pp.alphas ?? {}), [tvSelected]: v } }))}
+                />
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <View style={styles.tvGear}>
+            <GearButton onPress={openMenu} online={online} />
+          </View>
+        )}
+        {forceController && !tvConnected && !tvEditing ? (
           <Pressable onPress={() => setForceController(false)} style={styles.exitControl}>
             <Text style={styles.exitControlText}>Salir del modo control</Text>
           </Pressable>
@@ -1004,6 +1136,33 @@ const styles = StyleSheet.create({
   },
   touchChipLandscape: { top: 12, left: 14 },
   touchChipText: { color: theme.titaniumHi, fontSize: 11, fontWeight: '700' },
+  tvEditBar: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    padding: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(21,23,29,0.95)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
+  tvEditHint: { flex: 1, color: theme.textDim, fontSize: 11, textAlign: 'center' },
+  tvEditPanel: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 16,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: 'rgba(21,23,29,0.96)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
   exitControl: {
     position: 'absolute',
     top: 10,

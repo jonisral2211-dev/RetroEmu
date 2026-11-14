@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CoreId } from '../emulator/cores';
 import type { DirMode } from './layouts';
 
-export type Orientation = 'portrait' | 'landscape';
+// 'tv' = mando a pantalla completa del modo TV (vertical), con su propio acomodo por consola
+export type Orientation = 'portrait' | 'landscape' | 'tv';
 
 /** Ajustes del pad por consola y orientación. Offsets normalizados al área del pad. */
 export type PadPrefs = {
@@ -13,6 +14,8 @@ export type PadPrefs = {
   offsets: Record<string, { dx: number; dy: number }>;
   /** Tamaño individual por botón (multiplica al tamaño global). */
   sizes?: Record<string, number>;
+  /** Opacidad individual por botón (multiplica a la global). */
+  alphas?: Record<string, number>;
   dirMode?: DirMode;
 };
 
@@ -78,6 +81,21 @@ export async function loadDisplayPrefs(o: Orientation): Promise<DisplayPrefs> {
 
 export function saveDisplayPrefs(o: Orientation, prefs: DisplayPrefs): void {
   AsyncStorage.setItem(displayKey(o), JSON.stringify(prefs)).catch(() => {});
+}
+
+// Calidad de imagen: 'sharp' = Nítido HD (pixel-perfect, por defecto) / 'smooth' = suavizado ligero
+const QUALITY_KEY = 'jl.quality.v1';
+
+export async function loadQuality(): Promise<'sharp' | 'smooth'> {
+  try {
+    return (await AsyncStorage.getItem(QUALITY_KEY)) === 'smooth' ? 'smooth' : 'sharp';
+  } catch {
+    return 'sharp';
+  }
+}
+
+export function saveQuality(q: 'sharp' | 'smooth'): void {
+  AsyncStorage.setItem(QUALITY_KEY, q).catch(() => {});
 }
 
 // PS1: resolución interna elegida (false = 1x Fluido, true = 2x HD)

@@ -193,7 +193,10 @@ export function GameMenu(p: GameMenuProps) {
           </Section>
 
           <Section title="Controles">
-            <Action label="Editar controles (botón a botón, sensibilidad, vibración)" onPress={p.onEditControls} />
+            <Action
+              label={p.forceController || p.tvConnected ? 'Editar botones (mando de TV)' : 'Editar controles (botón a botón, sensibilidad, vibración)'}
+              onPress={p.onEditControls}
+            />
             <Segmented
               label="Dirección"
               value={p.dirMode}
@@ -240,12 +243,12 @@ export function GameMenu(p: GameMenuProps) {
             <Segmented label="Resolución" value={p.resolution} onChange={p.onResolution} options={p.resolutions} />
             <Text style={styles.note}>{p.resolutionNote}</Text>
             <Segmented
-              label="Filtro"
+              label="Calidad de imagen"
               value={p.filter}
               onChange={p.onFilter}
               options={[
-                { id: 'sharp', label: 'Nítido (píxel)' },
-                { id: 'smooth', label: 'Suave + realce' },
+                { id: 'sharp', label: 'Nítido HD (Pixel-Perfect)' },
+                { id: 'smooth', label: 'Suavizado ligero' },
               ]}
             />
           </Section>
