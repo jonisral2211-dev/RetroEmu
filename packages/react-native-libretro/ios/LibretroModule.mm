@@ -139,8 +139,50 @@ static NSString *consoleForKind(romcheck::Kind kind) {
   }
 }
 
+static uint64_t be64(const uint8_t *p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
+  return v;
+}
+
+// CHD: el contenido va comprimido, pero su metadato dice qué es. chdman createcd (PS1, Saturn)
+// escribe pistas "CHT2"/"CHTR"/"CHCD"; createdvd (PSP, que solo acepta CHD de DVD) escribe "DVD ".
+static romcheck::Kind chdKind(NSString *path) {
+  NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:path];
+  if (!h) return romcheck::Kind::Unknown;
+  NSData *head = [h readDataOfLength:64];
+  const uint8_t *d = static_cast<const uint8_t *>(head.bytes);
+  if (head.length < 56 || memcmp(d, "MComprHD", 8) != 0) {
+    [h closeFile];
+    return romcheck::Kind::Unknown;
+  }
+  const uint32_t version = (uint32_t(d[12]) << 24) | (uint32_t(d[13]) << 16) | (uint32_t(d[14]) << 8) | d[15];
+  // Desplazamiento del primer metadato: v5 en 0x30, v3/v4 en 0x24
+  uint64_t meta = version >= 5 ? be64(d + 48) : be64(d + 36);
+  romcheck::Kind kind = romcheck::Kind::PS1;  // CD por defecto (comportamiento anterior)
+  for (int i = 0; i < 32 && meta != 0; ++i) {
+    @try {
+      [h seekToFileOffset:meta];
+    } @catch (NSException *) {
+      break;
+    }
+    NSData *entry = [h readDataOfLength:16];
+    if (entry.length < 16) break;
+    const uint8_t *e = static_cast<const uint8_t *>(entry.bytes);
+    if (memcmp(e, "DVD ", 4) == 0) {
+      kind = romcheck::Kind::PSP;
+      break;
+    }
+    if (memcmp(e, "CHT2", 4) == 0 || memcmp(e, "CHTR", 4) == 0 || memcmp(e, "CHCD", 4) == 0) break;
+    meta = be64(e + 8);
+  }
+  [h closeFile];
+  return kind;
+}
+
 // Lee solo la cabecera del archivo y la inspecciona según su extensión
 static romcheck::Kind sniffFile(NSString *path) {
+  if ([path.pathExtension.lowercaseString isEqualToString:@"chd"]) return chdKind(path);
   NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
   if (!handle) return romcheck::Kind::Unknown;
   NSData *head = [handle readDataOfLength:romcheck::kHeadSize];
@@ -273,6 +315,20 @@ static BOOL moveIfFree(NSString *src, NSString *dest) {
   return YES;
 }
 
+// Un juego de PSP (.chd de DVD, .iso UMD, .cso, .pbp) dentro de ps1/ haría fallar a PCSX-ReARMed
+// ("unsupported/invalid CD image"): se mueve a psp/.
+static void relocatePspFromPs1(NSString *docs) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *ps1 = [docs stringByAppendingPathComponent:@"ps1"];
+  NSString *psp = [docs stringByAppendingPathComponent:@"psp"];
+  for (NSString *name in [fm contentsOfDirectoryAtPath:ps1 error:nil]) {
+    NSString *ext = name.pathExtension.lowercaseString;
+    if (![@[ @"chd", @"iso", @"cso", @"pbp" ] containsObject:ext]) continue;
+    NSString *full = [ps1 stringByAppendingPathComponent:name];
+    if (sniffFile(full) == romcheck::Kind::PSP) moveIfFree(full, [psp stringByAppendingPathComponent:name]);
+  }
+}
+
 // Auto-organización de la raíz de Documents (al arrancar y al pulsar Actualizar):
 //  - .zip arcade (romset conocido o zip sin ROM de consola dentro) -> arcade/
 //  - .cue (+ todas sus pistas), .bin/.iso de PS1 y .chd -> ps1/
@@ -334,7 +390,8 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
       continue;
     }
     if ([ext isEqualToString:@"chd"]) {
-      moveIfFree(full, [ps1 stringByAppendingPathComponent:name]);
+      NSString *dir = sniffFile(full) == romcheck::Kind::PSP ? [docs stringByAppendingPathComponent:@"psp"] : ps1;
+      moveIfFree(full, [dir stringByAppendingPathComponent:name]);
       continue;
     }
     if (!romcheck::isRomExtension(ext.UTF8String) || [ext isEqualToString:@"cue"]) continue;
@@ -439,6 +496,14 @@ RCT_EXPORT_MODULE(Libretro)
   }
   if (![fm isReadableFileAtPath:path]) {
     _romError = [NSString stringWithFormat:@"Sin permiso de lectura para: %@", path];
+    return @NO;
+  }
+  if (([_coreId isEqualToString:@"pcsx"] || [_coreId isEqualToString:@"yabause"]) &&
+      sniffFile(path) == romcheck::Kind::PSP) {
+    _romError = [NSString stringWithFormat:@"\"%@\" es un juego de PSP, no de PlayStation 1. Se ha movido "
+                                           @"a la carpeta psp/ (pulsa Actualizar en la biblioteca).",
+                                           path.lastPathComponent];
+    relocatePspFromPs1(documentsDirectory());
     return @NO;
   }
   if ([_coreId isEqualToString:@"mame"] || [_coreId isEqualToString:@"fbneo"]) {
@@ -553,6 +618,7 @@ RCT_EXPORT_MODULE(Libretro)
   createConsoleFolders(docs);  // por si no existían al arrancar
   romzip::Folders folders = romFolders(docs);
   organizeDocumentsRoot(docs, folders);
+  relocatePspFromPs1(docs);
 
   NSMutableArray<NSString *> *roms = [NSMutableArray array];
   NSMutableArray<NSString *> *arcade = [NSMutableArray array];
@@ -732,7 +798,9 @@ RCT_EXPORT_MODULE(Libretro)
   }
   // .chd: comprimido, sin cabecera legible; decide la carpeta (saturn/ o ps1/)
   if ([ext isEqualToString:@"chd"]) {
-    if (!(sniffFile(path) == romcheck::Kind::PS1)) return @"";
+    const romcheck::Kind kind = sniffFile(path);
+    if (kind == romcheck::Kind::PSP) return @"psp";
+    if (kind != romcheck::Kind::PS1) return @"";
     return isInDocsFolder(path, @"saturn") ? @"saturn" : @"ps1";
   }
   return consoleForKind(sniffFile(path)) ?: @"";

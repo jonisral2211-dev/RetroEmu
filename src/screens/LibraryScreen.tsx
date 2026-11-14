@@ -13,7 +13,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
-import { subscribeCover } from '../covers/CoverCache';
+import RNFS from 'react-native-fs';
+import { forgetCover, subscribeCover } from '../covers/CoverCache';
 import { onRomImported } from '../downloads/DownloadManager';
 import {
   ARCADE_CORES,
@@ -92,6 +93,53 @@ function displayTitle(path: string): string {
   const base = file.replace(/\.[^.]+$/, '');
   const clean = base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim();
   return clean || base;
+}
+
+// Por debajo de este tamaño un juego está incompleto o dañado (descarga cortada, zip vacío).
+// Las hojas .cue/.m3u son texto y siempre pesan poco: no cuentan.
+const MIN_GAME_BYTES = 20 * 1024;
+const isSheet = (path: string) => /\.(cue|m3u)$/i.test(path);
+
+function formatKb(bytes: number): string {
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+// Borra el juego. Un .cue arrastra sus pistas (líneas FILE) de la misma carpeta.
+async function deleteGame(path: string): Promise<void> {
+  const targets = [path];
+  if (/\.cue$/i.test(path)) {
+    try {
+      const dir = path.slice(0, path.lastIndexOf('/'));
+      const text = await RNFS.readFile(path, 'utf8');
+      const re = /^\s*FILE\s+(?:"([^"]+)"|(\S+))/gim;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) targets.push(`${dir}/${m[1] ?? m[2]}`);
+    } catch {
+      // .cue ilegible: se borra solo la hoja
+    }
+  }
+  for (const t of targets) {
+    if (await RNFS.exists(t)) await RNFS.unlink(t);
+  }
+}
+
+function confirmDelete(entry: Entry, onRemoved: () => void) {
+  const name = entry.path.split('/').pop() ?? entry.path;
+  const extra = /\.cue$/i.test(entry.path) ? ' y sus pistas .bin' : '';
+  Alert.alert('Eliminar archivo', `Se borrará "${name}"${extra} del iPhone. No se puede deshacer.`, [
+    { text: 'Cancelar', style: 'cancel' },
+    {
+      text: 'Eliminar',
+      style: 'destructive',
+      onPress: () =>
+        deleteGame(entry.path)
+          .then(() => {
+            forgetCover(entry.path, entry.console);
+            onRemoved();
+          })
+          .catch((e) => Alert.alert('No se pudo eliminar', String(e))),
+    },
+  ]);
 }
 
 // Alerta descriptiva en vez de intentar cargar la ROM en blanco
@@ -229,7 +277,9 @@ export default function LibraryScreen({ onPlay }: Props) {
             {'\n\n'}Para Neo-Geo deja también neogeo.zip en arcade/, fbneo/ o system/.
           </Text>
         }
-        renderItem={({ item }) => <GameCard entry={item} width={cardW} onPlay={onPlay} />}
+        renderItem={({ item }) => (
+          <GameCard entry={item} width={cardW} onPlay={onPlay} onRemoved={refresh} />
+        )}
       />
     </View>
   );
@@ -239,19 +289,57 @@ const GameCard = memo(function GameCard({
   entry,
   width,
   onPlay,
+  onRemoved,
 }: {
   entry: Entry;
   width: number;
   onPlay: Props['onPlay'];
+  onRemoved: () => void;
 }) {
   const [cover, setCover] = useState<string | null>(null);
+  // Tamaño en disco: < 20 KB = archivo incompleto (insignia roja)
+  const [size, setSize] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    RNFS.stat(entry.path)
+      .then((st) => alive && setSize(Number(st.size)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [entry.path]);
+  const broken = size !== null && size < MIN_GAME_BYTES && !isSheet(entry.path);
   const core = coreForConsole(entry.console);
   const enabled = core !== null && ENABLED_CORES.has(core);
   const misplaced = core === null && isMisplacedZip(entry.path);
 
   useEffect(() => subscribeCover(entry.path, entry.console, setCover), [entry.path, entry.console]);
 
+  // Mantener pulsado: menú con eliminar (y cambiar núcleo en arcade)
+  const showMenu = () => {
+    const name = entry.path.split('/').pop() ?? entry.path;
+    Alert.alert(displayTitle(entry.path), `${relativeToDocuments(entry.path)}${size !== null ? ` · ${formatKb(size)}` : ''}`, [
+      ...(enabled && isArcadeConsole(entry.console)
+        ? [{ text: 'Cambiar núcleo (FBNeo / MAME)', onPress: () => chooseArcadeCore(entry, onPlay) }]
+        : []),
+      { text: `Eliminar "${name.length > 28 ? `${name.slice(0, 25)}…` : name}"`, style: 'destructive' as const, onPress: () => confirmDelete(entry, onRemoved) },
+      { text: 'Cancelar', style: 'cancel' as const },
+    ]);
+  };
+
   const open = async () => {
+    if (broken && size !== null) {
+      Alert.alert(
+        'Archivo incompleto',
+        `"${entry.path.split('/').pop()}" pesa solo ${formatKb(size)}: está dañado o la descarga se cortó. ` +
+          'Lo normal es eliminarlo y volver a descargarlo.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar', style: 'destructive', onPress: () => confirmDelete(entry, onRemoved) },
+        ],
+      );
+      return;
+    }
     if (!enabled) {
       explainUnavailable(entry);
       return;
@@ -269,7 +357,7 @@ const GameCard = memo(function GameCard({
   return (
     <Pressable
       onPress={open}
-      onLongPress={() => (enabled && isArcadeConsole(entry.console) ? chooseArcadeCore(entry, onPlay) : undefined)}
+      onLongPress={showMenu}
       style={({ pressed }) => [styles.card, { width }, pressed && styles.pressed, !enabled && styles.cardDisabled]}>
       <View style={[styles.art, { height: artH }]}>
         <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
@@ -290,6 +378,11 @@ const GameCard = memo(function GameCard({
             <View style={styles.monogramRule} />
           </View>
         )}
+        {broken ? (
+          <View style={styles.brokenBadge}>
+            <Text style={styles.brokenText}>Archivo incompleto</Text>
+          </View>
+        ) : null}
         {entry.console in CONSOLE_LABEL ? (
           <View style={styles.badge}>
             <ConsoleIcon kind={entry.console as Console} size={12} color={theme.amber} />
@@ -393,6 +486,17 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   badgeText: { color: theme.titaniumHi, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  brokenBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    left: 8,
+    alignItems: 'center',
+    backgroundColor: 'rgba(200,40,40,0.92)',
+    borderRadius: 8,
+    paddingVertical: 4,
+  },
+  brokenText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   cardTitle: { color: theme.text, fontSize: 13, fontWeight: '600', marginTop: 8, lineHeight: 17 },
   cardSub: { color: theme.textDim, fontSize: 11, marginTop: 2 },
   warn: { color: theme.amber },
