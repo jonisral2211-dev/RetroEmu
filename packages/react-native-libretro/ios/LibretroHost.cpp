@@ -74,6 +74,7 @@ std::atomic<uint32_t> g_dbgUiHits{0};   // botones escritos desde la UI desde la
 std::atomic<uint32_t> g_dbgFrameW{0};   // último frame recibido del core
 std::atomic<uint32_t> g_dbgFrameH{0};
 std::atomic<uint32_t> g_dbgFramePitch{0};
+std::atomic<uint32_t> g_dbgFrameBpp{4};
 bool g_isN64 = false;
 FrameBuffer g_frame;
 AudioOutput g_audio;
@@ -83,6 +84,7 @@ double g_sampleRate = 32768.0;
 double g_fps = 60.0;
 std::string g_systemDir;
 std::string g_saveDir;
+std::string g_stateDir;  // Documents/states (save states); antes iban en saves/
 std::string g_romBase;
 std::vector<uint8_t> g_romData;
 std::string g_lastError;  // motivo del último fallo de loadCore/loadGame
@@ -183,19 +185,30 @@ static bool onEnvironment(unsigned cmd, void *data) {
   }
 }
 
+size_t bytesPerPixel(enum retro_pixel_format fmt) {
+  return fmt == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2;
+}
+
 static void onVideo(const void *data, unsigned width, unsigned height, size_t pitch) {
   if (!data || !width || !height) return;  // NULL = frame duplicado, nada nuevo
-  // Diagnóstico de tamaño/pitch por frame (franjas en el borde = pitch o ancho inesperado)
+  const auto fmt = g_pixelFormat;
+  const size_t bpp = bytesPerPixel(fmt);
+  // El pitch del core (bytes por fila en origen) puede ser mayor que width*bpp (relleno).
+  // Si fuese menor, leer `width` píxeles invadiría la fila siguiente y el contenido aparecería
+  // desplazado en franja: se recorta el ancho a lo que cabe realmente en una fila.
+  if (pitch < size_t(width) * bpp) width = static_cast<unsigned>(pitch / bpp);
+  if (!width) return;
+  // Diagnóstico de tamaño/pitch por frame
   g_dbgFrameW.store(width, std::memory_order_relaxed);
   g_dbgFrameH.store(height, std::memory_order_relaxed);
   g_dbgFramePitch.store(static_cast<uint32_t>(pitch), std::memory_order_relaxed);
+  g_dbgFrameBpp.store(static_cast<uint32_t>(bpp), std::memory_order_relaxed);
   const auto *src = static_cast<const uint8_t *>(data);
-  const auto fmt = g_pixelFormat;
 
-  g_frame.write(width, height, [&](uint8_t *dst) {
+  g_frame.write(width, height, [&](uint8_t *dst, size_t dstStride) {
     for (unsigned y = 0; y < height; ++y) {
-      const uint8_t *row = src + size_t(y) * pitch;
-      uint8_t *out = dst + size_t(y) * width * 4;
+      const uint8_t *row = src + size_t(y) * pitch;  // origen: pitch del core
+      uint8_t *out = dst + size_t(y) * dstStride;    // destino: BGRA8 empaquetado
       if (fmt == RETRO_PIXEL_FORMAT_XRGB8888) {
         // En memoria little-endian: B G R X => ya es BGRA
         for (unsigned x = 0; x < width; ++x) {
@@ -267,6 +280,10 @@ static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsi
 
 std::string sramPath() { return g_saveDir + "/" + g_romBase + ".srm"; }
 std::string statePath(int slot) {
+  return g_stateDir + "/" + g_romBase + ".state" + std::to_string(slot);
+}
+// Ubicación anterior (saves/): se sigue leyendo para no perder estados ya guardados
+std::string legacyStatePath(int slot) {
   return g_saveDir + "/" + g_romBase + ".state" + std::to_string(slot);
 }
 
@@ -332,9 +349,10 @@ void runLoop() {
 
 // ---- API pública ----------------------------------------------------------
 
-void configure(const char *systemDir, const char *saveDir) {
+void configure(const char *systemDir, const char *saveDir, const char *stateDir) {
   g_systemDir = systemDir;
   g_saveDir = saveDir;
+  g_stateDir = stateDir;
 }
 
 bool loadCore(const char *frameworkBinaryPath) {
@@ -530,7 +548,7 @@ bool loadState(int slot) {
   std::lock_guard<std::mutex> lock(g_coreMutex);
   if (!g_gameLoaded) return false;
   std::vector<uint8_t> buf;
-  if (!readFile(statePath(slot), buf)) return false;
+  if (!readFile(statePath(slot), buf) && !readFile(legacyStatePath(slot), buf)) return false;
   return g_core.unserialize(buf.data(), buf.size());
 }
 
@@ -552,7 +570,7 @@ std::string debugState() {
                 "frame %ux%u pitch=%u (esperado %u)",
                 g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
                 reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_dbgFrameW.load(), g_dbgFrameH.load(),
-                g_dbgFramePitch.load(), g_dbgFrameW.load() * 4);
+                g_dbgFramePitch.load(), g_dbgFrameW.load() * g_dbgFrameBpp.load());
   return buf;
 }
 

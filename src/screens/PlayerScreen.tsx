@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
-import { coreForConsole } from '../emulator/cores';
+import { coreForConsole, isMisplacedZip, misplacedZipMessage } from '../emulator/cores';
 import { layoutFor } from '../input/layouts';
 import { getPadDebug, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
@@ -44,7 +44,11 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
 
   useEffect(() => {
     if (!core) {
-      setError('Esta ROM no tiene una cabecera válida para ninguna consola soportada');
+      setError(
+        isMisplacedZip(romPath)
+          ? misplacedZipMessage(romPath)
+          : 'Esta ROM no tiene una cabecera válida para ninguna consola soportada',
+      );
       return;
     }
     try {

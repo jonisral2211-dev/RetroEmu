@@ -30,6 +30,8 @@ static NSString *const kShaderSource =
     @"  return tex.sample(s, v.uv);\n"
     @"}\n";
 
+static const NSUInteger kTextureRing = 3;
+
 @interface LibretroView : RCTViewComponentView
 @end
 
@@ -43,7 +45,11 @@ static NSString *const kShaderSource =
   id<MTLRenderPipelineState> _pipeline;
   id<MTLSamplerState> _nearestSampler;
   id<MTLSamplerState> _linearSampler;
-  id<MTLTexture> _texture;
+  // Anillo de texturas: nunca se reescribe (replaceRegion, CPU) una textura que un command
+  // buffer anterior aún puede estar muestreando en la GPU.
+  id<MTLTexture> _textures[kTextureRing];
+  NSUInteger _ringIndex;
+  id<MTLTexture> _texture;  // la última subida, la que se dibuja
   uint32_t _uploadedVersion;
   BOOL _linearFilter;
 }
@@ -97,8 +103,11 @@ static NSString *const kShaderSource =
 
 - (void)buildSamplers {
   MTLSamplerDescriptor *d = [MTLSamplerDescriptor new];
+  // ClampToEdge en todos los ejes: el filtro lineal no mezcla el borde izquierdo con el derecho
   d.sAddressMode = MTLSamplerAddressModeClampToEdge;
   d.tAddressMode = MTLSamplerAddressModeClampToEdge;
+  d.rAddressMode = MTLSamplerAddressModeClampToEdge;
+  d.normalizedCoordinates = YES;
   d.minFilter = MTLSamplerMinMagFilterNearest;
   d.magFilter = MTLSamplerMinMagFilterNearest;
   _nearestSampler = [_device newSamplerStateWithDescriptor:d];
@@ -118,21 +127,25 @@ static NSString *const kShaderSource =
   // Subir el frame nuevo (si lo hay) bajo el mutex del productor
   {
     std::lock_guard<std::mutex> lock(frame.mutex);
-    if (frame.width > 0 && frame.version != _uploadedVersion) {
-      if (!_texture || _texture.width != frame.width || _texture.height != frame.height) {
+    // bytesPerRow = stride real del buffer BGRA8 (width*4), comprobado contra el tamaño
+    if (frame.width > 0 && frame.version != _uploadedVersion &&
+        frame.stride == size_t(frame.width) * 4 &&
+        frame.pixels.size() >= frame.stride * frame.height) {
+      _ringIndex = (_ringIndex + 1) % kTextureRing;
+      id<MTLTexture> tex = _textures[_ringIndex];
+      if (!tex || tex.width != frame.width || tex.height != frame.height) {
         MTLTextureDescriptor *d =
             [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                                width:frame.width
                                                               height:frame.height
                                                            mipmapped:NO];
         d.usage = MTLTextureUsageShaderRead;
-        _texture = [_device newTextureWithDescriptor:d];
+        tex = [_device newTextureWithDescriptor:d];
+        _textures[_ringIndex] = tex;
       }
       MTLRegion region = MTLRegionMake2D(0, 0, frame.width, frame.height);
-      [_texture replaceRegion:region
-                  mipmapLevel:0
-                    withBytes:frame.pixels.data()
-                  bytesPerRow:size_t(frame.width) * 4];
+      [tex replaceRegion:region mipmapLevel:0 withBytes:frame.pixels.data() bytesPerRow:frame.stride];
+      _texture = tex;
       _uploadedVersion = frame.version;
     }
   }
@@ -141,14 +154,16 @@ static NSString *const kShaderSource =
   MTLRenderPassDescriptor *pass = view.currentRenderPassDescriptor;
   if (!drawable || !pass || !_texture || !_pipeline) return;
 
-  // Letterbox: escala uniforme que encaja en la vista, centrada
+  // Letterbox: escala uniforme que encaja en la vista, centrada. Origen y tamaño en píxeles
+  // enteros: un origen fraccionario desplaza la rejilla de muestreo y, con filtro nearest,
+  // produce una columna duplicada/desplazada en el borde izquierdo.
   const CGSize drawSize = view.drawableSize;
   const double tw = _texture.width;
   const double th = _texture.height;
   const double scale = MIN(drawSize.width / tw, drawSize.height / th);
-  const double vw = tw * scale;
-  const double vh = th * scale;
-  MTLViewport viewport = { (drawSize.width - vw) / 2.0, (drawSize.height - vh) / 2.0,
+  const double vw = floor(tw * scale);
+  const double vh = floor(th * scale);
+  MTLViewport viewport = { floor((drawSize.width - vw) / 2.0), floor((drawSize.height - vh) / 2.0),
                            vw, vh, 0.0, 1.0 };
 
   id<MTLCommandBuffer> cmd = [_commandQueue commandBuffer];

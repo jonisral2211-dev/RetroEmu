@@ -19,11 +19,11 @@ export interface Spec extends TurboModule {
   loadState(slot: number): boolean;
   /** Rutas absolutas de ROMs encontradas en Documents. */
   listRoms(): string[];
-  /** Consola verificada por contenido: 'gba' | 'n64' | 'sega' | 'mame', o '' si no es válida. */
+  /** Consola verificada por contenido: 'gba' | 'n64' | 'sega' | 'ps1' | 'mame' (solo .zip en arcade/), o ''. */
   consoleOf(romPath: string): string;
   /**
    * Importa un archivo descargado (ruta temporal): zip -> extrae la ROM a su carpeta de consola
-   * (o lo deja en mame/ si no hay ROM); ROM suelta -> la mueve a su carpeta de consola.
+   * (o lo deja en arcade/ si no hay ROM); ROM suelta -> la mueve a su carpeta de consola.
    * Devuelve la ruta final, o '' si falla (motivo en lastError()). Elimina el origen si se importa.
    */
   importRom(downloadedPath: string): string;

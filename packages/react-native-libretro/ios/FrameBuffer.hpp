@@ -12,13 +12,17 @@ struct FrameBuffer {
   std::vector<uint8_t> pixels;
   uint32_t width = 0;
   uint32_t height = 0;
+  // Bytes por fila de `pixels` (BGRA8 empaquetado: width * 4). Es el bytesPerRow de Metal;
+  // NO es el pitch del core, que puede llevar relleno y se descarta al convertir.
+  size_t stride = 0;
   uint32_t version = 0;
 
   template <class Fill>
   void write(uint32_t w, uint32_t h, Fill &&fill) {
     std::lock_guard<std::mutex> lock(mutex);
-    pixels.resize(size_t(w) * size_t(h) * 4);
-    fill(pixels.data());
+    stride = size_t(w) * 4;
+    pixels.resize(stride * size_t(h));
+    fill(pixels.data(), stride);
     width = w;
     height = h;
     ++version;

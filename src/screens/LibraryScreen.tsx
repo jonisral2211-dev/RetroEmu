@@ -7,6 +7,9 @@ import {
   CONSOLE_LABEL,
   coreForConsole,
   ENABLED_CORES,
+  FOLDER_GUIDE,
+  isMisplacedZip,
+  misplacedZipMessage,
   SYSTEM_NAME,
 } from '../emulator/cores';
 
@@ -27,6 +30,10 @@ function explainUnavailable(entry: Entry) {
   const name = entry.path.split('/').pop() ?? entry.path;
   const core = coreForConsole(entry.console);
   let message: string;
+  if (core === null && isMisplacedZip(entry.path)) {
+    Alert.alert('Carpeta incorrecta', misplacedZipMessage(entry.path));
+    return;
+  }
   if (core === null) {
     message = `"${name}" no tiene una cabecera válida para ninguna consola soportada (GBA, N64 o Mega Drive). Revisa que el archivo esté completo.`;
   } else if (!ENABLED_CORES.has(core)) {
@@ -108,9 +115,9 @@ export default function LibraryScreen({ onPlay }: Props) {
         keyExtractor={(e) => e.path}
         ListEmptyComponent={
           <Text style={styles.hint}>
-            No hay juegos verificados en esta categoría. Copia tus ROMs en la app Archivos →
-            En mi iPhone → RetroEmu (en la raíz o en gba, n64, sega, mame) o en un .zip, y pulsa
-            Actualizar.
+            No hay juegos verificados en esta categoría. Copia tus ROMs en la app Archivos → En mi
+            iPhone → RetroEmu, en la carpeta de su consola ({FOLDER_GUIDE}), y pulsa Actualizar.
+            Para Neo-Geo coloca también neogeo.zip en arcade/ o system/.
           </Text>
         }
         renderItem={({ item }) => {
@@ -121,7 +128,9 @@ export default function LibraryScreen({ onPlay }: Props) {
             ? enabled
               ? `${SYSTEM_NAME[core]} · ${relativeToDocuments(item.path)}`
               : `${SYSTEM_NAME[core]} · núcleo no incluido en esta build`
-            : 'Sin consola verificada';
+            : isMisplacedZip(item.path)
+              ? `⚠ .zip fuera de arcade/ · ${relativeToDocuments(item.path)} · toca para ver dónde moverlo`
+              : 'Sin consola verificada';
           return (
             <Pressable
               onPress={() => (enabled ? onPlay(item.path) : explainUnavailable(item))}

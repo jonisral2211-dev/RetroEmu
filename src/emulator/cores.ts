@@ -41,3 +41,22 @@ const CORE_OF_CONSOLE: Record<Console, CoreId> = {
 export function coreForConsole(consoleId: string): CoreId | null {
   return consoleId in CORE_OF_CONSOLE ? CORE_OF_CONSOLE[consoleId as Console] : null;
 }
+
+// Carpeta de Documents donde debe ir cada tipo de juego
+export const FOLDER_GUIDE =
+  'GBA → gba/ · N64 → n64/ · Mega Drive/Sega → sega/ · PS1 → ps1/ · Arcade y Neo-Geo (.zip de MAME) → arcade/';
+
+/** true si es un .zip fuera de Documents/arcade/ (solo los de arcade/ se abren con MAME). */
+export function isMisplacedZip(path: string): boolean {
+  return /\.zip$/i.test(path) && !/\/Documents\/arcade\//.test(path);
+}
+
+/** Aviso para un .zip mal ubicado: a qué carpeta moverlo según la consola. */
+export function misplacedZipMessage(path: string): string {
+  const name = path.split('/').pop() ?? path;
+  return (
+    `"${name}" no está en la carpeta arcade/. Los .zip de arcade (MAME 2003-Plus, Neo-Geo: KOF, ` +
+    `Metal Slug…) solo se abren desde Documents/arcade/. Muévelo con la app Archivos a la carpeta ` +
+    `de su consola:\n${FOLDER_GUIDE}`
+  );
+}

@@ -9,8 +9,8 @@
 // Solo puede haber UNA sesión activa por proceso: los cores mantienen estado global.
 namespace host {
 
-/** Directorios de sistema (BIOS) y de guardado. Llamar antes de loadCore. */
-void configure(const char *systemDir, const char *saveDir);
+/** Directorios de sistema (BIOS), de SRAM y de save states. Llamar antes de loadCore. */
+void configure(const char *systemDir, const char *saveDir, const char *stateDir);
 
 /** dlopen del framework del core y resolución de la API de Libretro. */
 bool loadCore(const char *frameworkBinaryPath);
