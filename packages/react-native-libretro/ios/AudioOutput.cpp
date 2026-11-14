@@ -9,6 +9,8 @@ bool AudioOutput::start(double outRate) {
   outRate_ = outRate;
   pos_ = 0.0;
   prevL_ = prevR_ = 0.0f;
+  lastL_ = lastR_ = 0.0f;
+  primed_ = false;
   readIdx_ = 0;
   writeIdx_ = 0;
   std::fill(ring_.begin(), ring_.end(), 0.0f);
@@ -45,7 +47,15 @@ void AudioOutput::stop() {
 void AudioOutput::push(const int16_t *in, size_t n, double inRate) {
   if (!queue_ || n == 0) return;
 
-  const double step = inRate / outRate_;
+  // DRC: con el búfer por encima del objetivo se generan algo menos de muestras (paso mayor)
+  // y por debajo algo más. El ajuste (±0,5 %) es inaudible y evita vaciados y desbordes.
+  const uint64_t w0 = writeIdx_.load(std::memory_order_relaxed);
+  const uint64_t r0 = readIdx_.load(std::memory_order_acquire);
+  const double target = outRate_ * kTargetSeconds;
+  const double fillLevel = double(w0 - r0);
+  const double deviation = std::max(-1.0, std::min(1.0, (fillLevel - target) / target));
+  const double step = (inRate / outRate_) * (1.0 + kMaxRateDelta * deviation);
+
   // Índice -1 = último frame del bloque anterior (prevL_/prevR_)
   auto at = [&](long i, int ch) -> float {
     if (i < 0) return ch ? prevR_ : prevL_;
@@ -92,12 +102,26 @@ void AudioOutput::onBuffer(void *user, AudioQueueRef queue, AudioQueueBufferRef 
 void AudioOutput::fill(float *dst, size_t frames) {
   const uint64_t w = writeIdx_.load(std::memory_order_acquire);
   const uint64_t r = readIdx_.load(std::memory_order_relaxed);
-  const size_t take = std::min(size_t(w - r), frames);
+  const size_t available = size_t(w - r);
+  if (!primed_ && double(available) >= outRate_ * kTargetSeconds * 0.5) primed_ = true;
+
+  const size_t take = primed_ ? std::min(available, frames) : 0;
   for (size_t k = 0; k < take; ++k) {
     const size_t idx = size_t((r + k) % kCapacity) * 2;
     dst[k * 2] = ring_[idx];
     dst[k * 2 + 1] = ring_[idx + 1];
   }
-  std::fill(dst + take * 2, dst + frames * 2, 0.0f);  // underrun: silencio
+  if (take > 0) {
+    lastL_ = dst[(take - 1) * 2];
+    lastR_ = dst[(take - 1) * 2 + 1];
+  }
+  // Vaciado: desvanecer la última muestra (~5 ms) en vez de saltar a 0 (chasquido)
+  for (size_t k = take; k < frames; ++k) {
+    lastL_ *= 0.995f;
+    lastR_ *= 0.995f;
+    dst[k * 2] = lastL_;
+    dst[k * 2 + 1] = lastR_;
+  }
+  if (take < frames) primed_ = false;  // rellenar medio objetivo antes de volver a sonar
   readIdx_.store(r + take, std::memory_order_release);
 }

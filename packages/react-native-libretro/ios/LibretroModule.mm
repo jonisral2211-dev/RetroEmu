@@ -219,6 +219,34 @@ static BOOL isKnownArcadeSet(NSString *fileName) {
   return NO;
 }
 
+// Juegos de Neo-Geo (necesitan la BIOS neogeo.zip). Nombres cortos de romset MAME.
+static BOOL isNeoGeoSet(NSString *fileName) {
+  static NSArray<NSString *> *prefixes;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    prefixes = @[
+      @"kof", @"mslug", @"garou", @"samsho", @"rbff", @"fatfury", @"lastblad", @"blazstar",
+      @"pulstar", @"ssideki", @"nam1975", @"sengoku", @"kizuna", @"matrim", @"shocktro",
+      @"twinspri", @"neobombe", @"puzzledp", @"tophuntr", @"aof", @"wh1", @"wh2", @"whp",
+      @"svc", @"mutnat", @"magdrop", @"lresort", @"neodrift", @"ragnagrd", @"breakers",
+      @"kotm", @"lbowling", @"pbobble", @"bstars", @"neocup", @"turfmast", @"overtop",
+    ];
+  });
+  NSString *base = fileName.stringByDeletingPathExtension.lowercaseString;
+  if ([base isEqualToString:@"neogeo"]) return NO;
+  for (NSString *p in prefixes) {
+    if ([base hasPrefix:p]) return YES;
+  }
+  return NO;
+}
+
+// Por debajo de este tamaño un .zip de arcade está vacío o dañado (descarga cortada)
+static const unsigned long long kMinArcadeZipBytes = 20 * 1024;
+
+static unsigned long long fileSizeAt(NSString *path) {
+  return [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileSize] unsignedLongLongValue];
+}
+
 // Mueve src a dest solo si dest no existe. Nunca borra ni sobrescribe: si ya hay una copia en la
 // carpeta de destino, el archivo de la raíz se queda y la biblioteca lo oculta como duplicado.
 static BOOL moveIfFree(NSString *src, NSString *dest) {
@@ -400,11 +428,41 @@ RCT_EXPORT_MODULE(Libretro)
                                              path.lastPathComponent];
       return @NO;
     }
+    // Comprobaciones antes de arrancar MAME, con el motivo exacto para el usuario
+    const unsigned long long bytes = fileSizeAt(path);
+    if (bytes < kMinArcadeZipBytes) {
+      _romError = [NSString stringWithFormat:
+                                @"\"%@\" pesa solo %.1f KB: el archivo está dañado o la descarga se cortó. "
+                                @"Un juego arcade real ocupa mucho más. Vuelve a descargarlo y cópialo en arcade/.",
+                                path.lastPathComponent, bytes / 1024.0];
+      return @NO;
+    }
     ensureNeoGeoBios(_systemDir);  // KOF, Metal Slug… necesitan neogeo.zip junto a la ROM
+    if (isNeoGeoSet(path.lastPathComponent)) {
+      NSString *bios = [arcadeDirectory() stringByAppendingPathComponent:kNeoGeoBios];
+      if (![fm fileExistsAtPath:bios]) {
+        _romError = [NSString stringWithFormat:
+                                  @"\"%@\" es un juego de Neo-Geo y falta la BIOS neogeo.zip. Cópiala en la "
+                                  @"carpeta arcade/ (o en system/) con la app Archivos y vuelve a abrir el juego.",
+                                  path.lastPathComponent];
+        return @NO;
+      }
+      if (fileSizeAt(bios) < kMinArcadeZipBytes) {
+        _romError = [NSString stringWithFormat:
+                                  @"neogeo.zip pesa solo %.1f KB: la BIOS de Neo-Geo está dañada. Sustitúyela en "
+                                  @"arcade/ por una copia completa.",
+                                  fileSizeAt(bios) / 1024.0];
+        return @NO;
+      }
+    }
   }
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
   return @(host::loadGame(path.UTF8String));
+}
+
+- (void)setCoreOption:(NSString *)key value:(NSString *)value {
+  host::setOption(key.UTF8String, value.UTF8String);
 }
 
 - (NSNumber *)videoAspect {
@@ -586,13 +644,32 @@ RCT_EXPORT_MODULE(Libretro)
     return dest;
   }
 
+  if ([ext isEqualToString:@"7z"]) {
+    [fm removeItemAtPath:src error:nil];
+    _romError = [NSString stringWithFormat:@"\"%@\" es un .7z: este formato aún no se puede descomprimir dentro "
+                                           @"de la app. Busca la versión .zip del juego.",
+                                           name];
+    return @"";
+  }
   if (!romcheck::isRomExtension(ext.UTF8String)) {
     _romError = [NSString stringWithFormat:@"Formato no soportado: .%@", ext];
     return @"";
   }
   NSString *console = consoleForKind(sniffFile(src));
+  // PS1: la hoja .cue y los .chd van a ps1/; las pistas .bin de audio (sin cabecera de datos)
+  // también, si algún .cue de ps1/ las referencia
+  if (!console && ([ext isEqualToString:@"cue"] || [ext isEqualToString:@"chd"])) console = @"ps1";
+  if (!console && [ext isEqualToString:@"bin"]) {
+    NSString *ps1 = [docs stringByAppendingPathComponent:@"ps1"];
+    for (NSString *f in [fm contentsOfDirectoryAtPath:ps1 error:nil]) {
+      if (![f.pathExtension.lowercaseString isEqualToString:@"cue"]) continue;
+      for (NSString *track in cueReferencedFiles([ps1 stringByAppendingPathComponent:f])) {
+        if ([track.lastPathComponent caseInsensitiveCompare:name] == NSOrderedSame) console = @"ps1";
+      }
+    }
+  }
   if (!console) {
-    _romError = [NSString stringWithFormat:@"\"%@\" no tiene una cabecera válida para GBA, N64 o Mega Drive", name];
+    _romError = [NSString stringWithFormat:@"\"%@\" no tiene una cabecera válida para GBA, N64, Mega Drive o PS1", name];
     return @"";
   }
   NSString *dest = [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name];

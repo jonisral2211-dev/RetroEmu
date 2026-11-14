@@ -1,13 +1,27 @@
-// Extensiones que el navegador intercepta y descarga en vez de abrir.
-const ROM_EXTENSIONS = ['.zip', '.gba', '.agb', '.z64', '.n64', '.v64', '.md', '.gen', '.smd', '.bin'];
+// Extensiones que el navegador intercepta y descarga dentro de la app en vez de abrirlas.
+// Sin enlaces ni sitios preconfigurados: el usuario navega donde quiera y guarda sus marcadores.
+export const ROM_EXTENSIONS = [
+  '.zip',
+  '.7z',
+  '.gba',
+  '.agb',
+  '.z64',
+  '.n64',
+  '.v64',
+  '.md',
+  '.gen',
+  '.smd',
+  '.bin',
+  '.cue',
+  '.iso',
+  '.chd',
+];
 
-export function isRomUrl(url: string): boolean {
-  const path = url.split(/[?#]/)[0].toLowerCase();
+export function hasRomExtension(name: string): boolean {
+  const path = name.split(/[?#]/)[0].toLowerCase();
   return ROM_EXTENSIONS.some((ext) => path.endsWith(ext));
 }
 
-// Accesos rápidos del navegador. Edita esta lista para añadir tus sitios.
-export const QUICK_LINKS: { label: string; url: string }[] = [
-  { label: 'Buscar', url: 'https://duckduckgo.com/' },
-  { label: 'Internet Archive', url: 'https://archive.org/' },
-];
+export function isRomUrl(url: string): boolean {
+  return /^https?:/i.test(url) && hasRomExtension(url);
+}

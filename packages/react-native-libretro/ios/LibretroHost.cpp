@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -75,6 +76,11 @@ std::atomic<uint32_t> g_dbgFrameW{0};   // último frame recibido del core
 std::atomic<uint32_t> g_dbgFrameH{0};
 std::atomic<uint32_t> g_dbgFramePitch{0};
 std::atomic<uint32_t> g_dbgFrameBpp{4};
+// Color medio (0xRRGGBB) de las columnas 0, 1 y central del último frame del core: si la
+// columna 0 sale blanca aquí, la línea viene del propio juego/core, no del render Metal
+std::atomic<uint32_t> g_dbgCol0{0};
+std::atomic<uint32_t> g_dbgCol1{0};
+std::atomic<uint32_t> g_dbgColMid{0};
 bool g_isN64 = false;
 // Relación de aspecto de pantalla que declara el core (no la del buffer: PS1 usa píxeles no
 // cuadrados). 0 = desconocida (se usa ancho/alto del frame).
@@ -107,7 +113,19 @@ void coreLog(enum retro_log_level level, const char *fmt, ...) {
   }
 }
 
-// Opciones de core forzadas por el frontend: máxima nitidez estable por software.
+// Opciones elegidas por el usuario en la app (p. ej. resolución interna de PS1). Tienen
+// prioridad sobre las forzadas. Al cambiar, el core las relee (GET_VARIABLE_UPDATE).
+std::mutex g_optionsMutex;
+std::map<std::string, std::string> g_userOptions;
+std::atomic<bool> g_optionsDirty{false};
+
+const char *userOption(const char *key) {
+  std::lock_guard<std::mutex> lock(g_optionsMutex);
+  auto it = g_userOptions.find(key);
+  return it == g_userOptions.end() ? nullptr : it->second.c_str();  // estable hasta el próximo set
+}
+
+// Opciones de core forzadas por el frontend: nitidez estable por software sin perder 60 FPS.
 // Claves y valores verificados en libretro_core_options.h de cada core (upstream master).
 const char *forcedOption(const char *key) {
   struct Opt {
@@ -115,9 +133,10 @@ const char *forcedOption(const char *key) {
     const char *value;
   };
   static const Opt kOptions[] = {
-      // PCSX ReARMed (GPU NEON): resolución interna x2, sin pasada extra de la imagen
-      // principal (más rápido) y sin tramado (imagen limpia)
-      {"pcsx_rearmed_neon_enhancement_enable", "enabled"},
+      // PCSX ReARMed (GPU NEON): 1x nativo por defecto (el 2x por CPU satura el procesador,
+      // corta el audio y deja costuras/rayas en algunos juegos). El usuario puede elegir 2x HD
+      // desde la app (userOption). Sin tramado: imagen limpia.
+      {"pcsx_rearmed_neon_enhancement_enable", "disabled"},
       {"pcsx_rearmed_neon_enhancement_no_main", "enabled"},
       {"pcsx_rearmed_neon_enhancement_tex_adj_v2", "enabled"},
       {"pcsx_rearmed_dithering", "disabled"},
@@ -187,6 +206,10 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
       auto *var = static_cast<struct retro_variable *>(data);
       if (var && var->key) {
+        if (const char *chosen = userOption(var->key)) {
+          var->value = chosen;
+          return true;
+        }
         if (const char *forced = forcedOption(var->key)) {
           var->value = forced;
           return true;
@@ -225,7 +248,7 @@ static bool onEnvironment(unsigned cmd, void *data) {
       static_cast<struct retro_log_callback *>(data)->log = coreLog;
       return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
-      *static_cast<bool *>(data) = false;
+      *static_cast<bool *>(data) = g_optionsDirty.exchange(false);
       return true;
     case RETRO_ENVIRONMENT_SHUTDOWN:
       g_running = false;
@@ -255,6 +278,8 @@ static void onVideo(const void *data, unsigned width, unsigned height, size_t pi
   g_dbgFrameBpp.store(static_cast<uint32_t>(bpp), std::memory_order_relaxed);
   const auto *src = static_cast<const uint8_t *>(data);
 
+  // Copia fila a fila: origen con el pitch real del core (src + y * pitch, puede llevar
+  // relleno), destino compacto BGRA8 (width * 4). Metal recibe solo el búfer compacto.
   g_frame.write(width, height, [&](uint8_t *dst, size_t dstStride) {
     for (unsigned y = 0; y < height; ++y) {
       const uint8_t *row = src + size_t(y) * pitch;  // origen: pitch del core
@@ -294,6 +319,20 @@ static void onVideo(const void *data, unsigned width, unsigned height, size_t pi
         }
       }
     }
+    // Diagnóstico: color medio de las columnas 0, 1 y central (ya convertidas a BGRA)
+    auto column = [&](unsigned x) -> uint32_t {
+      uint64_t sr = 0, sg = 0, sb = 0;
+      for (unsigned y = 0; y < height; ++y) {
+        const uint8_t *px = dst + size_t(y) * dstStride + size_t(x) * 4;
+        sb += px[0];
+        sg += px[1];
+        sr += px[2];
+      }
+      return uint32_t(((sr / height) << 16) | ((sg / height) << 8) | (sb / height));
+    };
+    g_dbgCol0.store(column(0), std::memory_order_relaxed);
+    g_dbgCol1.store(column(width > 1 ? 1 : 0), std::memory_order_relaxed);
+    g_dbgColMid.store(column(width / 2), std::memory_order_relaxed);
   });
 }
 
@@ -419,6 +458,9 @@ bool loadCore(const char *frameworkBinaryPath) {
   }
 
   g_isN64 = std::strstr(frameworkBinaryPath, "mupen64") != nullptr;
+  // Formato por defecto de Libretro: un core que no llame a SET_PIXEL_FORMAT no debe heredar
+  // el del core anterior (colores/columnas corruptas)
+  g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
   void *handle = dlopen(frameworkBinaryPath, RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
     g_lastError = std::string("No se pudo cargar el núcleo: ") + dlerror();
@@ -608,6 +650,17 @@ FrameBuffer &frame() { return g_frame; }
 
 float aspectRatio() { return g_aspect.load(std::memory_order_relaxed); }
 
+void setOption(const char *key, const char *value) {
+  if (!key || !value) return;
+  {
+    std::lock_guard<std::mutex> lock(g_optionsMutex);
+    auto &slot = g_userOptions[key];
+    if (slot == value) return;
+    slot = value;
+  }
+  g_optionsDirty = true;
+}
+
 std::string lastError() { return g_lastError; }
 
 // Instantánea para la pantalla de depuración: lo que escribe la UI y lo que pidió el core
@@ -615,16 +668,18 @@ std::string debugState() {
   const uint32_t hits = g_dbgJoyHits.exchange(0, std::memory_order_relaxed);
   const uint32_t reads = g_dbgReads.exchange(0, std::memory_order_relaxed);
   const uint32_t uiHits = g_dbgUiHits.exchange(0, std::memory_order_relaxed);
-  char buf[400];
+  char buf[512];
   std::snprintf(buf, sizeof(buf),
                 "UI ahora btn=%04x pad=%04x ax=%d ay=%d\n"
                 "UI pulsado (ult. 0.5s) btn=%04x\n"
                 "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
                 "stick devuelto x=%d y=%d\n"
-                "frame %ux%u pitch=%u (esperado %u)",
+                "frame %ux%u pitch=%u (esperado %u)\n"
+                "color col0=#%06x col1=#%06x centro=#%06x",
                 g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
                 reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_dbgFrameW.load(), g_dbgFrameH.load(),
-                g_dbgFramePitch.load(), g_dbgFrameW.load() * g_dbgFrameBpp.load());
+                g_dbgFramePitch.load(), g_dbgFrameW.load() * g_dbgFrameBpp.load(), g_dbgCol0.load(),
+                g_dbgCol1.load(), g_dbgColMid.load());
   return buf;
 }
 

@@ -176,12 +176,15 @@ export const N64_LANDSCAPE_LAYOUT: PadLayout = {
       ],
     },
     {
-      id: 'face', x: 0.72, y: 0.42, w: 0.28, h: 0.58,
+      id: 'face', x: 0.74, y: 0.36, w: 0.26, h: 0.48,
       zones: [
-        circle('A', 0.7, 0.55, 0.42, Btn.B, '#3b82f6'),
-        circle('B', 0.3, 0.4, 0.36, Btn.Y, '#ef4444'),
-        rect('START', 0.25, 0.86, 0.5, 0.12, Btn.START),
+        circle('A', 0.68, 0.6, 0.46, Btn.B, '#3b82f6'),
+        circle('B', 0.28, 0.38, 0.4, Btn.Y, '#ef4444'),
       ],
+    },
+    {
+      id: 'start', x: 0.76, y: 0.86, w: 0.2, h: 0.14,
+      zones: [rect('START', 0.1, 0.15, 0.8, 0.7, Btn.START)],
     },
   ],
 };
@@ -219,6 +222,105 @@ export const PS1_LAYOUT: PadLayout = {
       ],
     },
   ],
+};
+
+// ---- Horizontal (todas las consolas) ----------------------------------------
+// El pad ocupa el área BAJO la barra de menú. Columnas laterales de 26 % (el juego queda en
+// el centro, libre): gatillos arriba en las esquinas, direccional y botones de acción en la
+// mitad inferior, SELECT/START en las esquinas inferiores.
+const SIDE_W = 0.26;
+const TRIG_H = 0.17;
+const BODY_Y = 0.3;
+const BODY_H = 0.54;
+const FOOT_Y = 0.86;
+const FOOT_H = 0.14;
+const GRAY = '#8a8f98';
+
+function sideClusters(opts: {
+  leftTriggers: ButtonZone[];
+  rightTriggers: ButtonZone[];
+  face: Zone[];
+  select?: ButtonZone;
+  start: ButtonZone;
+  eightWay: boolean;
+}): Cluster[] {
+  const clusters: Cluster[] = [];
+  if (opts.leftTriggers.length) {
+    clusters.push({ id: 'trig-left', x: 0, y: 0, w: SIDE_W, h: TRIG_H, zones: opts.leftTriggers });
+  }
+  if (opts.rightTriggers.length) {
+    clusters.push({ id: 'trig-right', x: 1 - SIDE_W, y: 0, w: SIDE_W, h: TRIG_H, zones: opts.rightTriggers });
+  }
+  clusters.push({
+    id: 'dpad', x: 0, y: BODY_Y, w: SIDE_W, h: BODY_H,
+    zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: opts.eightWay }],
+  });
+  clusters.push({ id: 'face', x: 1 - SIDE_W, y: BODY_Y, w: SIDE_W, h: BODY_H, zones: opts.face });
+  if (opts.select) {
+    clusters.push({ id: 'select', x: 0.04, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [opts.select] });
+  }
+  clusters.push({ id: 'start', x: 1 - SIDE_W + 0.02, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [opts.start] });
+  return clusters;
+}
+
+const footBtn = (label: string, bits: number) => rect(label, 0.1, 0.15, 0.8, 0.7, bits);
+const trig = (label: string, x: number, w: number, bits: number, tint?: string) =>
+  rect(label, x, 0.12, w, 0.76, bits, tint);
+
+export const GBA_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Game Boy Advance (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [trig('L', 0.06, 0.88, Btn.L)],
+    rightTriggers: [trig('R', 0.06, 0.88, Btn.R)],
+    face: [circle('B', 0.3, 0.62, 0.42, Btn.B), circle('A', 0.72, 0.38, 0.42, Btn.A)],
+    select: footBtn('SELECT', Btn.SELECT),
+    start: footBtn('START', Btn.START),
+    eightWay: false,
+  }),
+};
+
+function genesisLandscape(sixButton: boolean): PadLayout {
+  const face: Zone[] = sixButton
+    ? [
+        circle('X', 0.18, 0.28, 0.32, Btn.X),
+        circle('Y', 0.5, 0.22, 0.32, Btn.L),
+        circle('Z', 0.82, 0.16, 0.32, Btn.R),
+        circle('A', 0.18, 0.72, 0.32, Btn.B),
+        circle('B', 0.5, 0.66, 0.32, Btn.A),
+        circle('C', 0.82, 0.6, 0.32, Btn.Y),
+      ]
+    : [
+        circle('A', 0.18, 0.62, 0.36, Btn.B),
+        circle('B', 0.5, 0.46, 0.36, Btn.A),
+        circle('C', 0.82, 0.3, 0.36, Btn.Y),
+      ];
+  return {
+    name: sixButton ? 'Mega Drive 6 (horizontal)' : 'Mega Drive 3 (horizontal)',
+    clusters: sideClusters({
+      leftTriggers: [],
+      rightTriggers: [],
+      face,
+      start: footBtn('START', Btn.START),
+      eightWay: true,
+    }),
+  };
+}
+
+export const PS1_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'PlayStation (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [trig('L2', 0.04, 0.44, Btn.L2, GRAY), trig('L1', 0.52, 0.44, Btn.L, GRAY)],
+    rightTriggers: [trig('R1', 0.04, 0.44, Btn.R, GRAY), trig('R2', 0.52, 0.44, Btn.R2, GRAY)],
+    face: [
+      circle('△', 0.5, 0.2, 0.34, Btn.X, '#4ade80'),
+      circle('□', 0.2, 0.5, 0.34, Btn.Y, '#f0abfc'),
+      circle('○', 0.8, 0.5, 0.34, Btn.A, '#f87171'),
+      circle('✕', 0.5, 0.8, 0.34, Btn.B, '#60a5fa'),
+    ],
+    select: footBtn('SELECT', Btn.SELECT),
+    start: footBtn('START', Btn.START),
+    eightWay: false,
+  }),
 };
 
 export type DirMode = 'stick' | 'dpad' | 'both';
@@ -265,7 +367,19 @@ export function withDirMode(layout: PadLayout, mode: DirMode): PadLayout {
 }
 
 export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
-  if (core === 'mupen64' && landscape) return N64_LANDSCAPE_LAYOUT;
+  if (landscape) {
+    switch (core) {
+      case 'mupen64':
+        return N64_LANDSCAPE_LAYOUT;
+      case 'genesis':
+        return genesisLandscape(genesisSixButton);
+      case 'pcsx':
+        return PS1_LANDSCAPE_LAYOUT;
+      case 'mgba':
+      case 'mame':
+        return GBA_LANDSCAPE_LAYOUT;
+    }
+  }
   switch (core) {
     case 'mgba':
       return GBA_LAYOUT;

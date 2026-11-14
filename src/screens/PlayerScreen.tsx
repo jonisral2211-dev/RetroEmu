@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { LayoutChangeEvent, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  LayoutChangeEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import { coreForConsole, isMisplacedZip, misplacedZipMessage } from '../emulator/cores';
 import { defaultDirMode, DirMode, layoutFor, withDirMode } from '../input/layouts';
@@ -9,10 +17,12 @@ import {
   DisplayPrefs,
   loadDisplayPrefs,
   loadPadPrefs,
+  loadPs1Hd,
   OPACITY_MIN,
   Orientation,
   PadPrefs,
   savePadPrefs,
+  savePs1Hd,
   saveDisplayPrefs,
   SCALE_MAX,
   SCALE_MIN,
@@ -31,6 +41,10 @@ const AUTO_SLOT = 99;
 // Vertical: alto mínimo del pad (los botones no deben quedar diminutos)
 const PAD_MIN_FRACTION = 0.36;
 const PAD_MIN_PX = 250;
+
+// Barra de menú en horizontal: una sola fila de alto fijo; el juego y el pad van debajo
+const BAR_H = 44;
+const PS1_RES_KEY = 'pcsx_rearmed_neon_enhancement_enable';
 
 const DIR_LABEL: Record<DirMode, string> = { stick: 'Stick', dpad: 'D-Pad', both: 'Stick + D-Pad' };
 const NEXT_DIR: Record<DirMode, DirMode> = { stick: 'dpad', dpad: 'both', both: 'stick' };
@@ -134,6 +148,21 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     };
   }, [romPath, core]);
 
+  // PS1: resolución interna 1x (fluido, por defecto) o 2x HD. Se aplica en caliente.
+  const [ps1Hd, setPs1Hd] = useState(false);
+  useEffect(() => {
+    if (core === 'pcsx') loadPs1Hd().then(setPs1Hd);
+  }, [core]);
+  useEffect(() => {
+    if (core === 'pcsx') Libretro.setCoreOption(PS1_RES_KEY, ps1Hd ? 'enabled' : 'disabled');
+  }, [core, ps1Hd]);
+  const togglePs1Hd = () => {
+    const next = !ps1Hd;
+    setPs1Hd(next);
+    savePs1Hd(next);
+    flash(next ? '2x HD: más nítido, más exigente' : '1x Fluido: máximo rendimiento');
+  };
+
   // Vertical: alto disponible bajo el HUD, para repartir imagen y pad sin huecos
   const [area, setArea] = useState({ w: 0, h: 0 });
   const onArea = (e: LayoutChangeEvent) => {
@@ -180,8 +209,8 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       return { ...p, offsets: { ...p.offsets, [id]: { dx: prev.dx + dx, dy: prev.dy + dy } } };
     });
 
-  const hud = (
-    <View style={[styles.hud, landscape && styles.hudLandscape]}>
+  const hudButtons = (
+    <>
       <HudButton label="Salir" onPress={onExit} />
       <HudButton label={paused ? 'Reanudar' : 'Pausa'} onPress={togglePause} />
       <HudButton label="Editar controles" onPress={toggleEditing} active={editing} />
@@ -190,6 +219,9 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         onPress={() => updatePadPrefs((p) => ({ ...p, dirMode: NEXT_DIR[dirMode] }))}
       />
       <HudButton label={display.stretch ? 'Expandir pantalla' : `${aspectLabel(aspect)} Original`} onPress={toggleStretch} />
+      {core === 'pcsx' ? (
+        <HudButton label={ps1Hd ? '2x HD' : '1x Fluido'} onPress={togglePs1Hd} active={ps1Hd} />
+      ) : null}
       {core === 'genesis' ? (
         <HudButton label={genesisSix ? '6 btn' : '3 btn'} onPress={() => setGenesisSix((v) => !v)} />
       ) : null}
@@ -206,17 +238,31 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
         onPress={() => flash(Libretro.loadState(SAVE_SLOT) ? 'Estado cargado' : 'Sin estado guardado')}
       />
       <HudButton label={debugOn ? 'Ocultar debug' : 'Debug'} onPress={() => setDebugOn((v) => !v)} />
-    </View>
+    </>
+  );
+  // Horizontal: una fila desplazable de alto fijo (no tapa gatillos ni juego).
+  // Vertical: los botones se reparten en varias filas.
+  const hud = landscape ? (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.hudBar}
+      contentContainerStyle={styles.hudBarContent}>
+      {hudButtons}
+    </ScrollView>
+  ) : (
+    <View style={styles.hud}>{hudButtons}</View>
   );
 
+  // Avisos flotando sobre la imagen (no desplazan el layout)
   const notices = (
-    <>
+    <View style={styles.notices} pointerEvents="none">
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {pad.connected && pad.dualSense ? (
         <Text style={styles.notice}>DualSense conectado: {pad.name || 'PS5'}</Text>
       ) : null}
-    </>
+    </View>
   );
 
   const editPanel = editing ? (
@@ -261,15 +307,15 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
       />
     ) : null;
 
-  // Horizontal, o vertical con el pad oculto: la imagen ocupa toda la pantalla
+  // Horizontal, o vertical con el pad oculto: barra arriba con margen limpio; debajo, la imagen
+  // a todo el área y el pad translúcido encima (gatillos justo bajo la barra)
   if (landscape || !touchVisible) {
     return (
       <View style={styles.root}>
-        <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
-        {/* El pad va antes que el HUD: así los botones de arriba reciben sus propios toques */}
-        {padView(StyleSheet.absoluteFill)}
-        <View style={styles.overlayTop} pointerEvents="box-none">
-          {hud}
+        {hud}
+        <View style={styles.flex}>
+          <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
+          {padView(StyleSheet.absoluteFill)}
           {notices}
         </View>
         {editPanel}
@@ -285,7 +331,6 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   return (
     <View style={styles.root}>
       {hud}
-      {notices}
       <View style={styles.flex} onLayout={onArea}>
         {area.h > 0 ? (
           <>
@@ -297,6 +342,7 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
             {padView(styles.flex)}
           </>
         ) : null}
+        {notices}
       </View>
       {editPanel}
     </View>
@@ -328,8 +374,9 @@ const styles = StyleSheet.create({
   center: { flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center', padding: 24 },
   text: { color: theme.text, textAlign: 'center', marginBottom: 16, lineHeight: 20 },
   hud: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 8, backgroundColor: theme.bg },
-  hudLandscape: { backgroundColor: 'rgba(13,14,18,0.6)', borderRadius: 10, margin: 6 },
-  overlayTop: { ...StyleSheet.absoluteFillObject, alignItems: 'flex-start' },
+  hudBar: { flexGrow: 0, height: BAR_H, backgroundColor: theme.bg, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: theme.border },
+  hudBarContent: { alignItems: 'center', gap: 6, paddingHorizontal: 10 },
+  notices: { position: 'absolute', top: 6, left: 0, right: 0, alignItems: 'center' },
   button: {
     backgroundColor: theme.surface,
     borderWidth: 1,
@@ -355,7 +402,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.amber,
   },
-  editPanelLandscape: { left: '28%', right: '28%', top: '22%' },
+  editPanelLandscape: { left: '28%', right: '28%', top: BAR_H + 30 },
   editTitle: { color: theme.text, fontSize: 16, fontWeight: '700' },
   editHint: { color: theme.textDim, fontSize: 12, marginTop: 2, marginBottom: 6 },
   editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },

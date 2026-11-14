@@ -23,7 +23,8 @@ export function defaultPadPrefs(orientation: Orientation): PadPrefs {
   return { opacity: orientation === 'landscape' ? 0.45 : 1, scale: 1, offsets: {} };
 }
 
-const padKey = (core: CoreId, o: Orientation) => `jl.pad.v1.${core}.${o}`;
+// v2: nuevos layouts horizontales por defecto (los ajustes v1 apuntaban a otras posiciones)
+const padKey = (core: CoreId, o: Orientation) => `jl.pad.v2.${core}.${o}`;
 const displayKey = (o: Orientation) => `jl.display.v1.${o}`;
 
 async function readJson<T>(key: string): Promise<Partial<T> | null> {
@@ -66,4 +67,19 @@ export function applyPadPrefs(layout: PadLayout, prefs: PadPrefs): PadLayout {
     return { ...c, x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h };
   });
   return { ...layout, clusters };
+}
+
+// PS1: resolución interna elegida (false = 1x Fluido, true = 2x HD)
+const PS1_HD_KEY = 'jl.ps1.hd.v1';
+
+export async function loadPs1Hd(): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(PS1_HD_KEY)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function savePs1Hd(hd: boolean): void {
+  AsyncStorage.setItem(PS1_HD_KEY, hd ? '1' : '0').catch(() => {});
 }

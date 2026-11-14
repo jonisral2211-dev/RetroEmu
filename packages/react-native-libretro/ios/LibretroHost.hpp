@@ -37,6 +37,9 @@ std::string lastError();
 /** Texto de diagnóstico: estado de entrada de la UI y lo que pidió el core (se vacía al leer). */
 std::string debugState();
 
+/** Opción de core elegida por el usuario (prioridad sobre las forzadas; se aplica en caliente). */
+void setOption(const char *key, const char *value);
+
 /** Relación de aspecto de pantalla declarada por el core (0 = desconocida). */
 float aspectRatio();
 

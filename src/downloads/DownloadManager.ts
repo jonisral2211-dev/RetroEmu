@@ -1,9 +1,11 @@
 import RNFS from 'react-native-fs';
 import { Libretro } from 'react-native-libretro';
+import { hasRomExtension } from './romLinks';
 
-// Gestor de descargas de ROMs. Estado en memoria del módulo: sobrevive al cambio de pestaña.
-// Cada archivo se descarga a una carpeta temporal y luego lo importa el nativo
-// (zip -> extracción a su consola, ROM suelta -> movida a su carpeta de consola).
+// Gestor de descargas del navegador. Estado en memoria del módulo: sobrevive al cambio de pestaña.
+// Cada archivo se descarga a una carpeta temporal propia y luego lo importa el nativo, que lo
+// clasifica en su carpeta de Documents (zip de consola -> extrae; zip arcade -> arcade/;
+// ROM suelta / .cue / .chd -> gba/, n64/, sega/ o ps1/).
 
 export type DownloadState = 'downloading' | 'importing' | 'done' | 'error';
 
@@ -11,7 +13,9 @@ export type DownloadItem = {
   id: string;
   name: string;
   url: string;
-  progress: number; // 0..1
+  progress: number; // 0..1 (-1 = tamaño desconocido)
+  bytes: number;
+  total: number;
   state: DownloadState;
   message?: string;
 };
@@ -32,6 +36,12 @@ function update(id: string, patch: Partial<DownloadItem>) {
 
 export function getDownloads(): DownloadItem[] {
   return items;
+}
+
+/** Quita de la lista las descargas terminadas o fallidas. */
+export function clearFinishedDownloads(): void {
+  items = items.filter((i) => i.state === 'downloading' || i.state === 'importing');
+  emit();
 }
 
 export function subscribeDownloads(listener: () => void): () => void {
@@ -57,34 +67,75 @@ function decodeSafe(s: string): string {
   }
 }
 
+function sanitize(name: string): string {
+  return name.replace(/[^A-Za-z0-9._ ()[\]'&,!+-]/g, '_').replace(/^\.+/, '') || 'descarga';
+}
+
 /** Nombre de archivo seguro a partir de la URL. */
 export function nameFromUrl(url: string): string {
   const path = url.split(/[?#]/)[0];
-  const last = decodeSafe(path.split('/').pop() || 'descarga');
-  return last.replace(/[^A-Za-z0-9._ ()[\]-]/g, '_');
+  return sanitize(decodeSafe(path.split('/').pop() || 'descarga'));
 }
 
-export function startDownload(url: string): void {
+/** Nombre que propone el servidor en Content-Disposition (filename* o filename). */
+function nameFromHeaders(headers: Record<string, string> | undefined): string | null {
+  if (!headers) return null;
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === 'content-disposition');
+  const value = key ? headers[key] : '';
+  if (!value) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/.exec(value);
+  if (star) return sanitize(decodeSafe(star[1].trim().replace(/^"|"$/g, '')));
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(value);
+  return plain ? sanitize(plain[1].trim()) : null;
+}
+
+export function formatBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+export function startDownload(url: string, suggestedName?: string): void {
   const id = String(++seq);
-  const name = nameFromUrl(url);
-  const tmp = `${RNFS.TemporaryDirectoryPath}/rnl-${id}-${name}`;
-  items = [{ id, name, url, progress: 0, state: 'downloading' }, ...items];
+  let name = suggestedName ? sanitize(suggestedName) : nameFromUrl(url);
+  const dir = `${RNFS.TemporaryDirectoryPath}/jl-dl-${Date.now()}-${id}`;
+  const tmp = `${dir}/download.part`;
+  items = [{ id, name, url, progress: 0, bytes: 0, total: 0, state: 'downloading' }, ...items];
   emit();
 
-  RNFS.downloadFile({
-    fromUrl: url,
-    toFile: tmp,
-    progressDivider: 2, // notifica cada 2 %
-    progress: (r) => {
-      if (r.contentLength > 0) update(id, { progress: r.bytesWritten / r.contentLength });
-    },
-  })
-    .promise.then((res) => {
+  RNFS.mkdir(dir)
+    .then(
+      () =>
+        RNFS.downloadFile({
+          fromUrl: url,
+          toFile: tmp,
+          background: true,
+          progressInterval: 250,
+          begin: (r) => {
+            // El nombre real suele venir en la cabecera (enlaces sin extensión en la URL)
+            const fromHeader = nameFromHeaders(r.headers as Record<string, string>);
+            if (fromHeader && (hasRomExtension(fromHeader) || !hasRomExtension(name))) name = fromHeader;
+            update(id, { name, total: r.contentLength > 0 ? r.contentLength : 0 });
+          },
+          progress: (r) => {
+            const total = r.contentLength > 0 ? r.contentLength : 0;
+            update(id, {
+              bytes: r.bytesWritten,
+              total,
+              progress: total ? r.bytesWritten / total : -1,
+            });
+          },
+        }).promise,
+    )
+    .then(async (res) => {
       if (res.statusCode < 200 || res.statusCode > 299) {
         throw new Error(`El servidor respondió ${res.statusCode}`);
       }
+      // Nombre final: el importador conserva el nombre de archivo en su carpeta de consola
+      const named = `${dir}/${name}`;
+      await RNFS.moveFile(tmp, named);
       update(id, { state: 'importing', progress: 1 });
-      const dest = Libretro.importRom(tmp);
+      const dest = Libretro.importRom(named);
       if (!dest) {
         throw new Error(Libretro.lastError() || 'No se pudo importar el archivo');
       }
@@ -95,6 +146,6 @@ export function startDownload(url: string): void {
       update(id, { state: 'error', message: e instanceof Error ? e.message : String(e) });
     })
     .finally(() => {
-      RNFS.unlink(tmp).catch(() => {});
+      RNFS.unlink(dir).catch(() => {});
     });
 }
