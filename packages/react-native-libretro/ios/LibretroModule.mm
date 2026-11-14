@@ -1,5 +1,6 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
@@ -10,11 +11,13 @@
 #include <memory>
 
 #include <cstring>
+#include <strings.h>
 #include <map>
 
 #include "LibretroHost.hpp"
 #include "RomArchive.hpp"
 #include "RomInspector.hpp"
+#include "Unpack.hpp"
 
 static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -23,6 +26,20 @@ static NSString *documentsDirectory(void) {
 // Carpetas dentro de Documents: una por consola + states/ (save states)
 static NSArray<NSString *> *consoleFolders(void) {
   return @[ @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"states" ];
+}
+
+// Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
+// fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
+static NSArray<NSString *> *unpackFolders(void) {
+  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds" ];
+}
+// Descargas comprimidas grandes (o .7z): se descomprimen en segundo plano a la raíz de Documents
+// y desde ahí la auto-organización reparte cada juego en su carpeta
+static NSString *const kInbox = @".inbox";
+
+static BOOL isArchiveName(NSString *name) {
+  NSString *ext = name.pathExtension.lowercaseString;
+  return ![name hasPrefix:@"."] && ([ext isEqualToString:@"zip"] || [ext isEqualToString:@"7z"]);
 }
 
 // BIOS de Neo-Geo para MAME 2003-Plus: no es un juego, nunca se lista
@@ -77,12 +94,17 @@ static BOOL isNeoGeoBios(NSString *path) {
 // MAME 2003-Plus y FBNeo buscan la BIOS de Neo-Geo junto a la ROM. Se comparte una sola copia:
 // si falta en la carpeta del juego (arcade/ o fbneo/), se copia desde la otra carpeta arcade,
 // system/, system/mame2003-plus/ o system/fbneo/.
+static unsigned long long fileSizeAt(NSString *path);
+static const unsigned long long kNeoGeoMinBytes = 20 * 1024;
+
 static void ensureNeoGeoBios(NSString *systemDir, NSString *gameDir) {
   NSFileManager *fm = NSFileManager.defaultManager;
   NSString *dest = [gameDir stringByAppendingPathComponent:kNeoGeoBios];
-  if ([fm fileExistsAtPath:dest]) return;
+  const BOOL present = [fm fileExistsAtPath:dest];
+  if (present && fileSizeAt(dest) >= kNeoGeoMinBytes) return;
   NSString *docs = documentsDirectory();
   NSArray<NSString *> *candidates = @[
+    [docs stringByAppendingPathComponent:kNeoGeoBios],
     [[docs stringByAppendingPathComponent:@"arcade"] stringByAppendingPathComponent:kNeoGeoBios],
     [[docs stringByAppendingPathComponent:@"fbneo"] stringByAppendingPathComponent:kNeoGeoBios],
     [systemDir stringByAppendingPathComponent:kNeoGeoBios],
@@ -90,8 +112,10 @@ static void ensureNeoGeoBios(NSString *systemDir, NSString *gameDir) {
     [[systemDir stringByAppendingPathComponent:@"fbneo"] stringByAppendingPathComponent:kNeoGeoBios],
   ];
   for (NSString *src in candidates) {
-    if ([fm fileExistsAtPath:src]) {
+    if ([src isEqualToString:dest]) continue;
+    if ([fm fileExistsAtPath:src] && fileSizeAt(src) >= kNeoGeoMinBytes) {
       NSError *error = nil;
+      if (present) [fm removeItemAtPath:dest error:nil];  // copia dañada: se reemplaza
       if ([fm copyItemAtPath:src toPath:dest error:&error]) {
         NSLog(@"[RetroEmu] neogeo.zip copiado de %@ a %@", src, gameDir.lastPathComponent);
       } else {
@@ -476,12 +500,29 @@ RCT_EXPORT_MODULE(Libretro)
     @"desmume" : @"desmume_libretro",
     @"yabause" : @"yabause_libretro",
     @"fbneo" : @"fbneo_libretro",
+    @"ppsspp" : @"ppsspp_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
   _coreId = coreId;
   NSString *path = [NSString stringWithFormat:@"%@/%@.framework/%@",
                                               NSBundle.mainBundle.privateFrameworksPath, name, name];
+  if ([coreId isEqualToString:@"ppsspp"]) {
+    // PPSSPP necesita sus archivos de sistema (fuentes de la PSP, atlas de la interfaz) en
+    // system/PPSSPP. Vienen dentro del framework; se copian la primera vez.
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *assets = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"PPSSPP"];
+    NSString *dest = [_systemDir stringByAppendingPathComponent:@"PPSSPP"];
+    if ([fm fileExistsAtPath:assets] && ![fm fileExistsAtPath:[dest stringByAppendingPathComponent:@"flash0"]]) {
+      [fm createDirectoryAtPath:dest withIntermediateDirectories:YES attributes:nil error:nil];
+      for (NSString *item in [fm contentsOfDirectoryAtPath:assets error:nil]) {
+        NSString *to = [dest stringByAppendingPathComponent:item];
+        if (![fm fileExistsAtPath:to]) {
+          [fm copyItemAtPath:[assets stringByAppendingPathComponent:item] toPath:to error:nil];
+        }
+      }
+    }
+  }
   return @(host::loadCore(path.UTF8String));
 }
 
@@ -545,6 +586,115 @@ RCT_EXPORT_MODULE(Libretro)
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
   return @(host::loadGame(path.UTF8String));
+}
+
+// Mueve una descarga comprimida a la bandeja; la biblioteca la descomprime al actualizar
+- (NSString *)queueForUnpack:(NSString *)src {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *inbox = [documentsDirectory() stringByAppendingPathComponent:kInbox];
+  [fm createDirectoryAtPath:inbox withIntermediateDirectories:YES attributes:nil error:nil];
+  NSString *dest = [inbox stringByAppendingPathComponent:src.lastPathComponent];
+  NSError *error = nil;
+  if (!moveIntoPlace(src, dest, &error)) {
+    _romError = error.localizedDescription;
+    return @"";
+  }
+  return dest;
+}
+
+// Comprimidos pendientes: los de las carpetas de consola y los de la bandeja (rutas relativas)
+- (NSArray<NSString *> *)pendingArchives {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *docs = documentsDirectory();
+  NSMutableArray<NSString *> *out = [NSMutableArray array];
+  for (NSString *folder in [unpackFolders() arrayByAddingObject:kInbox]) {
+    NSString *dir = [docs stringByAppendingPathComponent:folder];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+      if (isArchiveName(name)) [out addObject:[folder stringByAppendingPathComponent:name]];
+    }
+  }
+  // .7z sueltos en la raíz de Documents (los .zip de la raíz son romsets arcade -> arcade/)
+  for (NSString *name in [fm contentsOfDirectoryAtPath:docs error:nil]) {
+    if (isArchiveName(name) && [name.pathExtension.lowercaseString isEqualToString:@"7z"]) [out addObject:name];
+  }
+  return out;
+}
+
+// Descomprime en segundo plano todos los pendientes. Cada juego queda en su carpeta y el
+// comprimido se borra; si algo falla se conserva y se informa del motivo.
+- (void)unpackArchives:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue = dispatch_queue_create("retroemu.unpack", DISPATCH_QUEUE_SERIAL);
+  });
+  NSArray<NSString *> *pending = [self pendingArchives];
+  dispatch_async(queue, ^{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *docs = documentsDirectory();
+    NSMutableArray<NSDictionary *> *results = [NSMutableArray array];
+    // iOS no debe suspender la app a mitad de una ISO de 1,8 GB
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      task = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"unpack" expirationHandler:nil];
+    });
+    for (NSString *rel in pending) {
+      NSString *full = [docs stringByAppendingPathComponent:rel];
+      if (![fm fileExistsAtPath:full]) continue;
+      NSString *folder = rel.pathComponents.firstObject;
+      const BOOL inbox = [folder isEqualToString:kInbox];
+      NSString *destDir = inbox ? docs : full.stringByDeletingLastPathComponent;
+      unpack::Result r = unpack::extractAll(full.UTF8String, destDir.UTF8String);
+      NSMutableArray<NSString *> *files = [NSMutableArray array];
+      for (const std::string &f : r.files) [files addObject:[NSString stringWithUTF8String:f.c_str()]];
+      // Un juego de otra consola dentro de una carpeta de consola: a su carpeta (salvo pistas de .cue)
+      if (!inbox) {
+        for (NSString *f in files) {
+          NSString *ext = f.pathExtension.lowercaseString;
+          if ([ext isEqualToString:@"cue"] || [ext isEqualToString:@"bin"]) continue;
+          NSString *console = consoleForKind(sniffFile(f));
+          if (console && ![console isEqualToString:folder]) {
+            moveIfFree(f, [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:f.lastPathComponent]);
+          }
+        }
+      }
+      const BOOL ok = r.error.empty() && !r.files.empty();
+      if (ok) [fm removeItemAtPath:full error:nil];
+      NSString *error = !r.error.empty() ? [NSString stringWithUTF8String:r.error.c_str()]
+                        : r.files.empty() ? @"No contiene ningún juego" : @"";
+      [results addObject:@{
+        @"name" : rel.lastPathComponent,
+        @"ok" : @(ok),
+        @"files" : @(files.count),
+        @"error" : error,
+      }];
+      NSLog(@"[RetroEmu] unpack %@ -> %lu archivos %@", rel, (unsigned long)files.count, error);
+    }
+    if (pending.count) {
+      relocatePspFromPs1(docs);
+      organizeDocumentsRoot(docs, romFolders(docs));
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (task != UIBackgroundTaskInvalid) [UIApplication.sharedApplication endBackgroundTask:task];
+    });
+    NSData *json = [NSJSONSerialization dataWithJSONObject:results options:0 error:nil];
+    resolve(json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"[]");
+  });
+}
+
+// Vibración háptica breve al pulsar un botón del pad (Taptic Engine)
+- (void)haptic:(double)strength {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    static UIImpactFeedbackGenerator *light;
+    static UIImpactFeedbackGenerator *medium;
+    if (!light) {
+      light = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+      medium = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    }
+    UIImpactFeedbackGenerator *g = strength > 0.6 ? medium : light;
+    [g impactOccurred];
+    [g prepare];
+  });
 }
 
 - (void)setPointer:(double)x y:(double)y pressed:(BOOL)pressed {
@@ -638,8 +788,17 @@ RCT_EXPORT_MODULE(Libretro)
       [en skipDescendants];  // BIOS, SRAM, save states y carátulas no son ROMs
       continue;
     }
+    if ([top isEqualToString:kInbox]) {
+      [en skipDescendants];  // descargas pendientes de descomprimir
+      continue;
+    }
+    if ([rel.lastPathComponent hasPrefix:@"."]) continue;  // extracciones a medias (.part)
     NSString *ext = rel.pathExtension.lowercaseString;
     NSString *full = [docs stringByAppendingPathComponent:rel];
+    if (([ext isEqualToString:@"zip"] || [ext isEqualToString:@"7z"]) &&
+        [unpackFolders() containsObject:top] && rel.pathComponents.count == 2) {
+      continue;  // se descomprime en segundo plano (unpackArchives)
+    }
     if ([ext isEqualToString:@"zip"]) {
       if (isNeoGeoBios(full)) continue;  // BIOS de Neo-Geo, no es un juego
       if (isInArcadeFolder(full)) {
@@ -714,12 +873,19 @@ RCT_EXPORT_MODULE(Libretro)
       _romError = [NSString stringWithFormat:@"\"%@\" no es un .zip válido (la descarga pudo fallar)", name];
       return @"";
     }
+    // Más de 64 MB: casi seguro una imagen de disco (PSP/PS1/Saturn). No se carga en memoria:
+    // se descomprime en streaming en segundo plano
+    if (fileSizeAt(src) > (64ull << 20)) return [self queueForUnpack:src];
     std::string extracted = romzip::extractRom(src.UTF8String, folders);
     if (!extracted.empty()) {
       [fm removeItemAtPath:src error:nil];
       return [NSString stringWithUTF8String:extracted.c_str()];
     }
     std::string foreign = romzip::foreignEntry(src.UTF8String);
+    const std::string foreignExt = foreign.substr(foreign.find_last_of('.') + 1);
+    for (const char *disc : {"iso", "cso", "chd", "pbp", "cue", "bin"}) {
+      if (!foreign.empty() && strcasecmp(foreignExt.c_str(), disc) == 0) return [self queueForUnpack:src];
+    }
     if (!foreign.empty()) {
       _romError = [NSString stringWithFormat:@"\"%@\" contiene \"%s\", de una consola no soportada por RetroEmu. No se envía a MAME.",
                                              name, foreign.c_str()];
@@ -736,11 +902,11 @@ RCT_EXPORT_MODULE(Libretro)
   }
 
   if ([ext isEqualToString:@"7z"]) {
-    [fm removeItemAtPath:src error:nil];
-    _romError = [NSString stringWithFormat:@"\"%@\" es un .7z: este formato aún no se puede descomprimir dentro "
-                                           @"de la app. Busca la versión .zip del juego.",
-                                           name];
-    return @"";
+    if (!unpack::is7z(src.UTF8String)) {
+      _romError = [NSString stringWithFormat:@"\"%@\" no es un .7z válido (la descarga pudo fallar)", name];
+      return @"";
+    }
+    return [self queueForUnpack:src];
   }
   if (!romcheck::isRomExtension(ext.UTF8String)) {
     _romError = [NSString stringWithFormat:@"Formato no soportado: .%@", ext];

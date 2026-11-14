@@ -92,6 +92,8 @@ bool g_isN64 = false;
 std::atomic<float> g_aspect{0.0f};
 FrameBuffer g_frame;
 AudioOutput g_audio;
+// Callback de estado del búfer de audio que registra el core (frameskip automático)
+retro_audio_buffer_status_callback_t g_audioStatus = nullptr;
 
 enum retro_pixel_format g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 double g_sampleRate = 32768.0;
@@ -145,6 +147,13 @@ const char *forcedOption(const char *key) {
       {"pcsx_rearmed_neon_enhancement_no_main", "enabled"},
       {"pcsx_rearmed_neon_enhancement_tex_adj_v2", "enabled"},
       {"pcsx_rearmed_dithering", "disabled"},
+      // 60 FPS estables en juegos 3D pesados (Dragon Ball GT Final Bout, Army Men Air Attack):
+      // salto de frames automático guiado por el llenado del audio (el sonido nunca se corta,
+      // como mucho se omite algún frame de vídeo), GPU en su propio hilo e interpolación de
+      // SPU simple (la gaussiana/cúbica cuesta CPU y apenas se nota en el altavoz del iPhone)
+      {"pcsx_rearmed_frameskip_type", "auto"},
+      {"pcsx_rearmed_gpu_thread_rendering", "enabled"},
+      {"pcsx_rearmed_spu_interpolation", "simple"},
       // Genesis Plus GX: oculta la columna de 8 px que el VDP de Master System deja con basura
       // en el borde izquierdo (franja vertical), sin filtros NTSC/LCD que emborronan
       {"genesis_plus_gx_left_border", "left border"},
@@ -170,6 +179,17 @@ const char *forcedOption(const char *key) {
       {"desmume_internal_resolution", "256x192"},
       {"desmume_screens_layout", "top/bottom"},
       {"desmume_screens_gap", "0"},
+      // PPSSPP (PSP): sin JIT en iOS -> intérprete IR; render por software (el host no ofrece
+      // contexto GL); resolución nativa, salto de frames automático y E/S rápida
+      {"ppsspp_cpu_core", "IR JIT"},
+      {"ppsspp_fast_memory", "enabled"},
+      {"ppsspp_internal_resolution", "480x272"},
+      {"ppsspp_auto_frameskip", "enabled"},
+      {"ppsspp_frameskip", "2"},
+      {"ppsspp_io_timing_method", "Fast"},
+      {"ppsspp_software_rendering", "enabled"},
+      {"ppsspp_texture_scaling_level", "disabled"},
+      {"ppsspp_inflight_frames", "No buffer"},
       // Yabause (Saturn): render por software multihilo y salto de frames automático
       {"yabause_frameskip", "enabled"},
       {"yabause_numthreads", "4"},
@@ -268,6 +288,12 @@ static bool onEnvironment(unsigned cmd, void *data) {
         }
       }
       return false;  // el resto de opciones: valores por defecto del core
+    }
+    case RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK: {
+      // Frameskip automático (PCSX, Yabause, FBNeo…): cada frame se informa del llenado del audio
+      const auto *cb = static_cast<const struct retro_audio_buffer_status_callback *>(data);
+      g_audioStatus = cb ? cb->callback : nullptr;
+      return true;
     }
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
       static_cast<struct retro_log_callback *>(data)->log = coreLog;
@@ -468,7 +494,10 @@ void runLoop() {
   while (g_running) {
     if (!g_paused) {
       std::lock_guard<std::mutex> lock(g_coreMutex);
-      if (g_gameLoaded) g_core.run();
+      if (g_gameLoaded) {
+        if (g_audioStatus) g_audioStatus(true, g_audio.occupancy(), g_audio.underrunLikely());
+        g_core.run();
+      }
     }
     next += period;
     const auto now = clock::now();
@@ -506,6 +535,7 @@ bool loadCore(const char *frameworkBinaryPath) {
   // Formato por defecto de Libretro: un core que no llame a SET_PIXEL_FORMAT no debe heredar
   // el del core anterior (colores/columnas corruptas)
   g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
+  g_audioStatus = nullptr;  // lo vuelve a registrar el core nuevo si lo usa
   void *handle = dlopen(frameworkBinaryPath, RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
     g_lastError = std::string("No se pudo cargar el núcleo: ") + dlerror();

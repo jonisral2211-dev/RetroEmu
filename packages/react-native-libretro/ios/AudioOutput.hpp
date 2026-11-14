@@ -17,6 +17,10 @@ class AudioOutput {
   bool start(double outRate);
   void stop();
   void push(const int16_t *stereo, size_t frames, double inRate);
+  /** Llenado del ring en % (100 = el doble del objetivo). Lo usa el frameskip automático. */
+  unsigned occupancy() const;
+  /** true si el ring está por debajo de medio objetivo: el core debería saltarse un frame. */
+  bool underrunLikely() const;
 
  private:
   static void onBuffer(void *user, AudioQueueRef queue, AudioQueueBufferRef buffer);

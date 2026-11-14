@@ -7,7 +7,8 @@ export type CoreId =
   | 'melonds'
   | 'desmume'
   | 'yabause'
-  | 'fbneo';
+  | 'fbneo'
+  | 'ppsspp';
 
 // Consolas de la biblioteca (carpetas en Documents y pestañas de la UI)
 export type Console = 'gba' | 'n64' | 'sega' | 'mame' | 'fbneo' | 'ps1' | 'psp' | 'nds' | 'saturn';
@@ -23,6 +24,7 @@ export const ENABLED_CORES: ReadonlySet<CoreId> = new Set<CoreId>([
   'desmume',
   'yabause',
   'fbneo',
+  'ppsspp',
 ]);
 
 export const SYSTEM_NAME: Record<CoreId, string> = {
@@ -35,6 +37,7 @@ export const SYSTEM_NAME: Record<CoreId, string> = {
   desmume: 'Nintendo DS (DeSmuME)',
   yabause: 'Sega Saturn (Yabause)',
   fbneo: 'Arcade (FinalBurn Neo)',
+  ppsspp: 'PSP (PPSSPP)',
 };
 
 export const CONSOLE_LABEL: Record<Console, string> = {
@@ -49,8 +52,7 @@ export const CONSOLE_LABEL: Record<Console, string> = {
   saturn: 'Saturn',
 };
 
-// PSP no tiene núcleo: PPSSPP no existe para iOS en el buildbot de libretro y además
-// necesita render por GPU (OpenGL/Vulkan), que este frontend aún no ofrece.
+// PSP: PPSSPP precompilado para iOS, con render por software (sin JIT: intérprete IR)
 const CORE_OF_CONSOLE: Partial<Record<Console, CoreId>> = {
   gba: 'mgba',
   n64: 'mupen64',
@@ -60,6 +62,7 @@ const CORE_OF_CONSOLE: Partial<Record<Console, CoreId>> = {
   ps1: 'pcsx',
   nds: 'melonds',
   saturn: 'yabause',
+  psp: 'ppsspp',
 };
 
 /** Núcleo alternativo si el principal no arranca el juego (NDS: melonDS -> DeSmuME). */
@@ -87,6 +90,19 @@ export const FOLDER_GUIDE =
 export function isMisplacedZip(path: string): boolean {
   return /\.zip$/i.test(path) && !/\/Documents\/(arcade|fbneo)\//.test(path);
 }
+
+/** Carpetas de consola a las que se puede mover un juego desde la biblioteca. */
+export const MOVE_TARGETS: { folder: string; label: string }[] = [
+  { folder: 'psp', label: 'PSP' },
+  { folder: 'ps1', label: 'PlayStation' },
+  { folder: 'n64', label: 'Nintendo 64' },
+  { folder: 'gba', label: 'Game Boy Advance' },
+  { folder: 'nds', label: 'Nintendo DS' },
+  { folder: 'sega', label: 'Mega Drive' },
+  { folder: 'saturn', label: 'Saturn' },
+  { folder: 'arcade', label: 'Arcade (MAME)' },
+  { folder: 'fbneo', label: 'FBNeo' },
+];
 
 /** Aviso para un .zip mal ubicado: a qué carpeta moverlo según la consola. */
 export function misplacedZipMessage(path: string): string {

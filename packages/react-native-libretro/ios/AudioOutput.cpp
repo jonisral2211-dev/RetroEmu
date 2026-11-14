@@ -99,6 +99,17 @@ void AudioOutput::onBuffer(void *user, AudioQueueRef queue, AudioQueueBufferRef 
   AudioQueueEnqueueBuffer(queue, buffer, 0, nullptr);
 }
 
+unsigned AudioOutput::occupancy() const {
+  const double fill = double(writeIdx_.load(std::memory_order_acquire) - readIdx_.load(std::memory_order_acquire));
+  const double pct = fill / (outRate_ * kTargetSeconds * 2.0) * 100.0;
+  return unsigned(std::min(100.0, std::max(0.0, pct)));
+}
+
+bool AudioOutput::underrunLikely() const {
+  const double fill = double(writeIdx_.load(std::memory_order_acquire) - readIdx_.load(std::memory_order_acquire));
+  return fill < outRate_ * kTargetSeconds * 0.5;
+}
+
 void AudioOutput::fill(float *dst, size_t frames) {
   const uint64_t w = writeIdx_.load(std::memory_order_acquire);
   const uint64_t r = readIdx_.load(std::memory_order_relaxed);

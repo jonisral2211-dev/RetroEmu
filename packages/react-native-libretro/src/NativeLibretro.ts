@@ -35,6 +35,15 @@ export interface Spec extends TurboModule {
   setCoreOption(key: string, value: string): void;
   /** Relación de aspecto de pantalla que declara el core (ancho/alto); 0 si aún no se conoce. */
   videoAspect(): number;
+  /** Comprimidos (.zip/.7z) pendientes de descomprimir en carpetas de consola o descargas. */
+  pendingArchives(): string[];
+  /**
+   * Descomprime en segundo plano los pendientes (streaming, sin cargar el archivo en memoria) y
+   * borra cada comprimido que se extrae bien. Resuelve con JSON: [{name, ok, files, error}].
+   */
+  unpackArchives(): Promise<string>;
+  /** Vibración háptica breve (0..1 = intensidad). */
+  haptic(strength: number): void;
   /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */
   debugState(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */

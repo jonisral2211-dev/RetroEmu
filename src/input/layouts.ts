@@ -23,7 +23,18 @@ export type DpadZone = { kind: 'dpad'; cx: number; cy: number; r: number; eightW
 export type StickZone = { kind: 'stick'; cx: number; cy: number; r: number; toDpad?: boolean };
 export type Zone = ButtonZone | DpadZone | StickZone;
 
-export type Cluster = { id: string; x: number; y: number; w: number; h: number; zones: Zone[] };
+export type Cluster = {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  zones: Zone[];
+  /** Grupo original (pad dividido en botones sueltos): sus ajustes antiguos se heredan. */
+  group?: string;
+  /** Fracción del cluster que ocupa el dibujo (stick/cruceta llevan margen para seguir el dedo). */
+  vis?: number;
+};
 export type PadLayout = { name: string; clusters: Cluster[] };
 
 const rect = (label: string, x: number, y: number, w: number, h: number, bits: number, tint?: string): ButtonZone =>
@@ -446,12 +457,65 @@ export const FBNEO_LANDSCAPE_LAYOUT: PadLayout = {
   }),
 };
 
+// ---- PSP (PPSSPP) ------------------------------------------------------------
+// Mapeo del core (libretro/libretro.cpp): Círculo=A, Cruz=B, Triángulo=X, Cuadrado=Y, L/R.
+// Cruceta arriba y nub analógico debajo, como en la consola.
+const pspFace = (d: number): Zone[] => [
+  circle('△', 0.5, 0.2, d, Btn.X, '#4ade80'),
+  circle('□', 0.2, 0.5, d, Btn.Y, '#f0abfc'),
+  circle('○', 0.8, 0.5, d, Btn.A, '#f87171'),
+  circle('✕', 0.5, 0.8, d, Btn.B, '#60a5fa'),
+];
+
+export const PSP_LAYOUT: PadLayout = {
+  name: 'PSP',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.14,
+      zones: [rect('L', 0.02, 0.1, 0.3, 0.8, Btn.L, GRAY), rect('R', 0.68, 0.1, 0.3, 0.8, Btn.R, GRAY)],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.17, w: 0.38, h: 0.45,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: false }],
+    },
+    {
+      id: 'stick', x: 0.02, y: 0.62, w: 0.34, h: 0.38,
+      zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.44 }],
+    },
+    {
+      id: 'center', x: 0.38, y: 0.62, w: 0.24, h: 0.38,
+      zones: [rect('SELECT', 0, 0.15, 1, 0.28, Btn.SELECT), rect('START', 0, 0.6, 1, 0.28, Btn.START)],
+    },
+    { id: 'face', x: 0.6, y: 0.17, w: 0.4, h: 0.62, zones: pspFace(0.32) },
+  ],
+};
+
+export const PSP_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'PSP (horizontal)',
+  clusters: [
+    ...sideClusters({
+      leftTriggers: [trig('L', 0.06, 0.88, Btn.L, GRAY)],
+      rightTriggers: [trig('R', 0.06, 0.88, Btn.R, GRAY)],
+      face: pspFace(0.34),
+      select: footBtn('SELECT', Btn.SELECT),
+      start: footBtn('START', Btn.START),
+      eightWay: false,
+    }),
+    // Nub analógico: comparte columna con la cruceta (withDirMode reparte el alto)
+    {
+      id: 'stick', x: 0, y: BODY_Y, w: SIDE_W, h: BODY_H,
+      zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }],
+    },
+  ],
+};
+
 export type DirMode = 'stick' | 'dpad' | 'both';
 
 /** Modo direccional por defecto: stick en N64 (analógico real), cruceta en el resto. */
 export function defaultDirMode(core: CoreId): DirMode {
   if (core === 'mupen64') return 'stick';
   if (core === 'fbneo') return 'stick'; // stick arcade
+  if (core === 'ppsspp') return 'both'; // cruceta + nub analógico
   return 'dpad';
 }
 
@@ -510,6 +574,8 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
         return SATURN_LANDSCAPE_LAYOUT;
       case 'fbneo':
         return FBNEO_LANDSCAPE_LAYOUT;
+      case 'ppsspp':
+        return PSP_LANDSCAPE_LAYOUT;
     }
   }
   switch (core) {
@@ -531,5 +597,7 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       return SATURN_LAYOUT;
     case 'fbneo':
       return FBNEO_LAYOUT;
+    case 'ppsspp':
+      return PSP_LAYOUT;
   }
 }

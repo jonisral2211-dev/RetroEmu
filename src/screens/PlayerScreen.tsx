@@ -17,19 +17,25 @@ import {
   misplacedZipMessage,
 } from '../emulator/cores';
 import { defaultDirMode, DirMode, layoutFor, withDirMode } from '../input/layouts';
+import { controlLabel, groupOf } from '../input/buildPad';
 import {
-  applyPadPrefs,
+  BUTTON_SIZE_MAX,
+  BUTTON_SIZE_MIN,
+  DEFAULT_FEEL,
   defaultPadPrefs,
   DisplayPrefs,
+  Feel,
   loadDisplayPrefs,
+  loadFeel,
   loadPadPrefs,
   loadPs1Hd,
   OPACITY_MIN,
   Orientation,
   PadPrefs,
+  saveDisplayPrefs,
+  saveFeel,
   savePadPrefs,
   savePs1Hd,
-  saveDisplayPrefs,
   SCALE_MAX,
   SCALE_MIN,
 } from '../input/padPrefs';
@@ -132,6 +138,25 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       }),
     [core, orientation],
   );
+  // Respuesta táctil por consola (sensibilidad, zona muerta, área de botones, vibración)
+  const [feel, setFeel] = useState<Feel>(DEFAULT_FEEL);
+  useEffect(() => {
+    let alive = true;
+    if (core) loadFeel(core).then((f) => alive && setFeel(f));
+    return () => {
+      alive = false;
+    };
+  }, [core]);
+  const updateFeel = (patch: Partial<Feel>) =>
+    setFeel((prev) => {
+      const next = { ...prev, ...patch };
+      if (core) saveFeel(core, next);
+      return next;
+    });
+  // Control seleccionado en el editor (borde dorado) y panel plegado para ver lo que tapa
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+
   const toggleStretch = () => {
     const next = { stretch: !display.stretch };
     setDisplay(next);
@@ -253,6 +278,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   const toggleEditing = () => {
     const next = !editing;
     setEditing(next);
+    setSelectedId(null);
+    setPanelCollapsed(false);
     Libretro.setPaused(next || paused);
   };
 
@@ -268,14 +295,28 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   }
 
   const dirMode: DirMode = padPrefs.dirMode ?? defaultDirMode(core);
-  const padLayout = applyPadPrefs(withDirMode(layoutFor(core, genesisSix, landscape), dirMode), padPrefs);
-  const smooth3d = core === 'mupen64' || core === 'pcsx';
+  const padLayout = withDirMode(layoutFor(core, genesisSix, landscape), dirMode);
+  const smooth3d = core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
 
-  const moveCluster = (id: string, dx: number, dy: number) =>
+  // Cada botón guarda su propio desplazamiento; parte del de su grupo (ajustes anteriores)
+  const moveControl = (id: string, dx: number, dy: number) =>
     updatePadPrefs((p) => {
-      const prev = p.offsets[id] ?? { dx: 0, dy: 0 };
+      const prev = p.offsets[id] ?? p.offsets[groupOf(id)] ?? { dx: 0, dy: 0 };
       return { ...p, offsets: { ...p.offsets, [id]: { dx: prev.dx + dx, dy: prev.dy + dy } } };
     });
+  const selectedSize = selectedId ? padPrefs.sizes?.[selectedId] ?? 1 : 1;
+  const setSelectedSize = (v: number) =>
+    selectedId && updatePadPrefs((p) => ({ ...p, sizes: { ...(p.sizes ?? {}), [selectedId]: v } }));
+  const resetSelected = () =>
+    selectedId &&
+    updatePadPrefs((p) => {
+      const offsets = { ...p.offsets };
+      const sizes = { ...(p.sizes ?? {}) };
+      delete offsets[selectedId];
+      delete sizes[selectedId];
+      return { ...p, offsets, sizes };
+    });
+  const pct = (v: number) => `${Math.round(v * 100)} %`;
 
   const hudButtons = (
     <>
@@ -333,35 +374,104 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     </View>
   );
 
-  const editPanel = editing ? (
+  const editPanel = !editing ? null : panelCollapsed ? (
+    <Pressable
+      onPress={() => setPanelCollapsed(false)}
+      style={[styles.panelChip, landscape && styles.panelChipLandscape]}>
+      <Text style={styles.panelChipText}>
+        {selectedId ? `${controlLabel(selectedId)} · ` : ''}Mostrar panel
+      </Text>
+    </Pressable>
+  ) : (
     <View style={[styles.editPanel, landscape && styles.editPanelLandscape]}>
-      <Text style={styles.editTitle}>Editar controles · {landscape ? 'Horizontal' : 'Vertical'}</Text>
-      <Text style={styles.editHint}>Arrastra cada control a donde quieras. Se guarda solo.</Text>
-      <Slider
-        label="Transparencia"
-        value={padPrefs.opacity}
-        min={OPACITY_MIN}
-        max={1}
-        format={(v) => `${Math.round(v * 100)} %`}
-        onChange={(v) => updatePadPrefs((p) => ({ ...p, opacity: v }))}
-      />
-      <Slider
-        label="Tamaño"
-        value={padPrefs.scale}
-        min={SCALE_MIN}
-        max={SCALE_MAX}
-        format={(v) => `${Math.round(v * 100)} %`}
-        onChange={(v) => updatePadPrefs((p) => ({ ...p, scale: v }))}
-      />
+      <View style={styles.editHeader}>
+        <Text style={styles.editTitle}>Editar controles · {landscape ? 'Horizontal' : 'Vertical'}</Text>
+        <Pressable onPress={() => setPanelCollapsed(true)} hitSlop={10}>
+          <Text style={styles.editCollapse}>Ocultar ▾</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={styles.editScroll} contentContainerStyle={styles.editScrollContent}>
+        <Text style={styles.editHint}>
+          Toca un botón para seleccionarlo (borde dorado) y arrástralo a donde quieras. Se guarda solo.
+        </Text>
+        {selectedId ? (
+          <View style={styles.selectedBox}>
+            <View style={styles.editHeader}>
+              <Text style={styles.selectedTitle}>{controlLabel(selectedId)}</Text>
+              <Pressable onPress={resetSelected} hitSlop={8}>
+                <Text style={styles.editCollapse}>Restablecer botón</Text>
+              </Pressable>
+            </View>
+            <Slider
+              label="Tamaño de este botón"
+              value={selectedSize}
+              min={BUTTON_SIZE_MIN}
+              max={BUTTON_SIZE_MAX}
+              format={pct}
+              onChange={setSelectedSize}
+            />
+          </View>
+        ) : null}
+        <Slider
+          label="Tamaño global"
+          value={padPrefs.scale}
+          min={SCALE_MIN}
+          max={SCALE_MAX}
+          format={pct}
+          onChange={(v) => updatePadPrefs((p) => ({ ...p, scale: v }))}
+        />
+        <Slider
+          label="Transparencia"
+          value={padPrefs.opacity}
+          min={OPACITY_MIN}
+          max={1}
+          format={pct}
+          onChange={(v) => updatePadPrefs((p) => ({ ...p, opacity: v }))}
+        />
+        <Text style={styles.editSection}>Respuesta táctil · {landscape ? 'ambas orientaciones' : 'ambas orientaciones'}</Text>
+        <Slider
+          label="Sensibilidad del stick"
+          value={feel.sensitivity}
+          min={0.5}
+          max={2}
+          format={pct}
+          onChange={(v) => updateFeel({ sensitivity: v })}
+        />
+        <Slider
+          label="Zona muerta (stick y cruceta)"
+          value={feel.deadzone}
+          min={0.05}
+          max={0.4}
+          format={pct}
+          onChange={(v) => updateFeel({ deadzone: v })}
+        />
+        <Slider
+          label="Área de detección de botones"
+          value={feel.hitSlop}
+          min={0.8}
+          max={1.5}
+          format={pct}
+          onChange={(v) => updateFeel({ hitSlop: v })}
+        />
+        <Pressable onPress={() => updateFeel({ haptics: !feel.haptics })} style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Vibración háptica al pulsar</Text>
+          <View style={[styles.toggle, feel.haptics && styles.toggleOn]}>
+            <View style={[styles.toggleKnob, feel.haptics && styles.toggleKnobOn]} />
+          </View>
+        </Pressable>
+      </ScrollView>
       <View style={styles.editActions}>
         <HudButton
-          label="Restablecer"
-          onPress={() => updatePadPrefs((p) => ({ ...defaultPadPrefs(orientation), dirMode: p.dirMode }))}
+          label="Restablecer todo"
+          onPress={() => {
+            setSelectedId(null);
+            updatePadPrefs((p) => ({ ...defaultPadPrefs(orientation), dirMode: p.dirMode }));
+          }}
         />
         <HudButton label="Listo" onPress={toggleEditing} active />
       </View>
     </View>
-  ) : null;
+  );
 
   const nds = isNdsCore(core);
   const padView = (style: object, pointerRect?: PointerRect) =>
@@ -369,10 +479,14 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       <VirtualPad
         key={`${padLayout.name}:${dirMode}`}
         layout={padLayout}
+        prefs={padPrefs}
+        feel={feel}
         style={style}
         opacity={padPrefs.opacity}
         editing={editing}
-        onMoveCluster={moveCluster}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onMoveControl={moveControl}
         pointerRect={pointerRect}
       />
     ) : null;
@@ -475,8 +589,49 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.amber,
   },
-  editPanelLandscape: { left: '28%', right: '28%', top: BAR_H + 30 },
+  editPanelLandscape: { left: '27%', right: '27%', top: BAR_H + 8, bottom: 8 },
+  editHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   editTitle: { color: theme.text, fontSize: 16, fontWeight: '700' },
-  editHint: { color: theme.textDim, fontSize: 12, marginTop: 2, marginBottom: 6 },
-  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
+  editCollapse: { color: theme.amber, fontSize: 13, fontWeight: '600' },
+  editScroll: { flexGrow: 0, maxHeight: 360 },
+  editScrollContent: { paddingBottom: 4 },
+  editHint: { color: theme.textDim, fontSize: 12, marginTop: 4, marginBottom: 6 },
+  editSection: {
+    color: theme.amber,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  selectedBox: {
+    borderWidth: 1,
+    borderColor: theme.amber,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+    backgroundColor: 'rgba(212,175,55,0.08)',
+  },
+  selectedTitle: { color: theme.amber, fontSize: 15, fontWeight: '800' },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
+  toggleLabel: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
+  toggle: { width: 46, height: 28, borderRadius: 14, backgroundColor: theme.border, padding: 3 },
+  toggleOn: { backgroundColor: theme.amber },
+  toggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.titaniumHi },
+  toggleKnobOn: { transform: [{ translateX: 18 }], backgroundColor: theme.bg },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
+  panelChip: {
+    position: 'absolute',
+    top: 70,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(21,23,29,0.95)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
+  panelChipLandscape: { top: BAR_H + 8 },
+  panelChipText: { color: theme.amber, fontWeight: '700', fontSize: 13 },
 });

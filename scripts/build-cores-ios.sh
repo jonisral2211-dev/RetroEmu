@@ -90,6 +90,17 @@ prebuilt_core() {
   codesign --remove-signature "$fw/$name" 2>/dev/null || true
   install_name_tool -id "@rpath/$name.framework/$name" "$fw/$name"
   write_plist "$name" "$fw"
+  if [[ "$name" == "ppsspp_libretro" ]]; then
+    # Archivos de sistema de PPSSPP (fuentes de la PSP en flash0, atlas de la interfaz) dentro
+    # del framework; la app los copia a Documents/system/PPSSPP al cargar el core
+    curl -fsSL --retry 3 "https://buildbot.libretro.com/assets/system/PPSSPP.zip" -o "$tmp/assets.zip"
+    unzip -q -o "$tmp/assets.zip" -d "$tmp/assets"
+    rm -rf "$tmp/assets/PPSSPP/debugger"
+    find "$tmp/assets/PPSSPP/lang" -type f ! -name 'es_*' ! -name 'en_US.ini' -delete 2>/dev/null || true
+    [[ -d "$tmp/assets/PPSSPP/flash0" ]] || { echo "$name: PPSSPP.zip sin flash0/" >&2; exit 1; }
+    cp -R "$tmp/assets/PPSSPP" "$fw/PPSSPP"
+    echo "    assets PPSSPP: $(du -sh "$fw/PPSSPP" | cut -f1)"
+  fi
   codesign --force --sign - "$fw/$name"
   codesign --verify --verbose=1 "$fw/$name"
   echo "    framework: $fw ($(du -h "$fw/$name" | cut -f1), $archs, firmado ad-hoc)"

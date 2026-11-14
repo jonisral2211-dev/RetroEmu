@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   GestureResponderEvent,
   LayoutChangeEvent,
@@ -11,8 +11,10 @@ import {
 import { Libretro } from 'react-native-libretro';
 import { Btn } from '../emulator/buttons';
 import { theme } from '../theme';
-import { evaluateZones, Pt } from './evaluate';
+import { buildPad } from './buildPad';
+import { evaluateZones, Pt, Tuning } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
+import type { Feel, PadPrefs } from './padPrefs';
 
 type Size = { w: number; h: number };
 /** Rectángulo de la imagen del juego en px relativos al pad (para el puntero táctil). */
@@ -28,24 +30,55 @@ export function getPadDebug(): string {
   return padDebugText;
 }
 
-// Entrada táctil con los eventos nativos de React Native (onTouch*), sin gestos de RNGH:
-// en cada evento se recalcula el estado completo a partir de todos los dedos activos.
-// Es estado puro (sin acumular), así un evento perdido no deja botones pegados.
+const isAnalog = (c: Cluster) => c.zones[0]?.kind === 'stick' || c.zones[0]?.kind === 'dpad';
+// Un dedo que empezó en el stick o la cruceta lo sigue controlando hasta 3 radios de distancia
+const ANALOG_KEEP = 3;
+
+/**
+ * Distancia normalizada del toque al control (1 = borde del dibujo). Para elegir el control
+ * más cercano cuando las áreas de detección se solapan.
+ */
+function distanceTo(c: Cluster, x: number, y: number, W: number, H: number): number {
+  const cx = (c.x + c.w / 2) * W;
+  const cy = (c.y + c.h / 2) * H;
+  const w = c.w * W * (c.vis ?? 1);
+  const h = c.h * H * (c.vis ?? 1);
+  const z = c.zones[0];
+  if (z?.kind === 'button' && z.shape === 'rect') {
+    return Math.max(Math.abs(x - cx) / (w / 2), Math.abs(y - cy) / (h / 2));
+  }
+  const r = Math.min(w, h) / 2;
+  return Math.hypot(x - cx, y - cy) / r;
+}
+
+// Entrada táctil con los eventos nativos de React Native (onTouch*): en cada evento se
+// recalcula el estado completo a partir de todos los dedos activos (estado puro: un evento
+// perdido no deja botones pegados). Cada dedo pertenece a un control: el del stick no se
+// pierde al salirse del círculo y un dedo puede deslizar de un botón a otro.
 export function VirtualPad({
   layout,
+  prefs,
+  feel,
   style,
   opacity = 1,
   editing = false,
-  onMoveCluster,
+  selectedId,
+  onSelect,
+  onMoveControl,
   pointerRect,
 }: {
+  /** Layout por grupos (consola + modo direccional); aquí se divide en botones sueltos. */
   layout: PadLayout;
+  prefs: PadPrefs;
+  feel: Feel;
   style?: StyleProp<ViewStyle>;
   opacity?: number;
-  /** Modo edición: los toques arrastran controles en vez de pulsarlos. */
+  /** Modo edición: los toques seleccionan y arrastran controles en vez de pulsarlos. */
   editing?: boolean;
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
   /** Fin de un arrastre: desplazamiento normalizado al tamaño del pad. */
-  onMoveCluster?: (id: string, dx: number, dy: number) => void;
+  onMoveControl?: (id: string, dx: number, dy: number) => void;
   /** Si se indica, un toque fuera de los botones y sobre la imagen actúa como puntero (NDS). */
   pointerRect?: PointerRect;
 }) {
@@ -58,43 +91,79 @@ export function VirtualPad({
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const mask = useRef(0);
   const axis = useRef({ x: 0, y: 0 });
+  const owners = useRef(new Map<string | number, string>());
+
+  const pad = useMemo(() => buildPad(layout, prefs, size.w, size.h), [layout, prefs, size.w, size.h]);
+  const padRef = useRef(pad);
+  padRef.current = pad;
+  const tuning: Tuning = { sensitivity: feel.sensitivity, deadzone: feel.deadzone, hitSlop: feel.hitSlop };
+  const tuningRef = useRef(tuning);
+  tuningRef.current = tuning;
+  const hapticsRef = useRef(feel.haptics);
+  hapticsRef.current = feel.haptics;
+
+  // Control al que pertenece un dedo: se conserva el stick/cruceta; si no, el más cercano
+  const ownerOf = (t: Touch, byId: Map<string, Cluster>, W: number, H: number): Cluster | undefined => {
+    const prev = owners.current.get(t.identifier);
+    const prevC = prev ? byId.get(prev) : undefined;
+    if (prevC && isAnalog(prevC) && distanceTo(prevC, t.locationX, t.locationY, W, H) <= ANALOG_KEEP) {
+      return prevC;
+    }
+    const slop = tuningRef.current.hitSlop;
+    let best: Cluster | undefined;
+    let bestD = Infinity;
+    for (const c of padRef.current.clusters) {
+      const d = distanceTo(c, t.locationX, t.locationY, W, H);
+      const limit = isAnalog(c) ? 1 / (c.vis ?? 1) : slop; // stick/cruceta: todo su cluster
+      if (d <= limit && d < bestD) {
+        best = c;
+        bestD = d;
+      }
+    }
+    return best;
+  };
 
   const compute = (touches: Touch[]) => {
     const W = sizeRef.current.w;
     const H = sizeRef.current.h;
     if (W <= 0 || H <= 0) return;
+    const clusters = padRef.current.clusters;
+    const byId = new Map(clusters.map((c) => [c.id, c]));
+
+    // Reparto de dedos entre controles
+    const live = new Set(touches.map((t) => t.identifier));
+    for (const k of [...owners.current.keys()]) if (!live.has(k)) owners.current.delete(k);
+    const ptsBy = new Map<string, Pt[]>();
+    const used = new Set<string | number>();
+    for (const t of touches) {
+      const c = ownerOf(t, byId, W, H);
+      if (!c) {
+        owners.current.delete(t.identifier);
+        continue;
+      }
+      owners.current.set(t.identifier, c.id);
+      used.add(t.identifier);
+      const list = ptsBy.get(c.id) ?? [];
+      list.push({ x: t.locationX - c.x * W, y: t.locationY - c.y * H });
+      ptsBy.set(c.id, list);
+    }
 
     let bits = 0;
     let ax = 0;
     let ay = 0;
-    // Toques que caen en algún cluster: el resto puede ser el stylus
-    const used = new Set<string | number>();
-    let stickPts = 0;
     let kx = 0;
     let ky = 0;
-    for (const c of layout.clusters) {
-      const cx = c.x * W;
-      const cy = c.y * H;
-      const cw = c.w * W;
-      const ch = c.h * H;
-      // Puntos dentro de este cluster, en px relativos a él
-      const pts: Pt[] = [];
-      for (const t of touches) {
-        const px = t.locationX - cx;
-        const py = t.locationY - cy;
-        if (px >= 0 && px <= cw && py >= 0 && py <= ch) {
-          pts.push({ x: px, y: py });
-          used.add(t.identifier);
-        }
-      }
-      const r = evaluateZones(c.zones, pts, cw, ch);
+    for (const c of clusters) {
+      const pts = ptsBy.get(c.id);
+      if (!pts) continue;
+      // El área ampliada ya se aplicó al elegir el control: dentro de él cuenta todo el botón
+      const r = evaluateZones(c.zones, pts, c.w * W, c.h * H, { ...tuningRef.current, hitSlop: Math.max(1, tuningRef.current.hitSlop) * 1.5 });
       bits |= r.bits;
-      if (c.zones.some((z: Zone) => z.kind === 'stick')) {
+      if (c.zones[0]?.kind === 'stick') {
         ax = r.ax;
         ay = r.ay;
         kx = r.kx;
         ky = r.ky;
-        stickPts = pts.length;
       }
     }
 
@@ -122,10 +191,12 @@ export function VirtualPad({
 
     padDebugText =
       `pad: toques=${touches.length} ` +
-      touches.map((t) => `(${Math.round(t.locationX)},${Math.round(t.locationY)})`).join(' ') +
-      ` W=${Math.round(W)} H=${Math.round(H)} enStick=${stickPts}`;
+      touches.map((t) => `(${Math.round(t.locationX)},${Math.round(t.locationY)})→${owners.current.get(t.identifier) ?? '-'}`).join(' ') +
+      ` W=${Math.round(W)} H=${Math.round(H)}`;
 
     if (bits !== mask.current) {
+      // Vibración solo al pulsar un botón nuevo (no al soltar ni al mantener)
+      if (hapticsRef.current && (bits & ~mask.current) !== 0) Libretro.haptic(0.5);
       mask.current = bits;
       Libretro.setButtons(bits);
       setActive(bits);
@@ -137,16 +208,20 @@ export function VirtualPad({
     setKnob((k) => (k.x === kx && k.y === ky ? k : { x: kx, y: ky }));
   };
 
-  // ---- Modo edición: arrastrar clusters --------------------------------------
-  const clusterAt = (x: number, y: number): Cluster | undefined => {
+  // ---- Modo edición: tocar selecciona, arrastrar mueve ----------------------------
+  const controlAt = (x: number, y: number): Cluster | undefined => {
     const W = sizeRef.current.w;
     const H = sizeRef.current.h;
-    // El último dibujado está encima
-    for (let i = layout.clusters.length - 1; i >= 0; i--) {
-      const c = layout.clusters[i];
-      if (x >= c.x * W && x <= (c.x + c.w) * W && y >= c.y * H && y <= (c.y + c.h) * H) return c;
+    let best: Cluster | undefined;
+    let bestD = Infinity;
+    for (const c of padRef.current.clusters) {
+      const d = distanceTo(c, x, y, W, H);
+      if (d <= 1.25 && d < bestD) {
+        best = c;
+        bestD = d;
+      }
     }
-    return undefined;
+    return best;
   };
   const setDragBoth = (d: Drag | null) => {
     dragRef.current = d;
@@ -155,8 +230,10 @@ export function VirtualPad({
   const editStart = (e: GestureResponderEvent) => {
     if (dragRef.current) return;
     const t = (e.nativeEvent.changedTouches as Touch[])[0];
-    const c = t && clusterAt(t.locationX, t.locationY);
-    if (c) setDragBoth({ id: c.id, touchId: t.identifier, x0: t.pageX, y0: t.pageY, dx: 0, dy: 0 });
+    const c = t && controlAt(t.locationX, t.locationY);
+    if (!c) return;
+    onSelect?.(c.id);
+    setDragBoth({ id: c.id, touchId: t.identifier, x0: t.pageX, y0: t.pageY, dx: 0, dy: 0 });
   };
   const editMove = (e: GestureResponderEvent) => {
     const d = dragRef.current;
@@ -171,7 +248,8 @@ export function VirtualPad({
     if (!ended) return;
     const W = sizeRef.current.w || 1;
     const H = sizeRef.current.h || 1;
-    if (d.dx !== 0 || d.dy !== 0) onMoveCluster?.(d.id, d.dx / W, d.dy / H);
+    // Un toque sin mover (< 4 px) solo selecciona
+    if (Math.hypot(d.dx, d.dy) >= 4) onMoveControl?.(d.id, d.dx / W, d.dy / H);
     setDragBoth(null);
   };
 
@@ -180,6 +258,7 @@ export function VirtualPad({
     if (!editing) return;
     mask.current = 0;
     axis.current = { x: 0, y: 0 };
+    owners.current.clear();
     Libretro.setButtons(0);
     Libretro.setAnalog(0, 0);
     setActive(0);
@@ -216,7 +295,7 @@ export function VirtualPad({
       onTouchEnd={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
       onTouchCancel={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
       style={[styles.pad, style]}>
-      {layout.clusters.map((c) => (
+      {pad.clusters.map((c) => (
         <ClusterView
           key={c.id}
           cluster={c}
@@ -225,6 +304,7 @@ export function VirtualPad({
           knob={knob}
           opacity={opacity}
           editing={editing}
+          selected={editing && selectedId === c.id}
           dragging={drag?.id === c.id}
           offset={drag?.id === c.id ? { x: drag.dx, y: drag.dy } : undefined}
         />
@@ -240,6 +320,7 @@ function ClusterView({
   knob,
   opacity,
   editing,
+  selected,
   dragging,
   offset,
 }: {
@@ -249,9 +330,12 @@ function ClusterView({
   knob: Knob;
   opacity: number;
   editing: boolean;
+  selected: boolean;
   dragging: boolean;
   offset?: { x: number; y: number };
 }) {
+  // En edición el contorno rodea solo el dibujo (sin el margen táctil del stick)
+  const inset = ((1 - (cluster.vis ?? 1)) / 2) * 100;
   return (
     <View
       pointerEvents="none"
@@ -262,21 +346,22 @@ function ClusterView({
           top: `${cluster.y * 100}%`,
           width: `${cluster.w * 100}%`,
           height: `${cluster.h * 100}%`,
-          opacity,
+          opacity: editing ? Math.max(opacity, 0.6) : opacity,
         },
         offset ? { transform: [{ translateX: offset.x }, { translateY: offset.y }] } : null,
-        editing && styles.clusterEditing,
-        dragging && styles.clusterDragging,
       ]}>
-      {cluster.zones.map((z, i) => (
-        <ZoneView
-          key={i}
-          zone={z}
-          w={size.w * cluster.w}
-          h={size.h * cluster.h}
-          active={active}
-          knob={knob}
+      {editing ? (
+        <View
+          style={[
+            styles.editFrame,
+            { left: `${inset}%`, top: `${inset}%`, right: `${inset}%`, bottom: `${inset}%` },
+            selected && styles.editFrameSelected,
+            dragging && styles.editFrameDragging,
+          ]}
         />
+      ) : null}
+      {cluster.zones.map((z, i) => (
+        <ZoneView key={i} zone={z} w={size.w * cluster.w} h={size.h * cluster.h} active={active} knob={knob} />
       ))}
     </View>
   );
@@ -287,30 +372,16 @@ function isPressed(zone: { bits: number }, active: number): boolean {
   return zone.bits !== 0 && (active & zone.bits) === zone.bits;
 }
 
-function ZoneView({
-  zone,
-  w,
-  h,
-  active,
-  knob,
-}: {
-  zone: Zone;
-  w: number;
-  h: number;
-  active: number;
-  knob: Knob;
-}) {
+function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: number; active: number; knob: Knob }) {
   if (w <= 0) return null; // esperar al primer layout
   const m = Math.min(w, h);
 
   if (zone.kind === 'button') {
     const pressed = isPressed(zone, active);
     const tint = zone.tint ?? 'rgba(255,255,255,0.25)';
-    const common = [
-      styles.key,
-      { borderColor: tint },
-      pressed && styles.keyPressed,
-    ];
+    const common = [styles.key, { borderColor: tint }, pressed && styles.keyPressed];
+    // Texto proporcional al botón (los botones redimensionados no quedan con letras diminutas)
+    const fontSize = Math.max(9, Math.min(18, (zone.shape === 'rect' ? Math.min(zone.h * h, zone.w * w / 3) : zone.w * m) * 0.36));
     if (zone.shape === 'rect') {
       return (
         <View
@@ -325,7 +396,7 @@ function ZoneView({
               transform: [{ scale: pressed ? 0.92 : 1 }],
             },
           ]}>
-          <Text style={styles.label}>{zone.label}</Text>
+          <Text style={[styles.label, { fontSize }]}>{zone.label}</Text>
         </View>
       );
     }
@@ -344,7 +415,7 @@ function ZoneView({
             transform: [{ scale: pressed ? 0.92 : 1 }],
           },
         ]}>
-        <Text style={styles.label}>{zone.label}</Text>
+        <Text style={[styles.label, { fontSize }]}>{zone.label}</Text>
       </View>
     );
   }
@@ -361,7 +432,7 @@ function ZoneView({
           pressed && styles.ringPressed,
           { left: zone.cx * w - d / 2, top: zone.cy * h - d / 2, width: d, height: d },
         ]}>
-        <Text style={styles.arrow}>✚</Text>
+        <Text style={[styles.arrow, { fontSize: Math.max(14, d * 0.3) }]}>✚</Text>
       </View>
     );
   }
@@ -397,15 +468,26 @@ function ZoneView({
 const styles = StyleSheet.create({
   pad: { position: 'relative', width: '100%' },
   cluster: { position: 'absolute' },
-  // Modo edición: contorno ámbar discontinuo para ver qué se puede arrastrar
-  clusterEditing: {
+  // Modo edición: contorno ámbar discontinuo en cada control; el seleccionado, dorado y sólido
+  editFrame: {
+    position: 'absolute',
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: theme.amber,
-    borderRadius: 10,
-    backgroundColor: 'rgba(212,175,55,0.06)',
+    borderColor: 'rgba(212,175,55,0.7)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(212,175,55,0.05)',
   },
-  clusterDragging: { borderStyle: 'solid', backgroundColor: 'rgba(212,175,55,0.18)' },
+  editFrameSelected: {
+    borderWidth: 2.5,
+    borderStyle: 'solid',
+    borderColor: theme.amber,
+    backgroundColor: 'rgba(212,175,55,0.16)',
+    shadowColor: theme.amber,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  editFrameDragging: { backgroundColor: 'rgba(212,175,55,0.28)' },
   // Botón translúcido con relieve: borde claro arriba, sombra abajo
   key: {
     position: 'absolute',

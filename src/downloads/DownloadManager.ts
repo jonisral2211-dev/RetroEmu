@@ -139,7 +139,12 @@ export function startDownload(url: string, suggestedName?: string): void {
       if (!dest) {
         throw new Error(Libretro.lastError() || 'No se pudo importar el archivo');
       }
-      update(id, { state: 'done', message: dest.split('/Documents/')[1] ?? dest });
+      // Comprimidos grandes y .7z van a la bandeja: la biblioteca los descomprime en segundo plano
+      const rel = dest.split('/Documents/')[1] ?? dest;
+      update(id, {
+        state: 'done',
+        message: rel.startsWith('.inbox/') ? 'Descomprimiendo en la biblioteca…' : rel,
+      });
       importedListeners.forEach((l) => l(dest));
     })
     .catch((e) => {

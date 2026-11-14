@@ -1,19 +1,22 @@
 import { Btn } from '../emulator/buttons';
 import type { Zone } from './layouts';
 
-// Todo este módulo corre en el runtime de UI (worklets de Reanimated): sin llamadas async,
-// sin acceso al hilo de JS. Los puntos llegan en px relativos al cluster.
+// Cálculo puro (sin estado): los puntos llegan en px relativos al cluster.
 
 export type Pt = { x: number; y: number };
 // ax/ay = valor analógico enviado al core; kx/ky = posición visual del puck (también en toDpad)
 export type Evaluation = { bits: number; ax: number; ay: number; kx: number; ky: number };
 
+/** Respuesta táctil: sensibilidad del stick, zona muerta y área de detección de botones. */
+export type Tuning = { sensitivity: number; deadzone: number; hitSlop: number };
+export const DEFAULT_TUNING: Tuning = { sensitivity: 1, deadzone: 0.2, hitSlop: 1 };
+
 /** Dirección del D-Pad a partir del vector (dx, dy) normalizado, con y hacia abajo. */
-function dirBits(dx: number, dy: number, eightWay: boolean): number {
-  'worklet';
+function dirBits(dx: number, dy: number, eightWay: boolean, deadzone: number): number {
   if (!eightWay) {
-    // Cruz: cada eje se activa por separado, así las diagonales salen de dos ejes a la vez
-    const t = 0.35;
+    // Cruz: cada eje se activa por separado, así las diagonales salen de dos ejes a la vez.
+    // Con la zona muerta por defecto (20 %) el umbral por eje es el 35 % de siempre.
+    const t = deadzone + 0.15;
     let b = 0;
     if (dx > t) b |= Btn.RIGHT;
     else if (dx < -t) b |= Btn.LEFT;
@@ -22,7 +25,7 @@ function dirBits(dx: number, dy: number, eightWay: boolean): number {
     return b;
   }
   // 8 direcciones: sector de 45° según el ángulo; zona muerta cerca del centro
-  if (dx * dx + dy * dy < 0.04) return 0;
+  if (dx * dx + dy * dy < deadzone * deadzone) return 0;
   const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
   const idx = ((sector % 8) + 8) % 8;
   // 0 = derecha, 1 = abajo-derecha (y crece hacia abajo), ... siguiendo las agujas del reloj
@@ -36,13 +39,28 @@ function dirBits(dx: number, dy: number, eightWay: boolean): number {
   return Btn.RIGHT | Btn.UP;
 }
 
+/** true si el punto cae en el botón, con el área de detección ampliada o reducida. */
+export function hitsButton(z: Zone, px: number, py: number, W: number, H: number, slop: number): boolean {
+  if (z.kind !== 'button') return false;
+  if (z.shape === 'rect') {
+    const cx = (z.x + z.w / 2) * W;
+    const cy = (z.y + z.h / 2) * H;
+    return Math.abs(px - cx) <= (z.w * W * slop) / 2 && Math.abs(py - cy) <= (z.h * H * slop) / 2;
+  }
+  const m = Math.min(W, H);
+  const dx = px - z.x * W;
+  const dy = py - z.y * H;
+  const rad = ((z.w * m) / 2) * slop;
+  return dx * dx + dy * dy <= rad * rad;
+}
+
 /**
  * Evalúa todos los puntos activos de un cluster y devuelve la máscara de botones
  * y el vector del stick (si el cluster tiene uno).
  */
-export function evaluateZones(zones: Zone[], pts: Pt[], W: number, H: number): Evaluation {
-  'worklet';
+export function evaluateZones(zones: Zone[], pts: Pt[], W: number, H: number, tuning: Tuning = DEFAULT_TUNING): Evaluation {
   const m = Math.min(W, H);
+  const dz = tuning.deadzone;
   let bits = 0;
   let ax = 0;
   let ay = 0;
@@ -55,37 +73,33 @@ export function evaluateZones(zones: Zone[], pts: Pt[], W: number, H: number): E
     for (let j = 0; j < zones.length; j++) {
       const z = zones[j];
       if (z.kind === 'button') {
-        if (z.shape === 'rect') {
-          if (px >= z.x * W && px <= (z.x + z.w) * W && py >= z.y * H && py <= (z.y + z.h) * H) {
-            bits |= z.bits;
-          }
-        } else {
-          const dx = px - z.x * W;
-          const dy = py - z.y * H;
-          const rad = (z.w * m) / 2;
-          if (dx * dx + dy * dy <= rad * rad) bits |= z.bits;
-        }
+        if (hitsButton(z, px, py, W, H, tuning.hitSlop)) bits |= z.bits;
       } else if (z.kind === 'dpad') {
         const r = z.r * m;
         const dx = (px - z.cx * W) / r;
         const dy = (py - z.cy * H) / r;
-        // Un poco más allá del radio para no perder la dirección al salirse del círculo
-        if (dx * dx + dy * dy <= 1.44) bits |= dirBits(dx, dy, z.eightWay);
+        // Más allá del radio también cuenta (hasta 3 radios): el dedo que empezó en la cruceta puede
+        // salirse del círculo sin perder la dirección
+        if (dx * dx + dy * dy <= 9) bits |= dirBits(dx, dy, z.eightWay, dz);
       } else {
         const r = z.r * m;
         const dx = (px - z.cx * W) / r;
         const dy = (py - z.cy * H) / r;
         const d = Math.sqrt(dx * dx + dy * dy);
-        if (d <= 1.5) {
+        if (d <= 3) {
           const k = d > 1 ? 1 / d : 1; // clamp al radio: stick con radio delimitado
           kx = dx * k;
           ky = dy * k;
+          const dc = Math.min(1, d);
           if (z.toDpad) {
-            // Stick sobre consola sin analógico: 8 direcciones con zona muerta del 30 %
-            if (d > 0.3) bits |= dirBits(dx * k, dy * k, true);
-          } else {
-            ax = dx * k;
-            ay = dy * k;
+            // Stick sobre consola sin analógico: 8 direcciones
+            if (dc > dz + 0.1) bits |= dirBits(kx, ky, true, 0);
+          } else if (dc > dz) {
+            // Zona muerta reescalada (sin salto al salir de ella) y sensibilidad: con 150 % se
+            // llega al tope con 2/3 del recorrido; con 50 % el tope es medio stick
+            const mag = Math.min(1, ((dc - dz) / (1 - dz)) * tuning.sensitivity);
+            ax = (kx / dc) * mag;
+            ay = (ky / dc) * mag;
           }
         }
       }

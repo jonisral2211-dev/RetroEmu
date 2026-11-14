@@ -15,3 +15,4 @@ melonds_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/me
 desmume_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/desmume_libretro_ios.dylib.zip|latest|prebuilt|||true
 yabause_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/yabause_libretro_ios.dylib.zip|latest|prebuilt|||true
 fbneo_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/fbneo_libretro_ios.dylib.zip|latest|prebuilt|||true
+ppsspp_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/ppsspp_libretro.dylib.zip|latest|prebuilt|||true

@@ -1,5 +1,6 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -11,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import RNFS from 'react-native-fs';
 import { forgetCover, subscribeCover } from '../covers/CoverCache';
@@ -27,16 +28,31 @@ import {
   FOLDER_GUIDE,
   isMisplacedZip,
   misplacedZipMessage,
+  MOVE_TARGETS,
   SYSTEM_NAME,
 } from '../emulator/cores';
+import { removeRecent, subscribeRecents } from '../library/recents';
 import { theme } from '../theme';
+import { ART_GLOW, ArtKind, ConsoleArt } from '../ui/ConsoleArt';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
+import { JLBadge } from '../ui/JLBadge';
 
 type Props = { onPlay: (romPath: string, core?: CoreId) => void };
 type Filter = 'all' | Console;
 type Entry = { path: string; console: string };
 
-const FILTERS: Filter[] = ['all', 'gba', 'nds', 'n64', 'sega', 'saturn', 'ps1', 'psp', 'mame', 'fbneo'];
+// Tarjetas de la sección CONSOLAS (orden y nombre completo)
+const CONSOLE_CARDS: { id: Console; name: string }[] = [
+  { id: 'ps1', name: 'PlayStation' },
+  { id: 'psp', name: 'PSP' },
+  { id: 'n64', name: 'Nintendo 64' },
+  { id: 'nds', name: 'Nintendo DS' },
+  { id: 'gba', name: 'Game Boy Advance' },
+  { id: 'saturn', name: 'Sega Saturn' },
+  { id: 'sega', name: 'Mega Drive' },
+  { id: 'fbneo', name: 'FBNeo Arcade' },
+  { id: 'mame', name: 'MAME Arcade' },
+];
 
 // Núcleo elegido por juego arcade (FBNeo o MAME 2003-Plus), recordado en el dispositivo
 const ARCADE_CHOICE_KEY = 'jl.arcadecore.v1';
@@ -78,6 +94,7 @@ function chooseArcadeCore(entry: Entry, onPlay: Props['onPlay']) {
     ],
   );
 }
+
 const GAP = 12;
 const SIDE = 16;
 
@@ -101,32 +118,51 @@ const MIN_GAME_BYTES = 20 * 1024;
 const isSheet = (path: string) => /\.(cue|m3u)$/i.test(path);
 
 function formatKb(bytes: number): string {
-  return `${(bytes / 1024).toFixed(1)} KB`;
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-// Borra el juego. Un .cue arrastra sus pistas (líneas FILE) de la misma carpeta.
-async function deleteGame(path: string): Promise<void> {
-  const targets = [path];
+// Archivos de un juego: un .cue arrastra sus pistas (líneas FILE) de la misma carpeta
+async function gameFiles(path: string): Promise<string[]> {
+  const files = [path];
   if (/\.cue$/i.test(path)) {
     try {
       const dir = path.slice(0, path.lastIndexOf('/'));
       const text = await RNFS.readFile(path, 'utf8');
       const re = /^\s*FILE\s+(?:"([^"]+)"|(\S+))/gim;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(text))) targets.push(`${dir}/${m[1] ?? m[2]}`);
+      while ((m = re.exec(text))) files.push(`${dir}/${m[1] ?? m[2]}`);
     } catch {
-      // .cue ilegible: se borra solo la hoja
+      // .cue ilegible: solo la hoja
     }
   }
-  for (const t of targets) {
+  return files;
+}
+
+async function deleteGame(path: string): Promise<void> {
+  for (const t of await gameFiles(path)) {
     if (await RNFS.exists(t)) await RNFS.unlink(t);
   }
+}
+
+// Mueve el juego (y sus pistas) a Documents/<folder>/, sin sobrescribir nada
+async function moveGame(path: string, folder: string): Promise<string> {
+  const destDir = `${RNFS.DocumentDirectoryPath}/${folder}`;
+  await RNFS.mkdir(destDir);
+  const files = await gameFiles(path);
+  for (const f of files) {
+    const dest = `${destDir}/${f.split('/').pop()}`;
+    if (await RNFS.exists(dest)) throw new Error(`Ya existe ${folder}/${f.split('/').pop()}`);
+  }
+  for (const f of files) {
+    if (await RNFS.exists(f)) await RNFS.moveFile(f, `${destDir}/${f.split('/').pop()}`);
+  }
+  return `${destDir}/${path.split('/').pop()}`;
 }
 
 function confirmDelete(entry: Entry, onRemoved: () => void) {
   const name = entry.path.split('/').pop() ?? entry.path;
   const extra = /\.cue$/i.test(entry.path) ? ' y sus pistas .bin' : '';
-  Alert.alert('Eliminar archivo', `Se borrará "${name}"${extra} del iPhone. No se puede deshacer.`, [
+  Alert.alert('Eliminar juego', `Se borrará "${name}"${extra} del iPhone. No se puede deshacer.`, [
     { text: 'Cancelar', style: 'cancel' },
     {
       text: 'Eliminar',
@@ -135,11 +171,34 @@ function confirmDelete(entry: Entry, onRemoved: () => void) {
         deleteGame(entry.path)
           .then(() => {
             forgetCover(entry.path, entry.console);
+            removeRecent(entry.path);
             onRemoved();
           })
           .catch((e) => Alert.alert('No se pudo eliminar', String(e))),
     },
   ]);
+}
+
+function chooseMoveTarget(entry: Entry, onMoved: () => void) {
+  const current = relativeToDocuments(entry.path).split('/')[0];
+  Alert.alert(
+    'Mover a otra consola',
+    `"${entry.path.split('/').pop()}" está en ${current}/. Elige su carpeta correcta:`,
+    [
+      ...MOVE_TARGETS.filter((t) => t.folder !== current).map((t) => ({
+        text: `${t.label} (${t.folder}/)`,
+        onPress: () =>
+          moveGame(entry.path, t.folder)
+            .then(() => {
+              forgetCover(entry.path, entry.console);
+              removeRecent(entry.path);
+              onMoved();
+            })
+            .catch((e) => Alert.alert('No se pudo mover', String(e))),
+      })),
+      { text: 'Cancelar', style: 'cancel' as const },
+    ],
+  );
 }
 
 // Alerta descriptiva en vez de intentar cargar la ROM en blanco
@@ -148,15 +207,6 @@ function explainUnavailable(entry: Entry) {
   const core = coreForConsole(entry.console);
   if (core === null && isMisplacedZip(entry.path)) {
     Alert.alert('Carpeta incorrecta', misplacedZipMessage(entry.path));
-    return;
-  }
-  if (entry.console === 'psp') {
-    Alert.alert(
-      'PSP aún no disponible',
-      `"${name}" está en psp/ y aparecerá aquí, pero esta versión todavía no incluye núcleo de PSP: ` +
-        'PPSSPP no se publica para iOS en el buildbot de libretro y necesita aceleración gráfica ' +
-        '(OpenGL/Vulkan) que JL Emulator aún no ofrece.',
-    );
     return;
   }
   let message: string;
@@ -170,16 +220,24 @@ function explainUnavailable(entry: Entry) {
   Alert.alert('No se puede abrir este juego', message);
 }
 
+type UnpackResult = { name: string; ok: boolean; files: number; error: string };
+
 export default function LibraryScreen({ onPlay }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [error, setError] = useState<string | null>(null);
+  const [recents, setRecents] = useState<string[]>([]);
+  const [unpacking, setUnpacking] = useState<string[] | null>(null);
+  const unpackBusy = useRef(false);
+  const unpackFailed = useRef(new Set<string>());
   const { width } = useWindowDimensions();
   const columns = width >= 900 ? 5 : width >= 700 ? 4 : width >= 500 ? 3 : 2;
   const cardW = (width - SIDE * 2 - GAP * (columns - 1)) / columns;
+  const consoleCols = width >= 900 ? 5 : width >= 600 ? 3 : 2;
+  const consoleW = (width - SIDE * 2 - GAP * (consoleCols - 1)) / consoleCols;
 
   // El nativo organiza la raíz de Documents, verifica cada ROM por contenido y deduplica
-  const refresh = useCallback(() => {
+  const listNow = useCallback(() => {
     try {
       const list = Libretro.listRoms();
       setEntries(list.map((path) => ({ path, console: Libretro.consoleOf(path) })));
@@ -189,25 +247,57 @@ export default function LibraryScreen({ onPlay }: Props) {
     }
   }, []);
 
+  // .zip/.7z en carpetas de consola o descargas grandes: se descomprimen en segundo plano y
+  // la biblioteca se actualiza al terminar. Un comprimido que falla no se reintenta solo
+  // (sí al pulsar Actualizar).
+  const refresh = useCallback(
+    (manual = false) => {
+      listNow();
+      if (unpackBusy.current) return;
+      if (manual) unpackFailed.current.clear();
+      let pending: string[] = [];
+      try {
+        pending = Libretro.pendingArchives().filter((p) => !unpackFailed.current.has(p));
+      } catch {
+        return;
+      }
+      if (!pending.length) return;
+      unpackBusy.current = true;
+      setUnpacking(pending);
+      Libretro.unpackArchives()
+        .then((json) => {
+          const results = JSON.parse(json) as UnpackResult[];
+          const failed = results.filter((r) => !r.ok);
+          pending.forEach((p) => {
+            if (failed.some((f) => p.endsWith(`/${f.name}`))) unpackFailed.current.add(p);
+          });
+          if (failed.length) {
+            Alert.alert(
+              'No se pudo descomprimir',
+              failed.map((f) => `• ${f.name}: ${f.error}`).join('\n'),
+            );
+          }
+        })
+        .catch((e) => Alert.alert('Error al descomprimir', String(e)))
+        .finally(() => {
+          unpackBusy.current = false;
+          setUnpacking(null);
+          listNow();
+        });
+    },
+    [listNow],
+  );
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   // Una descarga terminada se añade a la biblioteca sin reiniciar la app
   useEffect(() => onRomImported(() => refresh()), [refresh]);
+  useEffect(() => subscribeRecents(setRecents), []);
 
   const counts = useMemo(() => {
-    const c: Record<Console, number> = {
-      gba: 0,
-      n64: 0,
-      sega: 0,
-      mame: 0,
-      fbneo: 0,
-      ps1: 0,
-      psp: 0,
-      nds: 0,
-      saturn: 0,
-    };
+    const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0, fbneo: 0, ps1: 0, psp: 0, nds: 0, saturn: 0 };
     entries.forEach((e) => {
       if (e.console in c) c[e.console as Console] += 1;
     });
@@ -222,77 +312,205 @@ export default function LibraryScreen({ onPlay }: Props) {
     [entries, filter],
   );
 
-  return (
-    <View style={styles.root}>
+  const recentEntries = useMemo(() => {
+    const byPath = new Map(entries.map((e) => [e.path, e]));
+    return recents.map((p) => byPath.get(p)).filter((e): e is Entry => !!e);
+  }, [entries, recents]);
+
+  const consolesWithGames = CONSOLE_CARDS.filter((c) => counts[c.id] > 0).length;
+
+  const header = (
+    <View>
       <View style={styles.header}>
         <View style={styles.brand}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>JL</Text>
+          <View style={styles.badgeGlow}>
+            <JLBadge size={50} />
           </View>
           <View>
-            <Text style={styles.title}>JL Emulator</Text>
-            <Text style={styles.subtitle}>{entries.length} juegos</Text>
+            <Text style={styles.title}>
+              JL <Text style={styles.titleLight}>EMULATOR</Text>
+            </Text>
+            <Text style={styles.subtitle}>
+              {entries.length} juegos · {consolesWithGames} consolas
+            </Text>
           </View>
         </View>
-        <Pressable onPress={refresh} style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}>
-          <Text style={styles.refreshText}>Actualizar</Text>
+        <Pressable
+          onPress={() => refresh(true)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}>
+          <Svg width={18} height={18} viewBox="0 0 24 24">
+            <Path
+              d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              stroke={theme.amber}
+              strokeWidth={2.2}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
         </Pressable>
       </View>
 
-      <View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-          {FILTERS.map((f) => {
-            const active = filter === f;
-            const label = f === 'all' ? 'Todos' : CONSOLE_LABEL[f];
-            const count = f === 'all' ? entries.length : counts[f];
-            const color = active ? theme.bg : theme.titaniumHi;
-            return (
-              <Pressable
-                key={f}
-                onPress={() => setFilter(f)}
-                style={[styles.chip, active && styles.chipActive]}>
-                <ConsoleIcon kind={f} size={16} color={color} />
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-                <Text style={[styles.chipCount, active && styles.chipTextActive]}>{count}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+      {unpacking ? (
+        <View style={styles.unpackBanner}>
+          <ActivityIndicator color={theme.amber} />
+          <Text style={styles.unpackText} numberOfLines={2}>
+            Descomprimiendo {unpacking.map((p) => p.split('/').pop()).join(', ')}… El juego aparecerá al terminar.
+          </Text>
+        </View>
+      ) : null}
+
+      <SectionTitle title="Consolas" action={filter !== 'all' ? 'Ver todas' : undefined} onAction={() => setFilter('all')} />
+      <View style={styles.consoleGrid}>
+        {CONSOLE_CARDS.map((c) => (
+          <ConsoleCard
+            key={c.id}
+            id={c.id}
+            name={c.name}
+            count={counts[c.id]}
+            width={consoleW}
+            selected={filter === c.id}
+            onPress={() => setFilter((f) => (f === c.id ? 'all' : c.id))}
+          />
+        ))}
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {recentEntries.length ? (
+        <>
+          <SectionTitle title="Juegos recientes" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
+            {recentEntries.map((e) => (
+              <GameCard key={e.path} entry={e} width={112} compact onPlay={onPlay} onRemoved={() => refresh()} />
+            ))}
+          </ScrollView>
+        </>
+      ) : null}
 
+      <SectionTitle
+        title={filter === 'all' ? 'Biblioteca' : CONSOLE_CARDS.find((c) => c.id === filter)?.name ?? CONSOLE_LABEL[filter]}
+        detail={`${visible.length}`}
+      />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+
+  return (
+    <View style={styles.root}>
       <FlatList
         key={columns} // numColumns no puede cambiar en caliente
         data={visible}
         numColumns={columns}
         keyExtractor={(e) => e.path}
+        ListHeaderComponent={header}
         contentContainerStyle={styles.grid}
         columnWrapperStyle={columns > 1 ? { gap: GAP } : undefined}
         ListEmptyComponent={
           <Text style={styles.hint}>
             No hay juegos en esta categoría. Copia tus ROMs con la app Archivos → En mi iPhone → JL
-            Emulator. Se organizan solas al pulsar Actualizar:{'\n\n'}
+            Emulator. Se organizan solas al pulsar Actualizar (los .zip y .7z se descomprimen solos):{'\n\n'}
             {FOLDER_GUIDE}
             {'\n\n'}Para Neo-Geo deja también neogeo.zip en arcade/, fbneo/ o system/.
           </Text>
         }
-        renderItem={({ item }) => (
-          <GameCard entry={item} width={cardW} onPlay={onPlay} onRemoved={refresh} />
-        )}
+        renderItem={({ item }) => <GameCard entry={item} width={cardW} onPlay={onPlay} onRemoved={() => refresh()} />}
       />
     </View>
   );
 }
 
+function SectionTitle({
+  title,
+  detail,
+  action,
+  onAction,
+}: {
+  title: string;
+  detail?: string;
+  action?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+      {detail ? <Text style={styles.sectionDetail}>{detail}</Text> : null}
+      <View style={styles.sectionRule} />
+      {action ? (
+        <Pressable onPress={onAction} hitSlop={8}>
+          <Text style={styles.sectionAction}>{action}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const ConsoleCard = memo(function ConsoleCard({
+  id,
+  name,
+  count,
+  width,
+  selected,
+  onPress,
+}: {
+  id: Console;
+  name: string;
+  count: number;
+  width: number;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const glow = ART_GLOW[id as ArtKind];
+  const artH = width * 0.62;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.consoleCard,
+        { width },
+        selected && { borderColor: theme.amber, shadowColor: theme.amber, shadowOpacity: 0.55 },
+        pressed && styles.pressed,
+      ]}>
+      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+        <Defs>
+          <LinearGradient id="cc" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#1B1E25" />
+            <Stop offset="0.6" stopColor="#111318" />
+            <Stop offset="1" stopColor="#0A0B0E" />
+          </LinearGradient>
+          <LinearGradient id="ccLine" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor={glow} stopOpacity="0" />
+            <Stop offset="0.5" stopColor={glow} stopOpacity="0.9" />
+            <Stop offset="1" stopColor={glow} stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#cc)" />
+        <Rect x="0" y="0" width="100%" height="2" fill="url(#ccLine)" />
+      </Svg>
+      <View style={{ height: artH, alignItems: 'center', justifyContent: 'center' }}>
+        <ConsoleArt kind={id as ArtKind} width={width - 8} height={artH} />
+      </View>
+      <View style={styles.consoleInfo}>
+        <Text style={styles.consoleName} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[styles.consoleCount, count === 0 && styles.consoleCountEmpty]}>
+          {count === 1 ? '1 juego' : `${count} juegos`}
+        </Text>
+      </View>
+    </Pressable>
+  );
+});
+
 const GameCard = memo(function GameCard({
   entry,
   width,
+  compact,
   onPlay,
   onRemoved,
 }: {
   entry: Entry;
   width: number;
+  compact?: boolean;
   onPlay: Props['onPlay'];
   onRemoved: () => void;
 }) {
@@ -315,14 +533,14 @@ const GameCard = memo(function GameCard({
 
   useEffect(() => subscribeCover(entry.path, entry.console, setCover), [entry.path, entry.console]);
 
-  // Mantener pulsado: menú con eliminar (y cambiar núcleo en arcade)
+  // Mantener pulsado: eliminar, mover a otra consola y (arcade) cambiar núcleo
   const showMenu = () => {
-    const name = entry.path.split('/').pop() ?? entry.path;
     Alert.alert(displayTitle(entry.path), `${relativeToDocuments(entry.path)}${size !== null ? ` · ${formatKb(size)}` : ''}`, [
       ...(enabled && isArcadeConsole(entry.console)
         ? [{ text: 'Cambiar núcleo (FBNeo / MAME)', onPress: () => chooseArcadeCore(entry, onPlay) }]
         : []),
-      { text: `Eliminar "${name.length > 28 ? `${name.slice(0, 25)}…` : name}"`, style: 'destructive' as const, onPress: () => confirmDelete(entry, onRemoved) },
+      { text: 'Mover a otra consola', onPress: () => chooseMoveTarget(entry, onRemoved) },
+      { text: 'Eliminar juego', style: 'destructive' as const, onPress: () => confirmDelete(entry, onRemoved) },
       { text: 'Cancelar', style: 'cancel' as const },
     ]);
   };
@@ -353,7 +571,7 @@ const GameCard = memo(function GameCard({
     onPlay(entry.path);
   };
 
-  const artH = width * 1.3;
+  const artH = width * 1.36;
   return (
     <Pressable
       onPress={open}
@@ -371,13 +589,22 @@ const GameCard = memo(function GameCard({
           <Rect x="0" y="0" width="100%" height="100%" fill="url(#g)" />
         </Svg>
         {cover ? (
-          <Image source={{ uri: cover }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+          <>
+            {/* Fondo: la misma carátula desenfocada; encima, completa y sin recortes */}
+            <Image source={{ uri: cover }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={16} />
+            <View style={styles.coverDim} />
+            <Image source={{ uri: cover }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+          </>
         ) : (
           <View style={styles.monogram}>
-            <Text style={[styles.monogramText, { fontSize: width * 0.26 }]}>JL</Text>
-            <View style={styles.monogramRule} />
+            <JLBadge size={width * 0.42} />
+            <Text style={styles.monogramTitle} numberOfLines={3}>
+              {displayTitle(entry.path)}
+            </Text>
           </View>
         )}
+        {/* Brillo superior tipo vitrina */}
+        <View style={styles.sheen} pointerEvents="none" />
         {broken ? (
           <View style={styles.brokenBadge}>
             <Text style={styles.brokenText}>Archivo incompleto</Text>
@@ -390,20 +617,20 @@ const GameCard = memo(function GameCard({
           </View>
         ) : null}
       </View>
-      <Text style={styles.cardTitle} numberOfLines={2}>
+      <Text style={[styles.cardTitle, compact && styles.cardTitleCompact]} numberOfLines={compact ? 1 : 2}>
         {displayTitle(entry.path)}
       </Text>
-      <Text style={[styles.cardSub, misplaced && styles.warn]} numberOfLines={1}>
-        {misplaced
-          ? '⚠ Mover a arcade/ · toca para ver'
-          : core
-            ? enabled
-              ? relativeToDocuments(entry.path)
-              : 'Núcleo no incluido'
-            : entry.console === 'psp'
-              ? 'PSP · núcleo aún no disponible'
+      {compact ? null : (
+        <Text style={[styles.cardSub, misplaced && styles.warn]} numberOfLines={1}>
+          {misplaced
+            ? '⚠ Mover a arcade/ · toca para ver'
+            : core
+              ? enabled
+                ? relativeToDocuments(entry.path)
+                : 'Núcleo no incluido'
               : 'Sin consola verificada'}
-      </Text>
+        </Text>
+      )}
     </Pressable>
   );
 });
@@ -414,51 +641,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: SIDE,
-    paddingTop: 12,
-    paddingBottom: 14,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  logo: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
+  badgeGlow: {
+    borderRadius: 14,
+    shadowColor: '#38BDF8',
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  title: { color: theme.amber, fontSize: 23, fontWeight: '900', letterSpacing: 2.5 },
+  titleLight: { color: theme.text, fontWeight: '300', letterSpacing: 3 },
+  subtitle: { color: theme.textDim, fontSize: 12, marginTop: 2, letterSpacing: 0.4 },
+  refresh: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.amber,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.amberDim,
   },
-  logoText: { color: theme.amber, fontWeight: '800', fontSize: 15, letterSpacing: 1 },
-  title: { color: theme.text, fontSize: 22, fontWeight: '700', letterSpacing: 0.4 },
-  subtitle: { color: theme.textDim, fontSize: 12, marginTop: 1, letterSpacing: 0.3 },
-  refresh: {
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  refreshText: { color: theme.titaniumHi, fontWeight: '600', fontSize: 13 },
   pressed: { opacity: 0.7 },
-  filters: { gap: 8, paddingHorizontal: SIDE, paddingBottom: 14 },
-  chip: {
+  unpackBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: theme.surface,
+    gap: 10,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.amber,
+    backgroundColor: theme.amberDim,
+  },
+  unpackText: { flex: 1, color: theme.text, fontSize: 13 },
+  section: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, marginBottom: 12 },
+  sectionTitle: { color: theme.amber, fontSize: 12, fontWeight: '800', letterSpacing: 2.2 },
+  sectionDetail: { color: theme.textDim, fontSize: 12, fontWeight: '600' },
+  sectionRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: theme.border },
+  sectionAction: { color: theme.titaniumHi, fontSize: 12, fontWeight: '700' },
+  consoleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
+  consoleCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: theme.border,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
+    backgroundColor: theme.surface,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
-  chipActive: { backgroundColor: theme.amber, borderColor: theme.amber },
-  chipText: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
-  chipCount: { color: theme.textDim, fontSize: 12, fontWeight: '600' },
-  chipTextActive: { color: theme.bg },
-  error: { color: theme.danger, paddingHorizontal: SIDE, paddingBottom: 8 },
+  consoleInfo: { paddingHorizontal: 12, paddingBottom: 12, paddingTop: 2 },
+  consoleName: { color: theme.text, fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
+  consoleCount: { color: theme.amber, fontSize: 12, fontWeight: '700', marginTop: 2 },
+  consoleCountEmpty: { color: theme.textDim, fontWeight: '500' },
+  recentRow: { gap: 12, paddingRight: SIDE },
+  error: { color: theme.danger, paddingBottom: 8 },
   hint: { color: theme.textDim, padding: 24, textAlign: 'center', lineHeight: 20 },
   grid: { paddingHorizontal: SIDE, paddingBottom: 24, gap: GAP + 6 },
   card: {},
@@ -467,12 +709,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.border,
+    borderColor: 'rgba(212,175,55,0.35)',
     backgroundColor: theme.surface,
   },
-  monogram: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  monogramText: { color: theme.amber, fontWeight: '200', letterSpacing: 4, opacity: 0.9 },
-  monogramRule: { width: 28, height: 1, backgroundColor: theme.titanium, opacity: 0.5, marginTop: 6 },
+  coverDim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,9,12,0.45)' },
+  sheen: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: '38%',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  monogram: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 10 },
+  monogramTitle: { color: theme.titaniumHi, fontSize: 11, fontWeight: '600', textAlign: 'center', marginTop: 8 },
   badge: {
     position: 'absolute',
     left: 8,
@@ -498,6 +748,7 @@ const styles = StyleSheet.create({
   },
   brokenText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   cardTitle: { color: theme.text, fontSize: 13, fontWeight: '600', marginTop: 8, lineHeight: 17 },
+  cardTitleCompact: { fontSize: 12, marginTop: 6 },
   cardSub: { color: theme.textDim, fontSize: 11, marginTop: 2 },
   warn: { color: theme.amber },
 });
