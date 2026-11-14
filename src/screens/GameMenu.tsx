@@ -136,6 +136,8 @@ export type GameMenuProps = {
   debugOn: boolean;
   onDebug: () => void;
   tvConnected: boolean;
+  /** Ruta de audio AirPlay activa pero sin pantalla externa (sin Duplicar pantalla). */
+  airplayAudioOnly?: boolean;
   tvStretch: boolean;
   onTvStretch: (v: boolean) => void;
   onGuide: () => void;
@@ -330,6 +332,12 @@ export function GameMenu(p: GameMenuProps) {
             <Text style={[styles.status, p.tvConnected && styles.statusOn]}>
               {p.tvConnected ? 'TV conectada: el juego se ve en la TV' : 'Sin TV conectada'}
             </Text>
+            {p.airplayAudioOnly ? (
+              <Text style={styles.warnText}>
+                Conectaste solo audio AirPlay. Para ver el juego en la TV y usar el iPhone como control, activa
+                'Duplicar pantalla' (Screen Mirroring) en el Centro de control.
+              </Text>
+            ) : null}
             <Action label="Transmitir a TV / AirPlay" onPress={() => Libretro.showAirPlayPicker()} />
             <Segmented
               label="Imagen en la TV"
@@ -480,6 +488,7 @@ const styles = StyleSheet.create({
   },
   codeLabel: { color: theme.amber, fontSize: 11, fontWeight: '800', letterSpacing: 2 },
   code: { color: theme.text, fontSize: 34, fontWeight: '900', letterSpacing: 8 },
+  warnText: { color: theme.amber, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   playerRow: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
   input: {
     flex: 1,

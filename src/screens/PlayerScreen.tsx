@@ -212,14 +212,21 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   // Modo TV: pantalla externa (HDMI / AirPlay). El juego sale solo por la TV y el iPhone hace de
   // mando (o muestra el panel de consola si hay mandos físicos).
   const [tvConnected, setTvConnected] = useState(false);
+  // AirPlay solo de audio (sin pantalla externa): se avisa, pero el juego sigue en el iPhone
+  const [airplayAudioOnly, setAirplayAudioOnly] = useState(false);
+  const [airplayNoticeHidden, setAirplayNoticeHidden] = useState(false);
   const [tvStretch, setTvStretch] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   useEffect(() => {
     const poll = () => {
       try {
-        setTvConnected(Boolean(JSON.parse(Libretro.tvStatus()).connected));
+        const st = JSON.parse(Libretro.tvStatus());
+        const screen = Boolean(st.connected);
+        setTvConnected(screen);
+        setAirplayAudioOnly(Boolean(st.audioAirPlay) && !screen);
       } catch {
         setTvConnected(false);
+        setAirplayAudioOnly(false);
       }
     };
     poll();
@@ -232,6 +239,10 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     Libretro.setTVOptions(tvStretch, tvSmooth, ready);
   }, [tvStretch, tvSmooth, ready]);
   useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
+  // Al desconectar el audio AirPlay se rearma el aviso para la próxima vez
+  useEffect(() => {
+    if (!airplayAudioOnly) setAirplayNoticeHidden(false);
+  }, [airplayAudioOnly]);
 
   // Diagnóstico de entrada en pantalla (sin Mac no hay otra forma de ver los logs nativos)
   const [debugOn, setDebugOn] = useState(false);
@@ -396,10 +407,19 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
 
   // Avisos flotando sobre la imagen (no desplazan el layout)
   const notices = (
-    <View style={styles.notices} pointerEvents="none">
+    <View style={styles.notices} pointerEvents="box-none">
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {online && !menuOpen ? <Text style={styles.netNotice}>{net.message}</Text> : null}
+      {airplayAudioOnly && !airplayNoticeHidden && !menuOpen ? (
+        <Pressable onPress={() => setAirplayNoticeHidden(true)} style={styles.airplayNotice}>
+          <Text style={styles.airplayText}>
+            Conectaste solo audio AirPlay. Para ver el juego en la TV y usar el iPhone como control, activa
+            'Duplicar pantalla' (Screen Mirroring) en el Centro de control.
+          </Text>
+          <Text style={styles.airplayClose}>Entendido ✕</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 
@@ -546,6 +566,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       debugOn={debugOn}
       onDebug={() => setDebugOn((v) => !v)}
       tvConnected={tvConnected}
+      airplayAudioOnly={airplayAudioOnly}
       tvStretch={tvStretch}
       onTvStretch={setTvStretch}
       onGuide={() => setGuideOpen(true)}
@@ -794,6 +815,19 @@ const styles = StyleSheet.create({
   consolePlayers: { color: '#4ADE80', fontSize: 14, fontWeight: '700' },
   consoleActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 10 },
   gearSlotLandscape: { top: 10, right: 14 },
+  airplayNotice: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(13,14,18,0.92)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+    maxWidth: 520,
+    alignSelf: 'center',
+  },
+  airplayText: { color: theme.text, fontSize: 13, lineHeight: 18, textAlign: 'center' },
+  airplayClose: { color: theme.amber, fontSize: 12, fontWeight: '800', textAlign: 'center', marginTop: 6 },
   netNotice: {
     color: '#4ADE80',
     fontSize: 12,

@@ -1,5 +1,6 @@
 #import "TVOutput.h"
 
+#import <AVFoundation/AVFoundation.h>
 #import <AVKit/AVKit.h>
 
 #import "GameRenderView.h"
@@ -80,10 +81,28 @@
   }
 }
 
-- (NSDictionary *)status {
-  @synchronized(self) {
-    return _status;
+// Ruta de audio actual: AirPlay solo de sonido (sin Duplicar pantalla) NO es una pantalla externa.
+// El modo TV / mando depende únicamente de UIScreen; esto solo sirve para avisar al usuario.
+static NSDictionary *audioRouteInfo(void) {
+  BOOL airplay = NO;
+  NSString *name = @"";
+  for (AVAudioSessionPortDescription *out in AVAudioSession.sharedInstance.currentRoute.outputs) {
+    if ([out.portType isEqualToString:AVAudioSessionPortAirPlay]) {
+      airplay = YES;
+      name = out.portName ?: @"";
+    }
   }
+  return @{@"audioAirPlay" : @(airplay), @"audioRoute" : name};
+}
+
+- (NSDictionary *)status {
+  NSDictionary *screen;
+  @synchronized(self) {
+    screen = _status;
+  }
+  NSMutableDictionary *merged = [screen mutableCopy];
+  [merged addEntriesFromDictionary:audioRouteInfo()];
+  return merged;
 }
 
 - (void)attachTo:(UIScreen *)screen {
