@@ -55,34 +55,20 @@ static NSString *const kShaderSource =
 
 // Respaldo si el shader principal no compila en algún dispositivo: muestreo directo
 static NSString *const kFallbackShaderSource =
-    @"#include <metal_stdlib>
-"
-    @"using namespace metal;
-"
-    @"struct VOut { float4 position [[position]]; float2 uv; };
-"
-    @"vertex VOut libretro_vs(uint vid [[vertex_id]]) {
-"
-    @"  float2 p = float2((vid << 1) & 2, vid & 2);
-"
-    @"  VOut o;
-"
-    @"  o.position = float4(p * 2.0 - 1.0, 0.0, 1.0);
-"
-    @"  o.uv = float2(p.x, 1.0 - p.y);
-"
-    @"  return o;
-"
-    @"}
-"
-    @"fragment float4 libretro_fs(VOut v [[stage_in]], texture2d<float> tex [[texture(0)]],
-"
-    @"                            sampler s [[sampler(0)]]) {
-"
-    @"  return tex.sample(s, v.uv);
-"
-    @"}
-";
+    @"#include <metal_stdlib>\n"
+    @"using namespace metal;\n"
+    @"struct VOut { float4 position [[position]]; float2 uv; };\n"
+    @"vertex VOut libretro_vs(uint vid [[vertex_id]]) {\n"
+    @"  float2 p = float2((vid << 1) & 2, vid & 2);\n"
+    @"  VOut o;\n"
+    @"  o.position = float4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    @"  o.uv = float2(p.x, 1.0 - p.y);\n"
+    @"  return o;\n"
+    @"}\n"
+    @"fragment float4 libretro_fs(VOut v [[stage_in]], texture2d<float> tex [[texture(0)]],\n"
+    @"                            sampler s [[sampler(0)]]) {\n"
+    @"  return tex.sample(s, v.uv);\n"
+    @"}\n";
 
 // Debe coincidir con `struct Params` del shader
 struct ShaderParams {
