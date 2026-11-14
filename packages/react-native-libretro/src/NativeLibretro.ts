@@ -42,6 +42,15 @@ export interface Spec extends TurboModule {
    * borra cada comprimido que se extrae bien. Resuelve con JSON: [{name, ok, files, error}].
    */
   unpackArchives(): Promise<string>;
+  /** Netplay: crea una sala en el puerto (este iPhone es el Jugador 1). */
+  netHost(port: number): boolean;
+  /** Netplay: se une a la sala de otro iPhone por IP (Jugador 2). */
+  netJoin(address: string, port: number): boolean;
+  netStop(): void;
+  /** Estado "fase|mensaje"; fase: idle, waiting, connecting, syncing, playing. */
+  netStatus(): string;
+  /** IP local (Wi-Fi) de este iPhone. */
+  localAddress(): string;
   /** Vibración háptica breve (0..1 = intensidad). */
   haptic(strength: number): void;
   /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */

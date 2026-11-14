@@ -14,8 +14,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (BOOL)isDualSenseConnected;
 
-/** {connected, dualSense, name} del mando activo ahora mismo. */
+/** {connected, dualSense, name, kind (PS5/PS4/Xbox/Mando), rumble} del mando activo. */
 - (NSDictionary *)currentStatus;
+
+/** Vibración del mando activo (0 = parar). Hilo principal. */
+- (void)applyRumble:(float)intensity sharpness:(float)sharpness;
 
 @end
 

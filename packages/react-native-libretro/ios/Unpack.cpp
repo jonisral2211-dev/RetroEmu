@@ -191,18 +191,17 @@ bool zipEntryToFile(FILE *f, uint64_t at, uint16_t method, uint64_t csize, uint6
   return true;
 }
 
-Result extractZip(FILE *f, uint64_t fileSize, const std::string &destDir) {
-  Result r;
+// Lee el directorio central (EOCD y Zip64 incluidos). Devuelve el número de entradas.
+bool readCentralDirectory(FILE *f, uint64_t fileSize, std::vector<uint8_t> &cd, uint64_t &count, std::string &error) {
   if (fileSize < 22) {
-    r.error = "Zip vacío o dañado";
-    return r;
+    error = "Zip vacío o dañado";
+    return false;
   }
-  // 1) End Of Central Directory (y su versión Zip64 si los campos están saturados)
   const size_t tailLen = size_t(std::min<uint64_t>(fileSize, 22 + 0xFFFF + 20));
   std::vector<uint8_t> tail(tailLen);
   if (!readAt(f, fileSize - tailLen, tail.data(), tailLen)) {
-    r.error = "No se pudo leer el zip";
-    return r;
+    error = "No se pudo leer el zip";
+    return false;
   }
   size_t eocd = std::string::npos;
   for (size_t p = tailLen - 22 + 1; p-- > 0;) {
@@ -212,10 +211,10 @@ Result extractZip(FILE *f, uint64_t fileSize, const std::string &destDir) {
     }
   }
   if (eocd == std::string::npos) {
-    r.error = "Zip dañado o incompleto (falta el índice final; la descarga se cortó)";
-    return r;
+    error = "Zip dañado o incompleto (falta el índice final; la descarga se cortó)";
+    return false;
   }
-  uint64_t count = le16(&tail[eocd + 10]);
+  count = le16(&tail[eocd + 10]);
   uint64_t cdSize = le32(&tail[eocd + 12]);
   uint64_t cdOffset = le32(&tail[eocd + 16]);
   if ((count == 0xFFFF || cdOffset == 0xFFFFFFFFu || cdSize == 0xFFFFFFFFu) && eocd >= 20 &&
@@ -228,15 +227,22 @@ Result extractZip(FILE *f, uint64_t fileSize, const std::string &destDir) {
     }
   }
   if (cdSize > (64u << 20) || cdOffset + cdSize > fileSize) {
-    r.error = "Zip dañado (índice inválido)";
-    return r;
+    error = "Zip dañado (índice inválido)";
+    return false;
   }
-  std::vector<uint8_t> cd(static_cast<size_t>(cdSize));
+  cd.resize(static_cast<size_t>(cdSize));
   if (!readAt(f, cdOffset, cd.data(), cd.size())) {
-    r.error = "No se pudo leer el índice del zip";
-    return r;
+    error = "No se pudo leer el índice del zip";
+    return false;
   }
+  return true;
+}
 
+Result extractZip(FILE *f, uint64_t fileSize, const std::string &destDir) {
+  Result r;
+  std::vector<uint8_t> cd;
+  uint64_t count = 0;
+  if (!readCentralDirectory(f, fileSize, cd, count, r.error)) return r;
   // 2) Entradas
   size_t p = 0;
   for (uint64_t i = 0; i < count; ++i) {
@@ -606,6 +612,28 @@ Result extract7z(FILE *f, const std::string &destDir) {
 }
 
 }  // namespace
+
+std::vector<std::string> listZipEntries(const std::string &zipPath) {
+  std::vector<std::string> names;
+  FilePtr f(std::fopen(zipPath.c_str(), "rb"));
+  if (!f) return names;
+  U_FSEEK(f.get(), 0, SEEK_END);
+  const uint64_t size = uint64_t(U_FTELL(f.get()));
+  std::vector<uint8_t> cd;
+  uint64_t count = 0;
+  std::string error;
+  if (!readCentralDirectory(f.get(), size, cd, count, error)) return names;
+  size_t p = 0;
+  for (uint64_t i = 0; i < count && p + 46 <= cd.size() && le32(&cd[p]) == 0x02014b50; ++i) {
+    const uint16_t nameLen = le16(&cd[p + 28]);
+    const uint16_t extraLen = le16(&cd[p + 30]);
+    const uint16_t commentLen = le16(&cd[p + 32]);
+    if (p + 46 + nameLen > cd.size()) break;
+    names.emplace_back(cd.begin() + long(p + 46), cd.begin() + long(p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return names;
+}
 
 bool is7z(const std::string &path) {
   FilePtr f(std::fopen(path.c_str(), "rb"));

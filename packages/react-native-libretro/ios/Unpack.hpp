@@ -21,6 +21,12 @@ struct Result {
  */
 Result extractAll(const std::string &archivePath, const std::string &destDir);
 
+/**
+ * Nombres de las entradas de un .zip leyendo solo el índice final (sin cargar el archivo en
+ * memoria; sirve para zips de varios GB). Vacío si no es un zip válido.
+ */
+std::vector<std::string> listZipEntries(const std::string &zipPath);
+
 /** true si el archivo es un .7z (por firma, no por extensión). */
 bool is7z(const std::string &path);
 

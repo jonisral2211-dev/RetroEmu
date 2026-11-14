@@ -29,6 +29,19 @@ void setAnalog(double x, double y);
 void setPointer(double x, double y, bool pressed);
 /** Estado del mando físico: máscara de botones libretro y stick izquierdo en [-1, 1]. */
 void setGamepad(uint16_t buttons, double x, double y);
+/** Stick derecho (x/y en [-1, 1]) y gatillos analógicos L2/R2 (0..1) del mando físico. */
+void setGamepadExtra(double rx, double ry, double l2, double r2);
+/** Vibración que pide el core (0..1 por motor). Se llama desde el hilo de emulación. */
+void setRumbleHandler(void (*handler)(float strong, float weak));
+/** Netplay: crea sala en el puerto (anfitrión = Jugador 1). */
+bool netHost(int port);
+/** Netplay: se une a la sala de otro iPhone (Jugador 2). */
+bool netJoin(const char *address, int port);
+void netStop();
+/** Estado "fase|mensaje" (fase: idle, waiting, connecting, syncing, playing). */
+std::string netStatus();
+/** IPv4 de la Wi-Fi (o de la primera interfaz activa). */
+std::string localAddress();
 void reset();
 
 bool saveState(int slot);

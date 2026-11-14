@@ -2,7 +2,15 @@ import { useEffect, useState } from 'react';
 import { NativeEventEmitter } from 'react-native';
 import { Libretro } from 'react-native-libretro';
 
-export type GamepadStatus = { connected: boolean; dualSense: boolean; name: string };
+export type GamepadStatus = {
+  connected: boolean;
+  dualSense: boolean;
+  name: string;
+  /** PS5, PS4, Xbox o Mando (otros MFi/Bluetooth). */
+  kind?: string;
+  /** El mando tiene motores de vibración. */
+  rumble?: boolean;
+};
 
 const NONE: GamepadStatus = { connected: false, dualSense: false, name: '' };
 

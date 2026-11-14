@@ -8,13 +8,15 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import RNFS from 'react-native-fs';
+import { arcadeTitle } from '../covers/arcadeNames';
 import { forgetCover, subscribeCover } from '../covers/CoverCache';
 import { onRomImported } from '../downloads/DownloadManager';
 import {
@@ -38,7 +40,6 @@ import { ConsoleIcon } from '../ui/ConsoleIcon';
 import { JLBadge } from '../ui/JLBadge';
 
 type Props = { onPlay: (romPath: string, core?: CoreId) => void };
-type Filter = 'all' | Console;
 type Entry = { path: string; console: string };
 
 // Tarjetas de la sección CONSOLAS (orden y nombre completo)
@@ -106,6 +107,8 @@ function relativeToDocuments(path: string): string {
 
 // Título legible: sin extensión ni etiquetas entre paréntesis/corchetes
 function displayTitle(path: string): string {
+  const arcade = /\.zip$/i.test(path) ? arcadeTitle(path) : null;
+  if (arcade) return arcade;
   const file = path.split('/').pop() ?? path;
   const base = file.replace(/\.[^.]+$/, '');
   const clean = base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim();
@@ -224,14 +227,16 @@ type UnpackResult = { name: string; ok: boolean; files: number; error: string };
 
 export default function LibraryScreen({ onPlay }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [filter, setFilter] = useState<Filter>('all');
+  // Consola abierta (vista dedicada) o null = pantalla principal (consolas + recientes)
+  const [view, setView] = useState<Console | null>(null);
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
   const [unpacking, setUnpacking] = useState<string[] | null>(null);
   const unpackBusy = useRef(false);
   const unpackFailed = useRef(new Set<string>());
   const { width } = useWindowDimensions();
-  const columns = width >= 900 ? 5 : width >= 700 ? 4 : width >= 500 ? 3 : 2;
+  const columns = width >= 900 ? 5 : width >= 700 ? 4 : width >= 560 ? 3 : 2;
   const cardW = (width - SIDE * 2 - GAP * (columns - 1)) / columns;
   const consoleCols = width >= 900 ? 5 : width >= 600 ? 3 : 2;
   const consoleW = (width - SIDE * 2 - GAP * (consoleCols - 1)) / consoleCols;
@@ -304,13 +309,18 @@ export default function LibraryScreen({ onPlay }: Props) {
     return c;
   }, [entries]);
 
-  const visible = useMemo(
-    () =>
-      entries
-        .filter((e) => filter === 'all' || e.console === filter)
-        .sort((a, b) => displayTitle(a.path).localeCompare(displayTitle(b.path))),
-    [entries, filter],
-  );
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return entries
+      .filter((e) => e.console === view)
+      .filter((e) => !q || displayTitle(e.path).toLowerCase().includes(q) || e.path.toLowerCase().includes(q))
+      .sort((a, b) => displayTitle(a.path).localeCompare(displayTitle(b.path)));
+  }, [entries, view, query]);
+
+  const openConsole = (c: Console) => {
+    setQuery('');
+    setView(c);
+  };
 
   const recentEntries = useMemo(() => {
     const byPath = new Map(entries.map((e) => [e.path, e]));
@@ -361,7 +371,7 @@ export default function LibraryScreen({ onPlay }: Props) {
         </View>
       ) : null}
 
-      <SectionTitle title="Consolas" action={filter !== 'all' ? 'Ver todas' : undefined} onAction={() => setFilter('all')} />
+      <SectionTitle title="Consolas" />
       <View style={styles.consoleGrid}>
         {CONSOLE_CARDS.map((c) => (
           <ConsoleCard
@@ -370,27 +380,91 @@ export default function LibraryScreen({ onPlay }: Props) {
             name={c.name}
             count={counts[c.id]}
             width={consoleW}
-            selected={filter === c.id}
-            onPress={() => setFilter((f) => (f === c.id ? 'all' : c.id))}
+            selected={false}
+            onPress={() => openConsole(c.id)}
           />
         ))}
       </View>
 
+      <SectionTitle title="Juegos recientes" />
       {recentEntries.length ? (
-        <>
-          <SectionTitle title="Juegos recientes" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
-            {recentEntries.map((e) => (
-              <GameCard key={e.path} entry={e} width={112} compact onPlay={onPlay} onRemoved={() => refresh()} />
-            ))}
-          </ScrollView>
-        </>
-      ) : null}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
+          {recentEntries.map((e) => (
+            <GameCard key={e.path} entry={e} width={112} compact onPlay={onPlay} onRemoved={() => refresh()} />
+          ))}
+        </ScrollView>
+      ) : (
+        <Text style={styles.recentEmpty}>Los juegos que abras aparecerán aquí.</Text>
+      )}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
 
-      <SectionTitle
-        title={filter === 'all' ? 'Biblioteca' : CONSOLE_CARDS.find((c) => c.id === filter)?.name ?? CONSOLE_LABEL[filter]}
-        detail={`${visible.length}`}
-      />
+  if (!view) {
+    return (
+      <View style={styles.root}>
+        <ScrollView contentContainerStyle={styles.home}>{header}</ScrollView>
+      </View>
+    );
+  }
+
+  // Vista de una consola: Volver, cabecera, buscador y cuadrícula solo con sus juegos
+  const card = CONSOLE_CARDS.find((c) => c.id === view);
+  const consoleHeader = (
+    <View>
+      <View style={styles.viewTop}>
+        <Pressable onPress={() => setView(null)} hitSlop={10} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+          <Text style={styles.backText}>← Volver</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => refresh(true)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}>
+          <Svg width={18} height={18} viewBox="0 0 24 24">
+            <Path
+              d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              stroke={theme.amber}
+              strokeWidth={2.2}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </Pressable>
+      </View>
+      <View style={styles.viewHero}>
+        <ConsoleArt kind={view as ArtKind} width={132} height={91} />
+        <View style={styles.viewHeroText}>
+          <Text style={styles.viewTitle}>{card?.name ?? CONSOLE_LABEL[view]}</Text>
+          <Text style={styles.viewCount}>
+            {counts[view] === 1 ? '1 juego' : `${counts[view]} juegos`} · {view === 'mame' ? 'arcade' : view}/
+          </Text>
+        </View>
+      </View>
+      {unpacking ? (
+        <View style={styles.unpackBanner}>
+          <ActivityIndicator color={theme.amber} />
+          <Text style={styles.unpackText} numberOfLines={2}>
+            Descomprimiendo {unpacking.map((p) => p.split('/').pop()).join(', ')}…
+          </Text>
+        </View>
+      ) : null}
+      <View style={styles.search}>
+        <Svg width={16} height={16} viewBox="0 0 24 24">
+          <Circle cx="11" cy="11" r="7" stroke={theme.textDim} strokeWidth={2} fill="none" />
+          <Path d="M20 20l-4-4" stroke={theme.textDim} strokeWidth={2} strokeLinecap="round" />
+        </Svg>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder={`Buscar en ${card?.name ?? 'esta consola'}`}
+          placeholderTextColor={theme.textDim}
+          autoCorrect={false}
+          autoCapitalize="none"
+          clearButtonMode="while-editing"
+          style={styles.searchInput}
+        />
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
@@ -402,12 +476,13 @@ export default function LibraryScreen({ onPlay }: Props) {
         data={visible}
         numColumns={columns}
         keyExtractor={(e) => e.path}
-        ListHeaderComponent={header}
+        ListHeaderComponent={consoleHeader}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.grid}
         columnWrapperStyle={columns > 1 ? { gap: GAP } : undefined}
         ListEmptyComponent={
           <Text style={styles.hint}>
-            No hay juegos en esta categoría. Copia tus ROMs con la app Archivos → En mi iPhone → JL
+            {query ? `Ningún juego coincide con "${query}".\n\n` : ''}No hay juegos en esta consola. Copia tus ROMs con la app Archivos → En mi iPhone → JL
             Emulator. Se organizan solas al pulsar Actualizar (los .zip y .7z se descomprimen solos):{'\n\n'}
             {FOLDER_GUIDE}
             {'\n\n'}Para Neo-Geo deja también neogeo.zip en arcade/, fbneo/ o system/.
@@ -700,6 +775,35 @@ const styles = StyleSheet.create({
   consoleCount: { color: theme.amber, fontSize: 12, fontWeight: '700', marginTop: 2 },
   consoleCountEmpty: { color: theme.textDim, fontWeight: '500' },
   recentRow: { gap: 12, paddingRight: SIDE },
+  recentEmpty: { color: theme.textDim, fontSize: 13, paddingVertical: 8 },
+  home: { paddingHorizontal: SIDE, paddingBottom: 28 },
+  viewTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 },
+  back: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: theme.amber,
+    backgroundColor: theme.amberDim,
+  },
+  backText: { color: theme.amber, fontWeight: '800', fontSize: 14 },
+  viewHero: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
+  viewHeroText: { flex: 1 },
+  viewTitle: { color: theme.text, fontSize: 24, fontWeight: '800', letterSpacing: 0.4 },
+  viewCount: { color: theme.amber, fontSize: 13, fontWeight: '700', marginTop: 3 },
+  search: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    marginBottom: 16,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  },
+  searchInput: { flex: 1, color: theme.text, fontSize: 15, paddingVertical: 10 },
   error: { color: theme.danger, paddingBottom: 8 },
   hint: { color: theme.textDim, padding: 24, textAlign: 'center', lineHeight: 20 },
   grid: { paddingHorizontal: SIDE, paddingBottom: 24, gap: GAP + 6 },

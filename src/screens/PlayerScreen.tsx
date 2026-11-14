@@ -43,6 +43,7 @@ import { getPadDebug, PointerRect, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 import { theme } from '../theme';
 import { Slider } from '../ui/Slider';
+import { FilterMode, GameMenu, GearButton, NetState, parseNetStatus, TouchMode } from './GameMenu';
 
 type Props = { romPath: string; coreOverride?: CoreId; onExit: () => void };
 
@@ -94,8 +95,11 @@ const PAD_MIN_PX = 250;
 const BAR_H = 44;
 const PS1_RES_KEY = 'pcsx_rearmed_neon_enhancement_enable';
 
-const DIR_LABEL: Record<DirMode, string> = { stick: 'Stick', dpad: 'D-Pad', both: 'Stick + D-Pad' };
-const NEXT_DIR: Record<DirMode, DirMode> = { stick: 'dpad', dpad: 'both', both: 'stick' };
+// Título legible del juego para la cabecera del menú
+function gameTitle(path: string): string {
+  const base = (path.split('/').pop() ?? path).replace(/\.[^.]+$/, '');
+  return base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || base;
+}
 
 export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
@@ -179,9 +183,27 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   // Con un DualSense conectado el pad táctil se oculta; el usuario puede forzarlo con el botón.
   // Al cambiar la conexión se descarta el override manual.
   const pad = useGamepadStatus();
-  const [touchOverride, setTouchOverride] = useState<boolean | null>(null);
-  useEffect(() => setTouchOverride(null), [pad.dualSense]);
-  const touchVisible = editing || (touchOverride ?? !pad.dualSense);
+  const [touchMode, setTouchMode] = useState<TouchMode>('auto');
+  const touchVisible = editing || touchMode === 'show' || (touchMode === 'auto' && !pad.connected);
+
+  // Menú de configuración (engranaje) y filtro de imagen elegido
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [filterMode, setFilterMode] = useState<FilterMode | null>(null);
+
+  // Netplay: estado consultado al nativo (barato y síncrono)
+  const [net, setNet] = useState<NetState>({ phase: 'idle', message: '' });
+  useEffect(() => {
+    if (!ready) return;
+    const poll = () =>
+      setNet((prev) => {
+        const next = parseNetStatus(Libretro.netStatus());
+        return next.phase === prev.phase && next.message === prev.message ? prev : next;
+      });
+    poll();
+    const id = setInterval(poll, 700);
+    return () => clearInterval(id);
+  }, [ready]);
+  const online = net.phase !== 'idle';
 
   // Diagnóstico de entrada en pantalla (sin Mac no hay otra forma de ver los logs nativos)
   const [debugOn, setDebugOn] = useState(false);
@@ -230,6 +252,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     setReady(true);
     return () => {
       // Auto-guardado al salir, mientras el core aún corre; luego para y persiste la SRAM
+      Libretro.netStop();
       Libretro.saveState(slots.auto);
       Libretro.stop();
       Libretro.unloadGame();
@@ -268,10 +291,14 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     setTimeout(() => setNotice(null), 1500);
   };
 
-  const togglePause = () => {
-    const next = !paused;
-    setPaused(next);
-    Libretro.setPaused(next);
+  // Abrir el menú pausa la partida (salvo en línea: pararía también al otro jugador)
+  const openMenu = () => {
+    setMenuOpen(true);
+    if (!online) Libretro.setPaused(true);
+  };
+  const closeMenu = () => {
+    setMenuOpen(false);
+    Libretro.setPaused(paused || editing);
   };
 
   // Editar controles pausa el juego; al salir se restaura el estado de pausa anterior
@@ -296,7 +323,27 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
 
   const dirMode: DirMode = padPrefs.dirMode ?? defaultDirMode(core);
   const padLayout = withDirMode(layoutFor(core, genesisSix, landscape), dirMode);
-  const smooth3d = core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
+  const smooth3d =
+    filterMode !== null ? filterMode === 'smooth' : core === 'mupen64' || core === 'pcsx' || core === 'ppsspp';
+
+  // Resolución: PS1 renderiza a 1x o 2x (GPU NEON); el resto a su resolución nativa y Metal la
+  // escala a la pantalla Retina con filtro nítido (sin coste de CPU)
+  const resolutions =
+    core === 'pcsx'
+      ? [
+          { id: '1x', label: '1x Fluido' },
+          { id: '2x', label: '2x HD' },
+        ]
+      : [{ id: 'native', label: 'Nativa → Retina (Metal)' }];
+  const resolution = core === 'pcsx' ? (ps1Hd ? '2x' : '1x') : 'native';
+  const resolutionNote =
+    core === 'pcsx'
+      ? '2x duplica la resolución interna (más nítido, más CPU). La imagen siempre se escala a Retina por GPU.'
+      : core === 'ppsspp'
+        ? 'PSP usa el renderizador por software de PPSSPP (iOS no permite JIT): 480×272 nativo, escalado a Retina por Metal. Más resolución interna bajaría mucho los FPS.'
+        : core === 'mupen64'
+          ? 'N64 usa el RDP por software (angrylion), siempre a resolución nativa; Metal escala a Retina con antialiasing.'
+          : 'Escalado nítido a Retina por GPU (Metal): píxeles enteros, sin desenfoque.';
 
   // Cada botón guarda su propio desplazamiento; parte del de su grupo (ajustes anteriores)
   const moveControl = (id: string, dx: number, dy: number) =>
@@ -318,59 +365,12 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     });
   const pct = (v: number) => `${Math.round(v * 100)} %`;
 
-  const hudButtons = (
-    <>
-      <HudButton label="Salir" onPress={onExit} />
-      <HudButton label={paused ? 'Reanudar' : 'Pausa'} onPress={togglePause} />
-      <HudButton label="Editar controles" onPress={toggleEditing} active={editing} />
-      <HudButton
-        label={DIR_LABEL[dirMode]}
-        onPress={() => updatePadPrefs((p) => ({ ...p, dirMode: NEXT_DIR[dirMode] }))}
-      />
-      <HudButton label={display.stretch ? 'Expandir pantalla' : `${aspectLabel(aspect)} Original`} onPress={toggleStretch} />
-      {core === 'pcsx' ? (
-        <HudButton label={ps1Hd ? '2x HD' : '1x Fluido'} onPress={togglePs1Hd} active={ps1Hd} />
-      ) : null}
-      {core === 'genesis' ? (
-        <HudButton label={genesisSix ? '6 btn' : '3 btn'} onPress={() => setGenesisSix((v) => !v)} />
-      ) : null}
-      <HudButton
-        label={touchVisible ? 'Ocultar pad' : 'Mostrar pad'}
-        onPress={() => setTouchOverride(!touchVisible)}
-      />
-      <HudButton
-        label="Guardar"
-        onPress={() => flash(Libretro.saveState(slotsFor(core).save) ? 'Estado guardado' : 'Error al guardar')}
-      />
-      <HudButton
-        label="Cargar"
-        onPress={() => flash(Libretro.loadState(slotsFor(core).save) ? 'Estado cargado' : 'Sin estado guardado')}
-      />
-      <HudButton label={debugOn ? 'Ocultar debug' : 'Debug'} onPress={() => setDebugOn((v) => !v)} />
-    </>
-  );
-  // Horizontal: una fila desplazable de alto fijo (no tapa gatillos ni juego).
-  // Vertical: los botones se reparten en varias filas.
-  const hud = landscape ? (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.hudBar}
-      contentContainerStyle={styles.hudBarContent}>
-      {hudButtons}
-    </ScrollView>
-  ) : (
-    <View style={styles.hud}>{hudButtons}</View>
-  );
-
   // Avisos flotando sobre la imagen (no desplazan el layout)
   const notices = (
     <View style={styles.notices} pointerEvents="none">
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
-      {pad.connected && pad.dualSense ? (
-        <Text style={styles.notice}>DualSense conectado: {pad.name || 'PS5'}</Text>
-      ) : null}
+      {online && !menuOpen ? <Text style={styles.netNotice}>{net.message}</Text> : null}
     </View>
   );
 
@@ -473,6 +473,57 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     </View>
   );
 
+  const slot = slotsFor(core).save;
+  const menu = menuOpen ? (
+    <GameMenu
+      landscape={landscape}
+      title={gameTitle(romPath)}
+      onResume={closeMenu}
+      onExit={onExit}
+      onSave={() => flash(Libretro.saveState(slot) ? 'Partida guardada' : 'Error al guardar')}
+      onLoad={() => {
+        const ok = Libretro.loadState(slot);
+        flash(ok ? 'Partida cargada' : 'No hay partida guardada');
+        if (ok) closeMenu();
+      }}
+      onReset={() => {
+        Libretro.reset();
+        closeMenu();
+      }}
+      onEditControls={() => {
+        setMenuOpen(false);
+        setEditing(true);
+        setSelectedId(null);
+        setPanelCollapsed(false);
+        Libretro.setPaused(true);
+      }}
+      dirMode={dirMode}
+      onDirMode={(m) => updatePadPrefs((pp) => ({ ...pp, dirMode: m }))}
+      touchMode={touchMode}
+      onTouchMode={setTouchMode}
+      genesisSix={genesisSix}
+      onGenesisSix={core === 'genesis' ? setGenesisSix : undefined}
+      stretch={display.stretch}
+      onStretch={(v) => v !== display.stretch && toggleStretch()}
+      aspectName={aspectLabel(aspect)}
+      resolutions={resolutions}
+      resolution={resolution}
+      onResolution={(id) => core === 'pcsx' && (id === '2x') !== ps1Hd && togglePs1Hd()}
+      resolutionNote={resolutionNote}
+      filter={smooth3d ? 'smooth' : 'sharp'}
+      onFilter={setFilterMode}
+      pad={pad}
+      net={net}
+      debugOn={debugOn}
+      onDebug={() => setDebugOn((v) => !v)}
+    />
+  ) : null;
+  const gear = editing ? null : (
+    <View style={[styles.gearSlot, landscape && styles.gearSlotLandscape]}>
+      <GearButton onPress={openMenu} online={online} />
+    </View>
+  );
+
   const nds = isNdsCore(core);
   const padView = (style: object, pointerRect?: PointerRect) =>
     touchVisible ? (
@@ -496,7 +547,6 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   if (landscape || !touchVisible) {
     return (
       <View style={styles.root}>
-        {hud}
         <View
           style={styles.flex}
           onLayout={onArea}
@@ -505,7 +555,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
           {padView(StyleSheet.absoluteFill, nds ? fitRect(area.w, area.h, aspect, display.stretch) : undefined)}
           {notices}
         </View>
+        {gear}
         {editPanel}
+        {menu}
       </View>
     );
   }
@@ -517,7 +569,6 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   const gameH = display.stretch ? maxGameH : Math.min(maxGameH, area.w / aspect);
   return (
     <View style={styles.root}>
-      {hud}
       <View style={styles.flex} onLayout={onArea}>
         {area.h > 0 ? (
           <>
@@ -531,7 +582,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
         ) : null}
         {notices}
       </View>
+      {gear}
       {editPanel}
+      {menu}
     </View>
   );
 }
@@ -589,7 +642,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.amber,
   },
-  editPanelLandscape: { left: '27%', right: '27%', top: BAR_H + 8, bottom: 8 },
+  editPanelLandscape: { left: '27%', right: '27%', top: 8, bottom: 8 },
   editHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   editTitle: { color: theme.text, fontSize: 16, fontWeight: '700' },
   editCollapse: { color: theme.amber, fontSize: 13, fontWeight: '600' },
@@ -632,6 +685,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.amber,
   },
-  panelChipLandscape: { top: BAR_H + 8 },
+  panelChipLandscape: { top: 8 },
+  gearSlot: { position: 'absolute', top: 8, right: 10 },
+  gearSlotLandscape: { top: 10, right: 14 },
+  netNotice: {
+    color: '#4ADE80',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   panelChipText: { color: theme.amber, fontWeight: '700', fontSize: 13 },
 });

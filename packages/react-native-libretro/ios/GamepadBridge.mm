@@ -1,5 +1,6 @@
 #import "GamepadBridge.h"
 
+#import <CoreHaptics/CoreHaptics.h>
 #import <GameController/GameController.h>
 
 #include <cmath>
@@ -12,7 +13,18 @@
 @interface GamepadBridge ()
 @property (nonatomic, strong, nullable) GCController *active;
 @property (nonatomic, copy, nullable) void (^statusHandler)(NSDictionary *status);
+// Vibración del mando (DualSense/DualShock/Xbox): motor háptico continuo con intensidad variable
+@property (nonatomic, strong, nullable) CHHapticEngine *rumbleEngine;
+@property (nonatomic, strong, nullable) id<CHHapticAdvancedPatternPlayer> rumblePlayer;
 @end
+
+// El core pide vibración desde el hilo de emulación: se aplica en el hilo principal
+static void onCoreRumble(float strong, float weak) {
+  const float intensity = fmaxf(strong, weak * 0.6f);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [[GamepadBridge sharedBridge] applyRumble:intensity sharpness:strong >= weak ? 0.3f : 0.8f];
+  });
+}
 
 @implementation GamepadBridge
 
@@ -27,6 +39,7 @@
 
 - (void)startWithStatusHandler:(void (^)(NSDictionary *status))handler {
   self.statusHandler = handler;
+  host::setRumbleHandler(onCoreRumble);
   NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
   [nc addObserver:self
          selector:@selector(controllerConnected:)
@@ -67,6 +80,8 @@
   }
   if (!self.active) {
     host::setGamepad(0, 0, 0);
+    host::setGamepadExtra(0, 0, 0, 0);
+    [self stopRumbleEngine];
   }
   [self publish];
 }
@@ -76,6 +91,7 @@
   if (self.active && self.active != controller) return;  // un mando activo a la vez
 
   self.active = controller;
+  [self stopRumbleEngine];
   __weak GamepadBridge *weakSelf = self;
   controller.extendedGamepad.valueChangedHandler =
       ^(GCExtendedGamepad *pad, GCControllerElement *element) {
@@ -120,6 +136,66 @@
   if (fabsf(ly) < 0.1f) ly = 0;
 
   host::setGamepad(buttons, lx, ly);
+
+  // Stick derecho (cámara en N64/PSP con mapeo dual) y gatillos analógicos
+  float rx = pad.rightThumbstick.xAxis.value;
+  float ry = -pad.rightThumbstick.yAxis.value;
+  if (fabsf(rx) < 0.1f) rx = 0;
+  if (fabsf(ry) < 0.1f) ry = 0;
+  host::setGamepadExtra(rx, ry, pad.leftTrigger.value, pad.rightTrigger.value);
+}
+
+#pragma mark - Vibración
+
+- (void)stopRumbleEngine {
+  [self.rumblePlayer stopAtTime:0 error:nil];
+  [self.rumbleEngine stopWithCompletionHandler:nil];
+  self.rumblePlayer = nil;
+  self.rumbleEngine = nil;
+}
+
+- (void)applyRumble:(float)intensity sharpness:(float)sharpness {
+  GCController *c = self.active;
+  if (!c) return;
+  if (@available(iOS 14.0, *)) {
+    if (!c.haptics) return;  // mandos sin motores de vibración
+    NSError *error = nil;
+    if (intensity <= 0.01f) {
+      [self.rumblePlayer stopAtTime:0 error:nil];
+      self.rumblePlayer = nil;
+      return;
+    }
+    if (!self.rumbleEngine) {
+      self.rumbleEngine = [c.haptics createEngineWithLocality:GCHapticsLocalityDefault];
+      self.rumbleEngine.playsHapticsOnly = YES;
+      [self.rumbleEngine startAndReturnError:&error];
+      if (error) {
+        self.rumbleEngine = nil;
+        return;
+      }
+    }
+    if (!self.rumblePlayer) {
+      // Evento continuo largo; la intensidad se ajusta con parámetros dinámicos
+      CHHapticEvent *event = [[CHHapticEvent alloc]
+          initWithEventType:CHHapticEventTypeHapticContinuous
+                 parameters:@[
+                   [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:1.0],
+                   [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness value:sharpness],
+                 ]
+               relativeTime:0
+                   duration:30];
+      CHHapticPattern *pattern = [[CHHapticPattern alloc] initWithEvents:@[ event ] parameters:@[] error:&error];
+      if (!pattern) return;
+      self.rumblePlayer = [self.rumbleEngine createAdvancedPlayerWithPattern:pattern error:&error];
+      self.rumblePlayer.loopEnabled = YES;
+      [self.rumblePlayer startAtTime:0 error:&error];
+    }
+    CHHapticDynamicParameter *level =
+        [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl
+                                                        value:intensity
+                                                 relativeTime:0];
+    [self.rumblePlayer sendParameters:@[ level ] atTime:0 error:nil];
+  }
 }
 
 #pragma mark - Estado
@@ -130,10 +206,22 @@
 
 - (NSDictionary *)currentStatus {
   GCController *c = self.active;
+  NSString *kind = @"";
+  if (c) {
+    NSString *category = c.productCategory ?: @"";
+    if ([category isEqualToString:GCProductCategoryDualSense]) kind = @"PS5";
+    else if ([category isEqualToString:GCProductCategoryDualShock4]) kind = @"PS4";
+    else if ([category containsString:@"Xbox"]) kind = @"Xbox";
+    else kind = @"Mando";
+  }
+  BOOL rumble = NO;
+  if (@available(iOS 14.0, *)) rumble = c.haptics != nil;
   return @{
     @"connected" : @(c != nil),
     @"dualSense" : @([self isDualSense:c]),
     @"name" : c.vendorName ?: @"",
+    @"kind" : kind,
+    @"rumble" : @(rumble),
   };
 }
 

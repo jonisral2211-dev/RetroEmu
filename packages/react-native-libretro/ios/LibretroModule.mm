@@ -353,6 +353,54 @@ static void relocatePspFromPs1(NSString *docs) {
   }
 }
 
+// Juegos de consola dentro de arcade/ o fbneo/ (ISO/CSO de PSP, CHD, .cue/.bin…) no son romsets:
+// cada archivo suelto va a la carpeta de su consola, y un .zip/.7z con una imagen de disco dentro
+// pasa a la bandeja para descomprimirse y repartirse. Solo se lee el índice del zip.
+static void relocateFromArcade(NSString *docs) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *inbox = [docs stringByAppendingPathComponent:@".inbox"];
+  for (NSString *folder in @[ @"arcade", @"fbneo" ]) {
+    NSString *dir = [docs stringByAppendingPathComponent:folder];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+      if ([name hasPrefix:@"."]) continue;
+      NSString *full = [dir stringByAppendingPathComponent:name];
+      NSString *ext = name.pathExtension.lowercaseString;
+      if ([ext isEqualToString:@"7z"]) {
+        [fm createDirectoryAtPath:inbox withIntermediateDirectories:YES attributes:nil error:nil];
+        moveIfFree(full, [inbox stringByAppendingPathComponent:name]);
+        continue;
+      }
+      if ([ext isEqualToString:@"zip"]) {
+        if (isNeoGeoBios(full)) continue;
+        BOOL disc = NO;
+        for (const std::string &entry : unpack::listZipEntries(full.UTF8String)) {
+          NSString *e = [NSString stringWithUTF8String:entry.c_str()].pathExtension.lowercaseString;
+          if ([@[ @"iso", @"cso", @"pbp", @"chd", @"cue", @"img" ] containsObject:e]) disc = YES;
+        }
+        if (disc) {
+          [fm createDirectoryAtPath:inbox withIntermediateDirectories:YES attributes:nil error:nil];
+          moveIfFree(full, [inbox stringByAppendingPathComponent:name]);
+        }
+        continue;
+      }
+      if ([ext isEqualToString:@"cue"]) {
+        NSString *bin = cueReferencedBin(full);
+        NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
+        if (!console) continue;
+        NSString *destDir = [docs stringByAppendingPathComponent:console];
+        for (NSString *track in cueReferencedFiles(full)) {
+          moveIfFree(track, [destDir stringByAppendingPathComponent:track.lastPathComponent]);
+        }
+        moveIfFree(full, [destDir stringByAppendingPathComponent:name]);
+        continue;
+      }
+      if (!romcheck::isRomExtension(ext.UTF8String)) continue;
+      NSString *console = consoleForKind(sniffFile(full));
+      if (console) moveIfFree(full, [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name]);
+    }
+  }
+}
+
 // Auto-organización de la raíz de Documents (al arrancar y al pulsar Actualizar):
 //  - .zip arcade (romset conocido o zip sin ROM de consola dentro) -> arcade/
 //  - .cue (+ todas sus pistas), .bin/.iso de PS1 y .chd -> ps1/
@@ -565,6 +613,22 @@ RCT_EXPORT_MODULE(Libretro)
       return @NO;
     }
     ensureNeoGeoBios(_systemDir, gameDir);  // KOF, Metal Slug… necesitan neogeo.zip junto a la ROM
+    // Versiones modificadas (clones): el core lee los archivos comunes del romset original
+    static NSDictionary<NSString *, NSString *> *parents = @{
+      @"kf2k2mp" : @"kof2002", @"kf2k2mp2" : @"kof2002", @"kf2k2pls" : @"kof2002", @"kf2k2pla" : @"kof2002",
+      @"kof2k2omg" : @"kof2002", @"kf2k3pl" : @"kof2003", @"kf2k3upl" : @"kof2003", @"kof98h" : @"kof98",
+      @"kof98a" : @"kof98", @"kof97h" : @"kof97", @"kof97pls" : @"kof97", @"mslug3h" : @"mslug3",
+      @"mslug3b6" : @"mslug3", @"mslug5h" : @"mslug5", @"ms5plus" : @"mslug5", @"mslugxh" : @"mslugx",
+      @"garouh" : @"garou", @"samsho5h" : @"samsho5", @"rotdh" : @"rotd", @"kof2001h" : @"kof2001",
+    };
+    NSString *parent = parents[path.lastPathComponent.stringByDeletingPathExtension.lowercaseString];
+    if (parent && ![fm fileExistsAtPath:[gameDir stringByAppendingPathComponent:[parent stringByAppendingString:@".zip"]]]) {
+      _romError = [NSString stringWithFormat:
+                                @"\"%@\" es una versión modificada de %@: el núcleo necesita también %@.zip (el "
+                                @"juego original) en la misma carpeta %@/. Cópialo junto a él y vuelve a abrirlo.",
+                                path.lastPathComponent, parent, parent, gameDir.lastPathComponent];
+      return @NO;
+    }
     if (isNeoGeoSet(path.lastPathComponent)) {
       NSString *bios = [gameDir stringByAppendingPathComponent:kNeoGeoBios];
       if (![fm fileExistsAtPath:bios]) {
@@ -682,6 +746,31 @@ RCT_EXPORT_MODULE(Libretro)
   });
 }
 
+// ---- Juego en línea (lockstep entre dos iPhone con la misma app y el mismo juego) ----------
+- (NSNumber *)netHost:(double)port {
+  return @(host::netHost((int)port));
+}
+
+- (NSNumber *)netJoin:(NSString *)address port:(double)port {
+  return @(host::netJoin(address.UTF8String, (int)port));
+}
+
+- (void)netStop {
+  host::netStop();
+}
+
+- (NSString *)netStatus {
+  return [NSString stringWithUTF8String:host::netStatus().c_str()];
+}
+
+- (NSString *)localAddress {
+  return [NSString stringWithUTF8String:host::localAddress().c_str()];
+}
+
+- (NSDictionary *)gamepadInfo {
+  return [[GamepadBridge sharedBridge] currentStatus];
+}
+
 // Vibración háptica breve al pulsar un botón del pad (Taptic Engine)
 - (void)haptic:(double)strength {
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -769,6 +858,7 @@ RCT_EXPORT_MODULE(Libretro)
   romzip::Folders folders = romFolders(docs);
   organizeDocumentsRoot(docs, folders);
   relocatePspFromPs1(docs);
+  relocateFromArcade(docs);
 
   NSMutableArray<NSString *> *roms = [NSMutableArray array];
   NSMutableArray<NSString *> *arcade = [NSMutableArray array];

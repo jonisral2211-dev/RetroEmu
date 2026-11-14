@@ -32,6 +32,10 @@ pb() {
 pb UIFileSharingEnabled bool true
 pb LSSupportsOpeningDocumentsInPlace bool true
 
+# Juego en línea (netplay): iOS pide permiso de red local para conectar dos iPhone
+/usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'JL Emulator usa la red local para jugar en línea con otro iPhone (Netplay).'" "$PLIST"
+
 # Nombre visible en el iPhone
 for key in CFBundleDisplayName CFBundleName; do
   /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" >/dev/null 2>&1 || true

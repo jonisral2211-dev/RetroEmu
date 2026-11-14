@@ -1,4 +1,5 @@
 import RNFS from 'react-native-fs';
+import { arcadeTitle } from './arcadeNames';
 
 // Carátulas de https://thumbnails.libretro.com/<Sistema>/Named_Boxarts/<Nombre>.png
 // Los nombres oficiales llevan región e idiomas ("Diddy Kong Racing (USA) (En,Fr)"), y los de
@@ -132,7 +133,9 @@ function getIndex(console: string): Promise<Index | null> {
 async function candidates(console: string, romName: string): Promise<string[]> {
   const exact = thumbnailName(romName);
   const idx = await getIndex(console);
-  const found = idx?.get(titleKey(romName)) ?? [];
+  // Arcade: el nombre corto del romset (kof2002) se traduce a su título (The King of Fighters 2002)
+  const full = console === 'mame' || console === 'fbneo' ? arcadeTitle(romName) : null;
+  const found = [...(idx?.get(titleKey(romName)) ?? []), ...(full ? idx?.get(titleKey(full)) ?? [] : [])];
   const ordered = [...found].sort((a, b) => rank(a) - rank(b));
   // Sin índice (sin red la primera vez): nombre exacto y las regiones más comunes
   const clean = exact.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -172,7 +175,7 @@ async function tryDownload(console: string, official: string, file: string): Pro
 
 async function work(job: { key: string; console: string; name: string; rom: string }) {
   const file = fileOf(job.console, job.name);
-  const miss = `${file}.miss2`;
+  const miss = `${file}.miss3`;
   try {
     if (await RNFS.exists(file)) {
       emit(job.key, `file://${file}`);
