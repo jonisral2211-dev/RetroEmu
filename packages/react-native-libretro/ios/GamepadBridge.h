@@ -23,6 +23,19 @@ NS_ASSUME_NONNULL_BEGIN
 /** Intercambia Jugador 1 y Jugador 2 (LEDs y puertos). */
 - (void)swapPlayers;
 
+/** Mapeo físico -> botón libretro (16 entradas en orden UP, DOWN, LEFT, RIGHT, Cruz, Círculo,
+ *  Cuadrado, Triángulo, L1, R1, L2, R2, L3, R3, Options, Create; -1 = sin función). */
+- (void)setMapping:(NSArray<NSNumber *> *)mapping;
+
+/** Zona muerta de los sticks (0..0.6) y si el stick izquierdo también mueve la cruceta. */
+- (void)setDeadzone:(float)deadzoneValue stickToDpad:(BOOL)stickToDpad;
+
+/** {buttons (máscara física), lx, ly} del mando del jugador `port` (pantalla de prueba). */
+- (NSDictionary *)physicalState:(int)port;
+
+/** Busca mandos inalámbricos (startWirelessControllerDiscovery). */
+- (void)discover;
+
 @end
 
 NS_ASSUME_NONNULL_END

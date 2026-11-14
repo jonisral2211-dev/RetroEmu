@@ -141,6 +141,12 @@ export type GameMenuProps = {
   tvStretch: boolean;
   onTvStretch: (v: boolean) => void;
   onGuide: () => void;
+  /** Botón TV/AirPlay: sin pantalla externa abre las instrucciones de Duplicar pantalla. */
+  onAirPlay: () => void;
+  /** Modo control forzado a mano (Chromecast, capturadora…). */
+  forceController: boolean;
+  onForceController: (v: boolean) => void;
+  onControllerTest: () => void;
 };
 
 export function GameMenu(p: GameMenuProps) {
@@ -163,10 +169,6 @@ export function GameMenu(p: GameMenuProps) {
     Libretro.netJoin(ip, Number(port) || NET_PORT);
   };
 
-  const padText = p.pad.connected
-    ? `${p.pad.kind === 'PS5' ? 'DualSense (PS5)' : p.pad.kind === 'PS4' ? 'DualShock 4 (PS4)' : p.pad.kind || 'Mando'} conectado` +
-      `${p.pad.name ? ` · ${p.pad.name}` : ''}${p.pad.rumble ? ' · vibración activa' : ''}`
-    : 'Ningún mando conectado. Empareja tu DualSense, DualShock 4 o Xbox en Ajustes → Bluetooth y aparecerá aquí.';
 
   return (
     <View style={styles.overlay}>
@@ -338,7 +340,13 @@ export function GameMenu(p: GameMenuProps) {
                 'Duplicar pantalla' (Screen Mirroring) en el Centro de control.
               </Text>
             ) : null}
-            <Action label="Transmitir a TV / AirPlay" onPress={() => Libretro.showAirPlayPicker()} />
+            <Action label="Transmitir a TV / AirPlay" primary onPress={p.onAirPlay} />
+            {!p.tvConnected ? (
+              <Action
+                label={p.forceController ? 'Salir del modo control' : 'Activar modo control ahora'}
+                onPress={() => p.onForceController(!p.forceController)}
+              />
+            ) : null}
             <Segmented
               label="Imagen en la TV"
               value={p.tvStretch ? 'fill' : 'orig'}
@@ -354,18 +362,26 @@ export function GameMenu(p: GameMenuProps) {
             </Text>
           </Section>
 
-          <Section title="Mando externo">
-            <Text style={[styles.status, p.pad.connected && styles.statusOn]}>{padText}</Text>
+          <Section title="Mando / Palanca Bluetooth">
+            <Text style={[styles.status, p.pad.connected && styles.statusOn]}>
+              {p.pad.connected ? `Conectado: ${p.pad.name || p.pad.kind || 'mando'}` : 'Ningún mando detectado'}
+            </Text>
             {(p.pad.players ?? []).map((pl, i) => (
               <Text key={i} style={styles.playerRow}>
-                J{i + 1} · {pl.kind}
-                {pl.name ? ` · ${pl.name}` : ''}
+                J{i + 1} · {pl.name || pl.kind}
+                {pl.rumble ? ' · vibración' : ''}
               </Text>
             ))}
+            <View style={styles.grid}>
+              <Action label="Buscar mandos" onPress={() => Libretro.discoverControllers()} />
+              <Action label="Mapeo y prueba de botones" onPress={p.onControllerTest} />
+            </View>
             {(p.pad.count ?? 0) >= 2 ? <Action label="Intercambiar J1 / J2" onPress={() => Libretro.swapPlayers()} /> : null}
             <Text style={styles.note}>
-              Botones: Cruz/Círculo/Cuadrado/Triángulo, L1/R1, L2/R2 analógicos, L3/R3, ambos sticks, cruceta,
-              Create (Select) y Options (Start). Con el pad táctil en Auto se oculta al conectar el mando.
+              Enciende tu palanca o mando en modo emparejamiento y conéctalo en Ajustes &gt; Bluetooth del iPhone
+              (DualSense: PS + Create hasta que parpadee). Aparece aquí solo al conectarse y los controles táctiles
+              se ocultan (botón "Mostrar controles" para verlos). Funcionan DualSense, DualShock 4, Xbox, MFi y
+              palancas arcade compatibles con iPhone; con el stick izquierdo también te mueves en arcade, PS1 y GBA.
             </Text>
           </Section>
 

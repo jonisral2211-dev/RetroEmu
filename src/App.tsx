@@ -30,7 +30,13 @@ export default function App() {
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
         {game ? (
-          <PlayerScreen romPath={game.path} coreOverride={game.core} onExit={() => setGame(null)} />
+          <PlayerScreen
+            key={`${game.path}:${game.core ?? ''}`}
+            romPath={game.path}
+            coreOverride={game.core}
+            onExit={() => setGame(null)}
+            onRetryWithCore={(core) => setGame({ path: game.path, core })}
+          />
         ) : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>
           <View style={styles.root}>

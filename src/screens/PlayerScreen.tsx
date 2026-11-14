@@ -39,15 +39,24 @@ import {
   SCALE_MAX,
   SCALE_MIN,
 } from '../input/padPrefs';
+import { applyPadMapping, loadPadMapping } from '../input/padMapping';
 import { tvPadFor } from '../input/tvLayouts';
 import { getPadDebug, PointerRect, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
 import { theme } from '../theme';
 import { Slider } from '../ui/Slider';
 import { FilterMode, GameMenu, GearButton, NetState, parseNetStatus, TouchMode } from './GameMenu';
+import ControllerScreen from './ControllerScreen';
 import GuideScreen from './GuideScreen';
+import Svg, { Path, Rect } from 'react-native-svg';
 
-type Props = { romPath: string; coreOverride?: CoreId; onExit: () => void };
+type Props = {
+  romPath: string;
+  coreOverride?: CoreId;
+  onExit: () => void;
+  /** Volver a abrir el juego con otro núcleo (arcade: FBNeo <-> MAME). */
+  onRetryWithCore?: (core: CoreId) => void;
+};
 
 // Ranuras de guardado. Un mismo juego abierto con otro núcleo (FBNeo vs MAME, DeSmuME vs
 // melonDS) usa ranuras propias: sus estados no son compatibles entre núcleos.
@@ -103,7 +112,7 @@ function gameTitle(path: string): string {
   return base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || base;
 }
 
-export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
+export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore }: Props) {
   // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
   const baseCore = useMemo(
     () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath)),
@@ -217,6 +226,10 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
   const [airplayNoticeHidden, setAirplayNoticeHidden] = useState(false);
   const [tvStretch, setTvStretch] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  // Modo control vertical: con TV real o activado a mano (Chromecast, capturadora…)
+  const [forceController, setForceController] = useState(false);
+  const [airplayModal, setAirplayModal] = useState(false);
+  const [controllerTest, setControllerTest] = useState(false);
   useEffect(() => {
     const poll = () => {
       try {
@@ -239,6 +252,21 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     Libretro.setTVOptions(tvStretch, tvSmooth, ready);
   }, [tvStretch, tvSmooth, ready]);
   useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
+  const controllerMode = tvConnected || forceController;
+  // Mientras el iPhone es el mando, la interfaz queda bloqueada en vertical
+  useEffect(() => {
+    Libretro.setOrientationLock(controllerMode);
+  }, [controllerMode]);
+  useEffect(() => () => Libretro.setOrientationLock(false), []);
+  // Al conectarse una pantalla real ya no hace falta el modo forzado
+  useEffect(() => {
+    if (tvConnected) setAirplayModal(false);
+  }, [tvConnected]);
+  // Mapeo del mando físico; el stick izquierdo mueve también la cruceta salvo en núcleos analógicos
+  useEffect(() => {
+    if (!core) return;
+    loadPadMapping().then((m) => applyPadMapping(m, core !== 'mupen64' && core !== 'ppsspp'));
+  }, [core]);
   // Al desconectar el audio AirPlay se rearma el aviso para la próxima vez
   useEffect(() => {
     if (!airplayAudioOnly) setAirplayNoticeHidden(false);
@@ -350,6 +378,18 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     Libretro.setPaused(next || paused);
   };
 
+  const arcadeCore = baseCore === 'fbneo' || baseCore === 'mame';
+  if (error && arcadeCore) {
+    return (
+      <ArcadeErrorCard
+        romPath={romPath}
+        core={baseCore}
+        error={error}
+        onExit={onExit}
+        onRetry={onRetryWithCore ? () => onRetryWithCore(baseCore === 'fbneo' ? 'mame' : 'fbneo') : undefined}
+      />
+    );
+  }
   if (error || !ready || !core) {
     return (
       <View style={styles.center}>
@@ -570,7 +610,68 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       tvStretch={tvStretch}
       onTvStretch={setTvStretch}
       onGuide={() => setGuideOpen(true)}
+      onAirPlay={() => {
+        if (tvConnected) {
+          Libretro.showAirPlayPicker();
+        } else {
+          setAirplayModal(true);
+        }
+      }}
+      forceController={forceController}
+      onForceController={(v) => {
+        setForceController(v);
+        setMenuOpen(false);
+        Libretro.setPaused(paused || editing);
+      }}
+      onControllerTest={() => setControllerTest(true)}
     />
+  ) : null;
+  const controllerScreen = controllerTest ? (
+    <View style={styles.guideOverlay}>
+      <ControllerScreen
+        pad={pad}
+        stickToDpad={core !== 'mupen64' && core !== 'ppsspp'}
+        onClose={() => setControllerTest(false)}
+      />
+    </View>
+  ) : null;
+  const airplay = airplayModal ? (
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modal}>
+        <Text style={styles.modalKicker}>VÍDEO A LA TV</Text>
+        <View style={styles.modalArt}>
+          <Svg width={120} height={84} viewBox="0 0 120 84">
+            <Rect x="2" y="2" width="116" height="80" rx="18" fill="#1D2028" stroke="#D4AF37" strokeWidth="2" />
+            <Rect x="30" y="20" width="44" height="30" rx="4" fill="none" stroke="#ECEDEF" strokeWidth="3" />
+            <Rect x="46" y="34" width="44" height="30" rx="4" fill="#1D2028" stroke="#ECEDEF" strokeWidth="3" />
+            <Path d="M12 70h30" stroke="#7D828C" strokeWidth="3" strokeLinecap="round" />
+          </Svg>
+          <Text style={styles.modalArtLabel}>Duplicar pantalla</Text>
+        </View>
+        <Text style={styles.modalText}>
+          Para enviar el VIDEO a tu TV: abre el Centro de Control de iPhone (desliza desde la esquina superior
+          derecha), toca 'Duplicar pantalla' (ícono de dos pantallas) y selecciona tu TV. Al hacerlo, el video
+          pasará a la TV y tu iPhone se convertirá automáticamente en un control vertical.
+        </Text>
+        <Text style={styles.modalNote}>
+          El selector de AirPlay de las apps solo envía el audio; el vídeo necesita Duplicar pantalla o un
+          adaptador HDMI.
+        </Text>
+        <View style={styles.modalActions}>
+          <HudButton
+            label="Activar modo control ahora"
+            active
+            onPress={() => {
+              setAirplayModal(false);
+              setMenuOpen(false);
+              setForceController(true);
+              Libretro.setPaused(paused || editing);
+            }}
+          />
+          <HudButton label="Entendido" onPress={() => setAirplayModal(false)} />
+        </View>
+      </View>
+    </View>
   ) : null;
   const guide = guideOpen ? (
     <View style={styles.guideOverlay}>
@@ -582,6 +683,13 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       <GearButton onPress={openMenu} online={online} />
     </View>
   );
+
+  const showTouchChip =
+    pad.connected && touchMode === 'auto' && !editing ? (
+      <Pressable onPress={() => setTouchMode('show')} style={[styles.touchChip, landscape && styles.touchChipLandscape]}>
+        <Text style={styles.touchChipText}>🎮 {pad.name || 'Mando'} · Mostrar controles</Text>
+      </Pressable>
+    ) : null;
 
   const nds = isNdsCore(core);
   const padView = (style: object, pointerRect?: PointerRect) =>
@@ -602,8 +710,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
     ) : null;
 
   // ---- Modo TV: el iPhone es el mando (sin vídeo duplicado) ----------------------------------
-  if (tvConnected) {
-    const tv = tvPadFor(core);
+  if (controllerMode) {
+    const tv = tvPadFor(core, height > width);
     const trackpad = tv.trackpad
       ? { x: tv.trackpad.x * area.w, y: tv.trackpad.y * area.h, w: tv.trackpad.w * area.w, h: tv.trackpad.h * area.h }
       : undefined;
@@ -612,7 +720,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
       <View style={styles.root}>
         <View style={[styles.flex, styles.tvRoot]} onLayout={onArea}>
           <View style={[styles.tvGlow, { backgroundColor: tv.accent }]} pointerEvents="none" />
-          {pad.connected ? (
+          {pad.connected && touchMode !== 'show' ? (
             <View style={styles.consolePanel}>
               <Text style={styles.consoleKicker}>MODO CONSOLA ACTIVO</Text>
               <Text style={styles.consoleTitle}>{gameTitle(romPath)}</Text>
@@ -626,12 +734,13 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
                 <HudButton label="Guardar partida" onPress={() => flash(Libretro.saveState(slot) ? 'Partida guardada' : 'Error al guardar')} />
                 <HudButton label="Cargar partida" onPress={() => flash(Libretro.loadState(slot) ? 'Partida cargada' : 'No hay partida guardada')} />
                 {(pad.count ?? 0) >= 2 ? <HudButton label="Intercambiar J1/J2" onPress={() => Libretro.swapPlayers()} /> : null}
+                <HudButton label="Mostrar controles táctiles" onPress={() => setTouchMode('show')} />
               </View>
             </View>
           ) : (
             <>
               <Text style={styles.tvLabel}>
-                Mando · {tv.title} · el juego se ve en la TV
+                Mando · {tv.title} · {tvConnected ? 'el juego se ve en la TV' : 'modo control manual'}
               </Text>
               <VirtualPad
                 key={`tv:${tv.layout.name}`}
@@ -651,8 +760,14 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
         <View style={styles.tvGear}>
           <GearButton onPress={openMenu} online={online} />
         </View>
+        {forceController && !tvConnected ? (
+          <Pressable onPress={() => setForceController(false)} style={styles.exitControl}>
+            <Text style={styles.exitControlText}>Salir del modo control</Text>
+          </Pressable>
+        ) : null}
         {menu}
         {guide}
+        {controllerScreen}
       </View>
     );
   }
@@ -671,9 +786,12 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
           {notices}
         </View>
         {gear}
+        {showTouchChip}
         {editPanel}
         {menu}
         {guide}
+        {controllerScreen}
+        {airplay}
       </View>
     );
   }
@@ -699,10 +817,78 @@ export default function PlayerScreen({ romPath, coreOverride, onExit }: Props) {
         {notices}
       </View>
       {gear}
+      {showTouchChip}
       {editPanel}
       {menu}
       {guide}
+      {controllerScreen}
+      {airplay}
     </View>
+  );
+}
+
+// Diagnóstico amigable cuando FBNeo / MAME 2003-Plus no aceptan un romset
+function ArcadeErrorCard({
+  romPath,
+  core,
+  error,
+  onExit,
+  onRetry,
+}: {
+  romPath: string;
+  core: CoreId;
+  error: string;
+  onExit: () => void;
+  onRetry?: () => void;
+}) {
+  const [details, setDetails] = useState(false);
+  const name = romPath.split('/').pop() ?? romPath;
+  const coreName = core === 'fbneo' ? 'FinalBurn Neo' : 'MAME 2003-Plus';
+  const other = core === 'fbneo' ? 'MAME 2003-Plus' : 'FinalBurn Neo';
+  const e = error.toLowerCase();
+  const causes: string[] = [];
+  if (/neogeo|bios/.test(e)) {
+    causes.push('Falta la BIOS neogeo.zip o está dañada: cópiala sin descomprimir en arcade/ (o fbneo/), junto a tus juegos.');
+  }
+  if (/missing|not found|no se encuentr|crc|required|needed|incorrect|bad dump|wrong/.test(e) || /retro_load_game/.test(e)) {
+    causes.push(
+      `Romset incompleto o de otra versión: ${coreName} necesita el romset completo de su versión. Los ` +
+        'romsets Split/Merged no incluyen todos los archivos: descarga la versión Non-Merged completa de FBNeo.',
+    );
+  }
+  if (/driver|unknown|not supported|unsupported/.test(e)) {
+    causes.push(`${coreName} no reconoce este juego (no tiene driver para él).`);
+  }
+  if (/versión modificada|juego original/.test(e)) {
+    causes.push('Es una versión modificada (clon): necesita también el romset original en la misma carpeta.');
+  }
+  if (/pesa solo/.test(e)) causes.push('El archivo está incompleto (descarga cortada): vuelve a descargarlo.');
+  if (!causes.length) causes.push('El núcleo no aceptó el romset.');
+  causes.push(
+    `Prueba con el otro núcleo (${other}): mantén pulsado el juego en la biblioteca → Cambiar núcleo, o usa el botón de abajo.`,
+  );
+  return (
+    <ScrollView style={styles.root} contentContainerStyle={styles.diagBody}>
+      <View style={styles.diagCard}>
+        <Text style={styles.modalKicker}>DIAGNÓSTICO ARCADE</Text>
+        <Text style={styles.diagTitle}>No se pudo abrir {name}</Text>
+        <Text style={styles.diagCore}>Núcleo: {coreName}</Text>
+        {causes.map((c, i) => (
+          <View key={i} style={styles.diagRow}>
+            <Text style={styles.diagBullet}>{i + 1}</Text>
+            <Text style={styles.diagText}>{c}</Text>
+          </View>
+        ))}
+        <Pressable onPress={() => setDetails((v) => !v)}>
+          <Text style={styles.diagToggle}>{details ? 'Ocultar detalle técnico' : 'Ver detalle técnico'}</Text>
+        </Pressable>
+        {details ? <Text style={styles.diagRaw}>{error}</Text> : null}
+        <View style={styles.modalActions}>
+          {onRetry ? <HudButton label={`Probar con ${other}`} onPress={onRetry} active /> : null}
+          <HudButton label="Volver" onPress={onExit} />
+        </View>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -805,10 +991,85 @@ const styles = StyleSheet.create({
   panelChipLandscape: { top: 8 },
   gearSlot: { position: 'absolute', top: 8, right: 10 },
   guideOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.bg },
+  touchChip: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(13,14,18,0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.4)',
+  },
+  touchChipLandscape: { top: 12, left: 14 },
+  touchChipText: { color: theme.titaniumHi, fontSize: 11, fontWeight: '700' },
+  exitControl: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.amber,
+    backgroundColor: 'rgba(13,14,18,0.8)',
+  },
+  exitControlText: { color: theme.amber, fontSize: 12, fontWeight: '800' },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(5,6,8,0.8)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modal: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: 20,
+    padding: 20,
+    gap: 12,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
+  modalKicker: { color: theme.amber, fontSize: 12, fontWeight: '900', letterSpacing: 2 },
+  modalArt: { alignItems: 'center', gap: 6 },
+  modalArtLabel: { color: theme.titaniumHi, fontSize: 12, fontWeight: '700' },
+  modalText: { color: theme.text, fontSize: 15, lineHeight: 22 },
+  modalNote: { color: theme.textDim, fontSize: 12, lineHeight: 17 },
+  modalActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' },
   tvRoot: { backgroundColor: '#07080B', overflow: 'hidden' },
   tvGlow: { position: 'absolute', width: 520, height: 520, borderRadius: 260, opacity: 0.1, alignSelf: 'center', top: '20%' },
   tvLabel: { position: 'absolute', bottom: 6, alignSelf: 'center', color: theme.textDim, fontSize: 11, letterSpacing: 0.6 },
   tvGear: { position: 'absolute', top: 8, alignSelf: 'center' },
+  diagBody: { flexGrow: 1, justifyContent: 'center', padding: 20, backgroundColor: theme.bg },
+  diagCard: {
+    borderRadius: 18,
+    padding: 18,
+    gap: 10,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(229,103,91,0.6)',
+  },
+  diagTitle: { color: theme.text, fontSize: 18, fontWeight: '800' },
+  diagCore: { color: theme.textDim, fontSize: 12 },
+  diagRow: { flexDirection: 'row', gap: 10 },
+  diagBullet: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontSize: 12,
+    fontWeight: '900',
+    color: theme.bg,
+    backgroundColor: theme.amber,
+    overflow: 'hidden',
+  },
+  diagText: { flex: 1, color: theme.text, fontSize: 14, lineHeight: 20 },
+  diagToggle: { color: theme.amber, fontWeight: '700', fontSize: 13 },
+  diagRaw: { color: theme.textDim, fontSize: 11, lineHeight: 16, fontFamily: 'Menlo' },
   consolePanel: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
   consoleKicker: { color: theme.amber, fontSize: 13, fontWeight: '900', letterSpacing: 3 },
   consoleTitle: { color: theme.text, fontSize: 22, fontWeight: '800', textAlign: 'center' },

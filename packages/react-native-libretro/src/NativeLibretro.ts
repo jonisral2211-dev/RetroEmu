@@ -63,6 +63,19 @@ export interface Spec extends TurboModule {
   setTVOptions(stretch: boolean, smooth: boolean, playing: boolean): void;
   /** Abre el selector nativo de AirPlay. */
   showAirPlayPicker(): void;
+  /**
+   * Mapeo del mando físico: 16 entradas (UP, DOWN, LEFT, RIGHT, Cruz/A, Círculo/B, Cuadrado/X,
+   * Triángulo/Y, L1, R1, L2, R2, L3, R3, Options/Menú, Create/Vista) -> id de botón libretro (-1 = nada).
+   */
+  setPadMapping(mapping: ReadonlyArray<number>): void;
+  /** Zona muerta de los sticks del mando (0..0.6) y si el stick izquierdo mueve también la cruceta. */
+  setPadOptions(deadzone: number, stickToDpad: boolean): void;
+  /** Estado físico del mando del Jugador 1 (JSON {buttons, lx, ly}) para la pantalla de prueba. */
+  gamepadInput(): string;
+  /** Busca mandos inalámbricos (GCController.startWirelessControllerDiscovery). */
+  discoverControllers(): void;
+  /** Bloquea la interfaz del iPhone en vertical (modo control mientras se transmite a la TV). */
+  setOrientationLock(portrait: boolean): void;
   /** Intercambia Jugador 1 y Jugador 2 entre los dos mandos físicos. */
   swapPlayers(): void;
   /** Vibración háptica breve (0..1 = intensidad). */

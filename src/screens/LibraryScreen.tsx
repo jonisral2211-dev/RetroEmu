@@ -204,6 +204,70 @@ function chooseMoveTarget(entry: Entry, onMoved: () => void) {
   );
 }
 
+// ---- Validación arcade antes de abrir el núcleo -------------------------------------------
+const NEOGEO_PREFIXES = [
+  'kof', 'kf2k', 'mslug', 'samsho', 'samsh5', 'fatfury', 'fatfursp', 'aof', 'garou', 'lastblad', 'lastbld',
+  'rbff', 'svc', 'wjammers', 'blazstar', 'pulstar', 'sengoku', 'shocktro', 'twinspri', 'neobombe', 'matrim',
+  'rotd', 'kizuna', 'ninjamas', 'breakrev', 'magdrop', 'puzzledp', 'wh1', 'wh2', 'whp', 'nam1975',
+];
+
+function isNeoGeoRomset(base: string): boolean {
+  return NEOGEO_PREFIXES.some((p) => base.startsWith(p));
+}
+
+async function hasNeoGeoBios(): Promise<boolean> {
+  const docs = RNFS.DocumentDirectoryPath;
+  for (const dir of ['arcade', 'fbneo', 'system']) {
+    try {
+      const path = `${docs}/${dir}/neogeo.zip`;
+      if ((await RNFS.exists(path)) && Number((await RNFS.stat(path)).size) >= MIN_GAME_BYTES) return true;
+    } catch {
+      // sigue buscando
+    }
+  }
+  return false;
+}
+
+// Nombre tipo No-Intro / Redump ("Juego (USA) (En,Fr)") en lugar de un driver arcade corto ("kof2002")
+function looksLikeConsoleName(file: string): boolean {
+  const base = file.replace(/\.zip$/i, '');
+  return /\((japan|usa|europe|world|spain|en|es|fr|de|rev|disc|v\d)/i.test(base) || !/^[a-z0-9_]{1,20}$/i.test(base);
+}
+
+/** Avisos antes de lanzar FBNeo / MAME. Resuelve true si se puede abrir. */
+function validateArcade(entry: Entry, onRemoved: () => void): Promise<boolean> {
+  const file = entry.path.split('/').pop() ?? entry.path;
+  const base = file.replace(/\.zip$/i, '').toLowerCase();
+  return new Promise((resolve) => {
+    const checkBios = async () => {
+      if (isNeoGeoRomset(base) && !(await hasNeoGeoBios())) {
+        Alert.alert(
+          'Falta la BIOS de Neo-Geo',
+          'Falta el archivo BIOS obligatorio neogeo.zip en la carpeta arcade/. Colócalo junto a tus juegos sin descomprimir.',
+          [{ text: 'Entendido', onPress: () => resolve(false) }],
+        );
+        return;
+      }
+      resolve(true);
+    };
+    if (looksLikeConsoleName(file)) {
+      Alert.alert(
+        'Probablemente no es un juego arcade',
+        `"${file}" tiene nombre de juego de consola (con región o espacios), no de romset arcade (los de ` +
+          'FBNeo/MAME tienen nombres cortos como kof2002.zip). Probablemente pertenece a otra consola, como PSP o ' +
+          'PS1, y no a Arcade.',
+        [
+          { text: 'Mover a otra consola', onPress: () => { chooseMoveTarget(entry, onRemoved); resolve(false); } },
+          { text: 'Abrir igualmente', onPress: () => checkBios() },
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+        ],
+      );
+      return;
+    }
+    checkBios();
+  });
+}
+
 // Alerta descriptiva en vez de intentar cargar la ROM en blanco
 function explainUnavailable(entry: Entry) {
   const name = entry.path.split('/').pop() ?? entry.path;
@@ -650,6 +714,7 @@ const GameCard = memo(function GameCard({
       return;
     }
     if (isArcadeConsole(entry.console)) {
+      if (!(await validateArcade(entry, onRemoved))) return;
       const saved = (await getArcadeChoices())[entry.path];
       if (saved) onPlay(entry.path, saved);
       else chooseArcadeCore(entry, onPlay);

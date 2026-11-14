@@ -78,7 +78,8 @@ const CARDS: Card[] = [
       'El primer mando es el Jugador 1: se enciende 1 luz y la barra de luz se pone azul.',
       'Repite con el segundo mando: será el Jugador 2 (2 luces, barra roja). Ideal para jugar a dobles en la misma pantalla o en la TV.',
       'Para cambiar quién es J1 y J2: en partida toca el engranaje → Mando externo → Intercambiar J1 / J2.',
-      'Con un mando conectado el pad táctil se oculta solo (Configuración → Pad táctil → Mostrar si lo quieres ver). Los juegos que vibran hacen vibrar el mando.',
+      'Con un mando conectado el pad táctil se oculta solo; arriba aparece el botón "Mostrar controles" por si los quieres ver. Los juegos que vibran hacen vibrar el mando.',
+      'Palancas arcade Bluetooth: emparéjalas igual en Ajustes → Bluetooth. En el engranaje → Mando / Palanca Bluetooth puedes buscar mandos, ver cuál está conectado y abrir "Mapeo y prueba de botones" para comprobar cada botón y asignarle otra función (botones 1-6, COIN, START) y ajustar la zona muerta del stick.',
     ],
   },
   {
@@ -88,7 +89,9 @@ const CARDS: Card[] = [
     steps: [
       'Por cable (recomendado: sin retraso, 60 FPS): adaptador Lightning/USB-C a HDMI y cable a la TV.',
       'Inalámbrico (AirPlay): con el iPhone y el Apple TV o Smart TV compatible en la misma Wi-Fi, abre el Centro de Control → Duplicar pantalla y elige la TV. El botón "Transmitir a TV / AirPlay" del menú abre el selector de AirPlay.',
-      'Sin mandos conectados, el iPhone se convierte en un mando a pantalla completa con el diseño de la consola: PlayStation (cruceta, stick, △○✕□, L1/L2/R1/R2), N64 (stick central, C amarillos, Z), Sega (6 botones), Arcade (palanca y 6 botones) y GBA/NDS (en DS, el centro es un trackpad para el lápiz).',
+      'El botón "Transmitir a TV / AirPlay" del juego te muestra estos pasos: el selector de AirPlay de las apps solo envía el audio; para el vídeo hace falta Duplicar pantalla (o HDMI).',
+      'Al detectar la TV, el iPhone se bloquea en vertical y se convierte en un mando a pantalla completa con el diseño de la consola: PlayStation (cruceta y stick abajo a la izquierda, △○✕□ a la derecha, L1/L2/R1/R2 arriba), N64 (stick grande, C amarillos, Z), Arcade (palanca grande y 6 botones en arco con COIN y START), Sega (6 botones) y GBA/NDS (en DS, un trackpad para el lápiz). Al desconectar la TV vuelve todo a la normalidad.',
+      'Con Chromecast, capturadora u otros casos especiales: Configuración → TV → "Activar modo control ahora".',
       'Con 1 o 2 mandos físicos, el iPhone muestra el panel "Modo Consola Activo" con Configuración y Guardar/Cargar a mano.',
       'En Configuración → TV puedes elegir 4:3 Original o 16:9 Expandir para la imagen de la TV.',
     ],

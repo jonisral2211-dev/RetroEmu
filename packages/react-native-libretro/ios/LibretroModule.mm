@@ -9,6 +9,8 @@
 #import <ReactCommon/RCTTurboModule.h>
 #import <RNLibretroSpec/RNLibretroSpec.h>
 
+#import <objc/runtime.h>
+
 #include <memory>
 
 #include <cstring>
@@ -475,6 +477,51 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
   }
 }
 
+// ---- Bloqueo de orientación (modo control vertical mientras se transmite a la TV) ----------
+// La plantilla de React Native no implementa application:supportedInterfaceOrientationsForWindow:,
+// así que se añade en tiempo de ejecución a la clase del AppDelegate y devuelve esta máscara.
+static UIInterfaceOrientationMask g_orientationMask = UIInterfaceOrientationMaskAllButUpsideDown;
+
+static UIInterfaceOrientationMask jlSupportedOrientations(id, SEL, UIApplication *, UIWindow *) {
+  return g_orientationMask;
+}
+
+static void installOrientationHook(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class cls = [UIApplication.sharedApplication.delegate class];
+    SEL sel = @selector(application:supportedInterfaceOrientationsForWindow:);
+    if (!cls) return;
+    Method existing = class_getInstanceMethod(cls, sel);
+    if (existing) {
+      method_setImplementation(existing, (IMP)jlSupportedOrientations);
+    } else {
+      class_addMethod(cls, sel, (IMP)jlSupportedOrientations, "Q@:@@");
+    }
+  });
+}
+
+static void applyOrientationMask(UIInterfaceOrientationMask mask) {
+  installOrientationHook();
+  g_orientationMask = mask;
+  if (@available(iOS 16.0, *)) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+      if (![scene isKindOfClass:UIWindowScene.class]) continue;
+      UIWindowScene *ws = (UIWindowScene *)scene;
+      if (ws.screen != UIScreen.mainScreen) continue;  // la ventana de la TV no gira
+      for (UIWindow *w in ws.windows) [w.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+      UIWindowSceneGeometryPreferencesIOS *prefs =
+          [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+      [ws requestGeometryUpdateWithPreferences:prefs errorHandler:nil];
+    }
+  } else {
+    if (mask == UIInterfaceOrientationMaskPortrait) {
+      [UIDevice.currentDevice setValue:@(UIInterfaceOrientationPortrait) forKey:@"orientation"];
+    }
+    [UIViewController attemptRotationToDeviceOrientation];
+  }
+}
+
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
 @end
 
@@ -801,6 +848,30 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (void)showAirPlayPicker {
   [[TVOutput shared] showRoutePicker];
+}
+
+// ---- Mandos físicos: mapeo, zona muerta, prueba de botones y búsqueda -----------------------
+- (void)setPadMapping:(NSArray *)mapping {
+  [[GamepadBridge sharedBridge] setMapping:mapping];
+}
+
+- (void)setPadOptions:(double)deadzone stickToDpad:(BOOL)stickToDpad {
+  [[GamepadBridge sharedBridge] setDeadzone:(float)deadzone stickToDpad:stickToDpad];
+}
+
+- (NSString *)gamepadInput {
+  NSData *json = [NSJSONSerialization dataWithJSONObject:[[GamepadBridge sharedBridge] physicalState:0] options:0 error:nil];
+  return json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"{}";
+}
+
+- (void)discoverControllers {
+  [[GamepadBridge sharedBridge] discover];
+}
+
+- (void)setOrientationLock:(BOOL)portrait {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    applyOrientationMask(portrait ? UIInterfaceOrientationMaskPortrait : UIInterfaceOrientationMaskAllButUpsideDown);
+  });
 }
 
 - (void)swapPlayers {
