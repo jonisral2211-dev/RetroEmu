@@ -172,6 +172,135 @@ static NSString *cueReferencedBin(NSString *cuePath) {
   return [[cuePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:name];
 }
 
+// Todos los archivos que referencia un .cue (una línea FILE por pista), como rutas absolutas
+static NSArray<NSString *> *cueReferencedFiles(NSString *cuePath) {
+  NSString *text = [NSString stringWithContentsOfFile:cuePath encoding:NSUTF8StringEncoding error:nil];
+  if (!text) text = [NSString stringWithContentsOfFile:cuePath encoding:NSISOLatin1StringEncoding error:nil];
+  if (!text) return @[];
+  NSString *dir = [cuePath stringByDeletingLastPathComponent];
+  NSMutableArray<NSString *> *files = [NSMutableArray array];
+  for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+    NSString *t = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (![t hasPrefix:@"FILE "]) continue;
+    NSString *rest = [t substringFromIndex:5];
+    NSString *name = nil;
+    NSRange open = [rest rangeOfString:@"\""];
+    if (open.location != NSNotFound) {
+      NSString *after = [rest substringFromIndex:open.location + 1];
+      NSRange close = [after rangeOfString:@"\""];
+      if (close.location != NSNotFound) name = [after substringToIndex:close.location];
+    } else {
+      name = [rest componentsSeparatedByString:@" "].firstObject;
+    }
+    if (name.length) [files addObject:[dir stringByAppendingPathComponent:name]];
+  }
+  return files;
+}
+
+// Romsets arcade conocidos por nombre (Neo-Geo y clásicos): van directos a arcade/
+static BOOL isKnownArcadeSet(NSString *fileName) {
+  static NSArray<NSString *> *prefixes;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    // Solo prefijos inequívocos (nombres cortos de romset MAME); "mk", "tmnt", "sf2"… se
+    // excluyen porque chocarían con zips de consola ("mk64.zip"). El resto lo cubre la regla
+    // general: zip sin ROM de consola dentro -> arcade/.
+    prefixes = @[
+      @"neogeo", @"kof", @"mslug", @"bublbobl", @"garou", @"samsho", @"rbff", @"fatfury",
+      @"lastblad", @"blazstar", @"pulstar", @"ssideki", @"nam1975", @"sengoku", @"kizuna",
+      @"matrim", @"sfiii", @"mvsc", @"xmvsf", @"punisher", @"ddsom", @"ffight", @"mspacman",
+      @"dkong", @"nbajam", @"shocktro", @"twinspri", @"neobombe", @"puzzledp", @"tophuntr",
+    ];
+  });
+  NSString *base = fileName.stringByDeletingPathExtension.lowercaseString;
+  for (NSString *p in prefixes) {
+    if ([base hasPrefix:p]) return YES;
+  }
+  return NO;
+}
+
+// Mueve src a dest solo si dest no existe. Nunca borra ni sobrescribe: si ya hay una copia en la
+// carpeta de destino, el archivo de la raíz se queda y la biblioteca lo oculta como duplicado.
+static BOOL moveIfFree(NSString *src, NSString *dest) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  if ([fm fileExistsAtPath:dest]) return NO;
+  NSError *error = nil;
+  if (![fm moveItemAtPath:src toPath:dest error:&error]) {
+    NSLog(@"[RetroEmu] no se pudo mover %@ -> %@: %@", src.lastPathComponent, dest, error);
+    return NO;
+  }
+  NSLog(@"[RetroEmu] organizado: %@ -> %@", src.lastPathComponent,
+        [dest.stringByDeletingLastPathComponent lastPathComponent]);
+  return YES;
+}
+
+// Auto-organización de la raíz de Documents (al arrancar y al pulsar Actualizar):
+//  - .zip arcade (romset conocido o zip sin ROM de consola dentro) -> arcade/
+//  - .cue (+ todas sus pistas), .bin/.iso de PS1 y .chd -> ps1/
+//  - ROMs sueltas de otras consolas verificadas por cabecera -> su carpeta
+static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *arcade = [docs stringByAppendingPathComponent:@"arcade"];
+  NSString *ps1 = [docs stringByAppendingPathComponent:@"ps1"];
+  NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:docs error:nil];
+
+  // 1) .cue primero: arrastran sus pistas .bin a ps1/ (si la pista principal es de PS1)
+  NSMutableSet<NSString *> *handled = [NSMutableSet set];
+  for (NSString *name in names) {
+    if (![name.pathExtension.lowercaseString isEqualToString:@"cue"]) continue;
+    NSString *cue = [docs stringByAppendingPathComponent:name];
+    NSArray<NSString *> *tracks = cueReferencedFiles(cue);
+    if (tracks.count == 0) continue;
+    NSString *first = tracks.firstObject;
+    const BOOL firstIsPs1 = [fm fileExistsAtPath:first]
+                                ? sniffFile(first) == romcheck::Kind::PS1
+                                : [fm fileExistsAtPath:[ps1 stringByAppendingPathComponent:first.lastPathComponent]];
+    if (!firstIsPs1) continue;
+    [handled addObject:cue];
+    for (NSString *track in tracks) {
+      [handled addObject:track];
+      // Solo pistas que estén en la raíz (no se tocan subcarpetas del usuario)
+      if ([track.stringByDeletingLastPathComponent.stringByStandardizingPath
+              isEqualToString:docs.stringByStandardizingPath]) {
+        moveIfFree(track, [ps1 stringByAppendingPathComponent:track.lastPathComponent]);
+      }
+    }
+    moveIfFree(cue, [ps1 stringByAppendingPathComponent:name]);
+  }
+
+  // 2) Resto de archivos de la raíz
+  for (NSString *name in names) {
+    NSString *full = [docs stringByAppendingPathComponent:name];
+    if ([handled containsObject:full]) continue;
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
+    NSString *ext = name.pathExtension.lowercaseString;
+
+    if ([ext isEqualToString:@"zip"]) {
+      if (isNeoGeoBios(full) || isKnownArcadeSet(name)) {
+        moveIfFree(full, [arcade stringByAppendingPathComponent:name]);
+        continue;
+      }
+      // Zip con ROM de consola: se extrae a su carpeta (el zip se queda donde está)
+      if (!romzip::extractRom(full.UTF8String, folders).empty()) continue;
+      // Sin ROM de consola ni de consolas no soportadas: romset arcade
+      if (romzip::foreignEntry(full.UTF8String).empty()) {
+        moveIfFree(full, [arcade stringByAppendingPathComponent:name]);
+      }
+      continue;
+    }
+    if ([ext isEqualToString:@"chd"]) {
+      moveIfFree(full, [ps1 stringByAppendingPathComponent:name]);
+      continue;
+    }
+    if (!romcheck::isRomExtension(ext.UTF8String) || [ext isEqualToString:@"cue"]) continue;
+    NSString *console = consoleForKind(sniffFile(full));
+    if (console) {
+      moveIfFree(full, [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name]);
+    }
+  }
+}
+
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
 @end
 
@@ -278,6 +407,10 @@ RCT_EXPORT_MODULE(Libretro)
   return @(host::loadGame(path.UTF8String));
 }
 
+- (NSNumber *)videoAspect {
+  return @(host::aspectRatio());
+}
+
 - (NSString *)debugState {
   return [NSString stringWithUTF8String:host::debugState().c_str()];
 }
@@ -336,6 +469,7 @@ RCT_EXPORT_MODULE(Libretro)
   NSString *docs = documentsDirectory();
   createConsoleFolders(docs);  // por si no existían al arrancar
   romzip::Folders folders = romFolders(docs);
+  organizeDocumentsRoot(docs, folders);
 
   NSMutableArray<NSString *> *roms = [NSMutableArray array];
   NSMutableArray<NSString *> *arcade = [NSMutableArray array];
@@ -351,8 +485,8 @@ RCT_EXPORT_MODULE(Libretro)
   for (NSString *rel in en) {
     NSString *top = [rel componentsSeparatedByString:@"/"].firstObject;
     if ([top isEqualToString:@"system"] || [top isEqualToString:@"saves"] ||
-        [top isEqualToString:@"states"]) {
-      [en skipDescendants];  // BIOS, SRAM y save states no son ROMs
+        [top isEqualToString:@"states"] || [top isEqualToString:@"covers"]) {
+      [en skipDescendants];  // BIOS, SRAM, save states y carátulas no son ROMs
       continue;
     }
     NSString *ext = rel.pathExtension.lowercaseString;
@@ -386,8 +520,23 @@ RCT_EXPORT_MODULE(Libretro)
     }
   }
   [roms addObjectsFromArray:arcade];
-  // Un ROM extraído puede aparecer dos veces en la misma pasada: deduplicar
-  return [[NSOrderedSet orderedSetWithArray:roms] array];
+  // Duplicados visuales: el mismo juego (nombre de archivo) en la raíz y en una subcarpeta,
+  // o extraído dos veces. Se conserva la copia de la subcarpeta (la más profunda).
+  NSMutableDictionary<NSString *, NSString *> *byName = [NSMutableDictionary dictionary];
+  NSMutableArray<NSString *> *order = [NSMutableArray array];
+  for (NSString *path in roms) {
+    NSString *key = path.lastPathComponent.lowercaseString;
+    NSString *prev = byName[key];
+    if (!prev) {
+      byName[key] = path;
+      [order addObject:key];
+    } else if (path.pathComponents.count > prev.pathComponents.count) {
+      byName[key] = path;
+    }
+  }
+  NSMutableArray<NSString *> *unique = [NSMutableArray arrayWithCapacity:order.count];
+  for (NSString *key in order) [unique addObject:byName[key]];
+  return unique;
 }
 
 // Importa una descarga: zip -> extrae la ROM a su consola (o lo deja en arcade/ si no hay ROM);

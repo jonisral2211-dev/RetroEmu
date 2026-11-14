@@ -43,7 +43,7 @@ bool isPs1(const uint8_t *d, size_t n) {
 bool isRomExtension(const std::string &ext) {
   return ext == "gba" || ext == "agb" || ext == "bin" || ext == "z64" || ext == "n64" ||
          ext == "v64" || ext == "md" || ext == "gen" || ext == "smd" || ext == "iso" ||
-         ext == "cue";
+         ext == "cue" || ext == "chd";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
@@ -53,6 +53,8 @@ Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
   if ((ext == "md" || ext == "gen" || ext == "bin") && isMegaDrive(data, size)) return Kind::Sega;
   if (ext == "smd" && (isSmd(data, size) || isMegaDrive(data, size))) return Kind::Sega;
   if ((ext == "iso" || ext == "bin") && isPs1(data, size)) return Kind::PS1;
+  // CHD (MAME Compressed Hunks of Data): el único núcleo que los abre aquí es PCSX ReARMed
+  if (ext == "chd" && size >= 8 && std::memcmp(data, "MComprHD", 8) == 0) return Kind::PS1;
   return Kind::Unknown;
 }
 

@@ -5,7 +5,8 @@ import type { Zone } from './layouts';
 // sin acceso al hilo de JS. Los puntos llegan en px relativos al cluster.
 
 export type Pt = { x: number; y: number };
-export type Evaluation = { bits: number; ax: number; ay: number };
+// ax/ay = valor analógico enviado al core; kx/ky = posición visual del puck (también en toDpad)
+export type Evaluation = { bits: number; ax: number; ay: number; kx: number; ky: number };
 
 /** Dirección del D-Pad a partir del vector (dx, dy) normalizado, con y hacia abajo. */
 function dirBits(dx: number, dy: number, eightWay: boolean): number {
@@ -45,6 +46,8 @@ export function evaluateZones(zones: Zone[], pts: Pt[], W: number, H: number): E
   let bits = 0;
   let ax = 0;
   let ay = 0;
+  let kx = 0;
+  let ky = 0;
 
   for (let i = 0; i < pts.length; i++) {
     const px = pts[i].x;
@@ -75,11 +78,18 @@ export function evaluateZones(zones: Zone[], pts: Pt[], W: number, H: number): E
         const d = Math.sqrt(dx * dx + dy * dy);
         if (d <= 1.5) {
           const k = d > 1 ? 1 / d : 1; // clamp al radio: stick con radio delimitado
-          ax = dx * k;
-          ay = dy * k;
+          kx = dx * k;
+          ky = dy * k;
+          if (z.toDpad) {
+            // Stick sobre consola sin analógico: 8 direcciones con zona muerta del 30 %
+            if (d > 0.3) bits |= dirBits(dx * k, dy * k, true);
+          } else {
+            ax = dx * k;
+            ay = dy * k;
+          }
         }
       }
     }
   }
-  return { bits, ax, ay };
+  return { bits, ax, ay, kx, ky };
 }

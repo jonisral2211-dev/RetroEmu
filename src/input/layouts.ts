@@ -19,7 +19,8 @@ export type ButtonZone = {
   tint?: string;
 };
 export type DpadZone = { kind: 'dpad'; cx: number; cy: number; r: number; eightWay: boolean };
-export type StickZone = { kind: 'stick'; cx: number; cy: number; r: number };
+// toDpad: el stick emite direcciones de cruceta (consolas sin analógico: GBA, Sega, PS1, arcade)
+export type StickZone = { kind: 'stick'; cx: number; cy: number; r: number; toDpad?: boolean };
 export type Zone = ButtonZone | DpadZone | StickZone;
 
 export type Cluster = { id: string; x: number; y: number; w: number; h: number; zones: Zone[] };
@@ -219,6 +220,49 @@ export const PS1_LAYOUT: PadLayout = {
     },
   ],
 };
+
+export type DirMode = 'stick' | 'dpad' | 'both';
+
+/** Modo direccional por defecto: stick en N64 (analógico real), cruceta en el resto. */
+export function defaultDirMode(core: CoreId): DirMode {
+  return core === 'mupen64' ? 'stick' : 'dpad';
+}
+
+function overlapRatio(a: Cluster, b: Cluster): number {
+  const w = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const h = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return (w * h) / Math.min(a.w * a.h, b.w * b.h);
+}
+
+/**
+ * Aplica el modo direccional a cualquier consola:
+ *  - 'stick': solo stick (en consolas sin analógico se sintetiza sobre la cruceta y emite
+ *    direcciones de cruceta)
+ *  - 'dpad': solo cruceta
+ *  - 'both': ambos; si ocupan el mismo sitio se reparte el área (stick arriba, cruceta abajo)
+ */
+export function withDirMode(layout: PadLayout, mode: DirMode): PadLayout {
+  const dpad = layout.clusters.find((c) => c.id === 'dpad');
+  let stick = layout.clusters.find((c) => c.id === 'stick');
+  if (!dpad && !stick) return layout;
+  const others = layout.clusters.filter((c) => c.id !== 'dpad' && c.id !== 'stick');
+  if (!stick && dpad) {
+    stick = { ...dpad, id: 'stick', zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46, toDpad: true }] };
+  }
+  if (mode === 'stick' && stick) return { ...layout, clusters: [...others, stick] };
+  if (mode === 'dpad' && dpad) return { ...layout, clusters: [...others, dpad] };
+  if (!stick || !dpad) return layout;
+  if (overlapRatio(stick, dpad) < 0.5) return { ...layout, clusters: [...others, stick, dpad] };
+  const half = dpad.h / 2;
+  return {
+    ...layout,
+    clusters: [
+      ...others,
+      { ...stick, x: dpad.x, y: dpad.y, w: dpad.w, h: half },
+      { ...dpad, y: dpad.y + half, h: half },
+    ],
+  };
+}
 
 export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
   if (core === 'mupen64' && landscape) return N64_LANDSCAPE_LAYOUT;

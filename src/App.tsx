@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { theme } from './theme';
 import BrowserScreen from './screens/BrowserScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import PlayerScreen from './screens/PlayerScreen';
@@ -16,7 +17,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaView style={styles.root}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
+        <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
         {romPath ? <PlayerScreen romPath={romPath} onExit={() => setRomPath(null)} /> : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>
           <View style={styles.root}>
@@ -46,16 +47,16 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
+  root: { flex: 1, backgroundColor: theme.bg },
   pane: { flex: 1 },
   hidden: { display: 'none' },
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: '#333',
-    backgroundColor: '#0a0a0a',
+    borderColor: theme.border,
+    backgroundColor: theme.bg,
   },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  tabText: { color: '#888', fontWeight: '600' },
-  tabTextActive: { color: '#fff' },
+  tabText: { color: theme.textDim, fontWeight: '600', letterSpacing: 0.3 },
+  tabTextActive: { color: theme.amber },
 });

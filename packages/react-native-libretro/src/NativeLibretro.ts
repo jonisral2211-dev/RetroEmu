@@ -29,6 +29,8 @@ export interface Spec extends TurboModule {
   importRom(downloadedPath: string): string;
   /** Motivo del último fallo al cargar núcleo o ROM (texto para el usuario). */
   lastError(): string;
+  /** Relación de aspecto de pantalla que declara el core (ancho/alto); 0 si aún no se conoce. */
+  videoAspect(): number;
   /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */
   debugState(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */

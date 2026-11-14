@@ -37,6 +37,9 @@ std::string lastError();
 /** Texto de diagnóstico: estado de entrada de la UI y lo que pidió el core (se vacía al leer). */
 std::string debugState();
 
+/** Relación de aspecto de pantalla declarada por el core (0 = desconocida). */
+float aspectRatio();
+
 /** Último frame producido. Leer bajo frame.mutex. */
 FrameBuffer &frame();
 

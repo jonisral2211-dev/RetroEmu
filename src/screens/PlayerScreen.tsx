@@ -1,10 +1,26 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import { coreForConsole, isMisplacedZip, misplacedZipMessage } from '../emulator/cores';
-import { layoutFor } from '../input/layouts';
+import { defaultDirMode, DirMode, layoutFor, withDirMode } from '../input/layouts';
+import {
+  applyPadPrefs,
+  defaultPadPrefs,
+  DisplayPrefs,
+  loadDisplayPrefs,
+  loadPadPrefs,
+  OPACITY_MIN,
+  Orientation,
+  PadPrefs,
+  savePadPrefs,
+  saveDisplayPrefs,
+  SCALE_MAX,
+  SCALE_MIN,
+} from '../input/padPrefs';
 import { getPadDebug, VirtualPad } from '../input/VirtualPad';
 import { useGamepadStatus } from '../input/useGamepadStatus';
+import { theme } from '../theme';
+import { Slider } from '../ui/Slider';
 
 type Props = { romPath: string; onExit: () => void };
 
@@ -12,6 +28,12 @@ type Props = { romPath: string; onExit: () => void };
 const SAVE_SLOT = 0;
 // Ranura reservada para el auto-guardado al salir (no la usan los guardados manuales)
 const AUTO_SLOT = 99;
+// Vertical: alto mínimo del pad (los botones no deben quedar diminutos)
+const PAD_MIN_FRACTION = 0.36;
+const PAD_MIN_PX = 250;
+
+const DIR_LABEL: Record<DirMode, string> = { stick: 'Stick', dpad: 'D-Pad', both: 'Stick + D-Pad' };
+const NEXT_DIR: Record<DirMode, DirMode> = { stick: 'dpad', dpad: 'both', both: 'stick' };
 
 export default function PlayerScreen({ romPath, onExit }: Props) {
   // Consola por contenido verificado (nativo), no por extensión
@@ -21,17 +43,56 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [genesisSix, setGenesisSix] = useState(false);
-  // N64: un solo direccional a la izquierda (stick o cruceta)
-  const [dirMode, setDirMode] = useState<'stick' | 'dpad'>('stick');
+  const [editing, setEditing] = useState(false);
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
+  const orientation: Orientation = landscape ? 'landscape' : 'portrait';
+
+  // Preferencias del pad (por consola y orientación) y de imagen (por orientación)
+  const [padPrefs, setPadPrefs] = useState<PadPrefs>(() => defaultPadPrefs(orientation));
+  const [display, setDisplay] = useState<DisplayPrefs>({ stretch: false });
+  useEffect(() => {
+    let alive = true;
+    if (core) loadPadPrefs(core, orientation).then((p) => alive && setPadPrefs(p));
+    loadDisplayPrefs(orientation).then((d) => alive && setDisplay(d));
+    return () => {
+      alive = false;
+    };
+  }, [core, orientation]);
+  const updatePadPrefs = useCallback(
+    (fn: (p: PadPrefs) => PadPrefs) =>
+      setPadPrefs((prev) => {
+        const next = fn(prev);
+        if (core) savePadPrefs(core, orientation, next);
+        return next;
+      }),
+    [core, orientation],
+  );
+  const toggleStretch = () => {
+    const next = { stretch: !display.stretch };
+    setDisplay(next);
+    saveDisplayPrefs(orientation, next);
+  };
+
+  // Relación de aspecto que declara el core (puede cambiar en PS1 al cambiar de modo de vídeo)
+  const [aspect, setAspect] = useState(4 / 3);
+  useEffect(() => {
+    if (!ready) return;
+    const poll = () => {
+      const a = Libretro.videoAspect();
+      if (a > 0.2 && a < 5) setAspect((prev) => (Math.abs(prev - a) > 0.001 ? a : prev));
+    };
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
+  }, [ready]);
 
   // Con un DualSense conectado el pad táctil se oculta; el usuario puede forzarlo con el botón.
   // Al cambiar la conexión se descarta el override manual.
   const pad = useGamepadStatus();
   const [touchOverride, setTouchOverride] = useState<boolean | null>(null);
   useEffect(() => setTouchOverride(null), [pad.dualSense]);
-  const touchVisible = touchOverride ?? !pad.dualSense;
+  const touchVisible = editing || (touchOverride ?? !pad.dualSense);
 
   // Diagnóstico de entrada en pantalla (sin Mac no hay otra forma de ver los logs nativos)
   const [debugOn, setDebugOn] = useState(false);
@@ -73,6 +134,13 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     };
   }, [romPath, core]);
 
+  // Vertical: alto disponible bajo el HUD, para repartir imagen y pad sin huecos
+  const [area, setArea] = useState({ w: 0, h: 0 });
+  const onArea = (e: LayoutChangeEvent) => {
+    const { width: w, height: h } = e.nativeEvent.layout;
+    setArea((a) => (a.w === w && a.h === h ? a : { w, h }));
+  };
+
   const flash = (msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(null), 1500);
@@ -82,6 +150,13 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     const next = !paused;
     setPaused(next);
     Libretro.setPaused(next);
+  };
+
+  // Editar controles pausa el juego; al salir se restaura el estado de pausa anterior
+  const toggleEditing = () => {
+    const next = !editing;
+    setEditing(next);
+    Libretro.setPaused(next || paused);
   };
 
   if (error || !ready || !core) {
@@ -95,54 +170,42 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     );
   }
 
-  const layout = layoutFor(core, genesisSix, landscape);
-  // Solo se muestra un direccional: el stick o la cruceta, según el modo elegido
-  const padLayout =
-    core === 'mupen64'
-      ? {
-          ...layout,
-          clusters: layout.clusters.filter((c) => c.id !== (dirMode === 'stick' ? 'dpad' : 'stick')),
-        }
-      : layout;
+  const dirMode: DirMode = padPrefs.dirMode ?? defaultDirMode(core);
+  const padLayout = applyPadPrefs(withDirMode(layoutFor(core, genesisSix, landscape), dirMode), padPrefs);
+  const smooth3d = core === 'mupen64' || core === 'pcsx';
+
+  const moveCluster = (id: string, dx: number, dy: number) =>
+    updatePadPrefs((p) => {
+      const prev = p.offsets[id] ?? { dx: 0, dy: 0 };
+      return { ...p, offsets: { ...p.offsets, [id]: { dx: prev.dx + dx, dy: prev.dy + dy } } };
+    });
 
   const hud = (
     <View style={[styles.hud, landscape && styles.hudLandscape]}>
-      <Pressable onPress={onExit} style={styles.button}>
-        <Text style={styles.buttonText}>Salir</Text>
-      </Pressable>
-      <Pressable onPress={togglePause} style={styles.button}>
-        <Text style={styles.buttonText}>{paused ? 'Reanudar' : 'Pausa'}</Text>
-      </Pressable>
+      <HudButton label="Salir" onPress={onExit} />
+      <HudButton label={paused ? 'Reanudar' : 'Pausa'} onPress={togglePause} />
+      <HudButton label="Editar controles" onPress={toggleEditing} active={editing} />
+      <HudButton
+        label={DIR_LABEL[dirMode]}
+        onPress={() => updatePadPrefs((p) => ({ ...p, dirMode: NEXT_DIR[dirMode] }))}
+      />
+      <HudButton label={display.stretch ? 'Expandir pantalla' : `${aspectLabel(aspect)} Original`} onPress={toggleStretch} />
       {core === 'genesis' ? (
-        <Pressable onPress={() => setGenesisSix((v) => !v)} style={styles.button}>
-          <Text style={styles.buttonText}>{genesisSix ? '6 btn' : '3 btn'}</Text>
-        </Pressable>
+        <HudButton label={genesisSix ? '6 btn' : '3 btn'} onPress={() => setGenesisSix((v) => !v)} />
       ) : null}
-      <Pressable onPress={() => setTouchOverride(!touchVisible)} style={styles.button}>
-        <Text style={styles.buttonText}>{touchVisible ? 'Ocultar pad' : 'Mostrar pad'}</Text>
-      </Pressable>
-      <Pressable
+      <HudButton
+        label={touchVisible ? 'Ocultar pad' : 'Mostrar pad'}
+        onPress={() => setTouchOverride(!touchVisible)}
+      />
+      <HudButton
+        label="Guardar"
         onPress={() => flash(Libretro.saveState(SAVE_SLOT) ? 'Estado guardado' : 'Error al guardar')}
-        style={styles.button}>
-        <Text style={styles.buttonText}>Guardar</Text>
-      </Pressable>
-      <Pressable
-        onPress={() =>
-          flash(Libretro.loadState(SAVE_SLOT) ? 'Estado cargado' : 'Sin estado guardado')
-        }
-        style={styles.button}>
-        <Text style={styles.buttonText}>Cargar</Text>
-      </Pressable>
-      {core === 'mupen64' ? (
-        <Pressable
-          onPress={() => setDirMode((m) => (m === 'stick' ? 'dpad' : 'stick'))}
-          style={styles.button}>
-          <Text style={styles.buttonText}>{dirMode === 'stick' ? 'Stick' : 'D-Pad'}</Text>
-        </Pressable>
-      ) : null}
-      <Pressable onPress={() => setDebugOn((v) => !v)} style={styles.button}>
-        <Text style={styles.buttonText}>{debugOn ? 'Ocultar debug' : 'Debug'}</Text>
-      </Pressable>
+      />
+      <HudButton
+        label="Cargar"
+        onPress={() => flash(Libretro.loadState(SAVE_SLOT) ? 'Estado cargado' : 'Sin estado guardado')}
+      />
+      <HudButton label={debugOn ? 'Ocultar debug' : 'Debug'} onPress={() => setDebugOn((v) => !v)} />
     </View>
   );
 
@@ -156,52 +219,144 @@ export default function PlayerScreen({ romPath, onExit }: Props) {
     </>
   );
 
+  const editPanel = editing ? (
+    <View style={[styles.editPanel, landscape && styles.editPanelLandscape]}>
+      <Text style={styles.editTitle}>Editar controles · {landscape ? 'Horizontal' : 'Vertical'}</Text>
+      <Text style={styles.editHint}>Arrastra cada control a donde quieras. Se guarda solo.</Text>
+      <Slider
+        label="Transparencia"
+        value={padPrefs.opacity}
+        min={OPACITY_MIN}
+        max={1}
+        format={(v) => `${Math.round(v * 100)} %`}
+        onChange={(v) => updatePadPrefs((p) => ({ ...p, opacity: v }))}
+      />
+      <Slider
+        label="Tamaño"
+        value={padPrefs.scale}
+        min={SCALE_MIN}
+        max={SCALE_MAX}
+        format={(v) => `${Math.round(v * 100)} %`}
+        onChange={(v) => updatePadPrefs((p) => ({ ...p, scale: v }))}
+      />
+      <View style={styles.editActions}>
+        <HudButton
+          label="Restablecer"
+          onPress={() => updatePadPrefs((p) => ({ ...defaultPadPrefs(orientation), dirMode: p.dirMode }))}
+        />
+        <HudButton label="Listo" onPress={toggleEditing} active />
+      </View>
+    </View>
+  ) : null;
+
+  const padView = (style: object) =>
+    touchVisible ? (
+      <VirtualPad
+        key={`${padLayout.name}:${dirMode}`}
+        layout={padLayout}
+        style={style}
+        opacity={padPrefs.opacity}
+        editing={editing}
+        onMoveCluster={moveCluster}
+      />
+    ) : null;
+
   // Horizontal, o vertical con el pad oculto: la imagen ocupa toda la pantalla
   if (landscape || !touchVisible) {
-    // Horizontal: imagen centrada a altura completa (el nativo letterboxa) y controles
-    // translúcidos sobre los extremos de la pantalla
     return (
       <View style={styles.root}>
-        <LibretroView style={StyleSheet.absoluteFill} filter={core === 'mupen64'} />
+        <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
         {/* El pad va antes que el HUD: así los botones de arriba reciben sus propios toques */}
-        {touchVisible ? (
-          <VirtualPad
-            key={padLayout.name + dirMode}
-            layout={padLayout}
-            style={StyleSheet.absoluteFill}
-            opacity={0.45}
-          />
-        ) : null}
+        {padView(StyleSheet.absoluteFill)}
         <View style={styles.overlayTop} pointerEvents="box-none">
           {hud}
           {notices}
         </View>
+        {editPanel}
       </View>
     );
   }
 
-  // Vertical: imagen 4:3 arriba y controles completos abajo
+  // Vertical: la imagen ocupa todo el ancho y todo el alto posible hasta justo encima de los
+  // gatillos del pad; el pad se queda con el resto (sin franja negra entre ambos).
+  const padMin = Math.max(PAD_MIN_PX, area.h * PAD_MIN_FRACTION);
+  const maxGameH = Math.max(0, area.h - padMin);
+  const gameH = display.stretch ? maxGameH : Math.min(maxGameH, area.w / aspect);
   return (
     <View style={styles.root}>
       {hud}
       {notices}
-      <LibretroView style={styles.screenPortrait} filter={core === 'mupen64'} />
-      {touchVisible ? <VirtualPad key={padLayout.name + dirMode} layout={padLayout} style={styles.padPortrait} /> : null}
+      <View style={styles.flex} onLayout={onArea}>
+        {area.h > 0 ? (
+          <>
+            <LibretroView
+              style={{ width: '100%', height: gameH }}
+              filter={smooth3d}
+              stretch={display.stretch}
+            />
+            {padView(styles.flex)}
+          </>
+        ) : null}
+      </View>
+      {editPanel}
     </View>
+  );
+}
+
+// Nombre corto de la relación de aspecto del core para el botón
+function aspectLabel(a: number): string {
+  if (Math.abs(a - 4 / 3) < 0.04) return '4:3';
+  if (Math.abs(a - 3 / 2) < 0.04) return '3:2';
+  if (Math.abs(a - 10 / 9) < 0.04) return '10:9';
+  if (Math.abs(a - 16 / 9) < 0.04) return '16:9';
+  return 'Aspecto';
+}
+
+function HudButton({ label, onPress, active }: { label: string; onPress: () => void; active?: boolean }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.button, active && styles.buttonActive, pressed && styles.pressed]}>
+      <Text style={[styles.buttonText, active && styles.buttonTextActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
-  center: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  text: { color: '#fff', textAlign: 'center', marginBottom: 16 },
-  hud: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 8 },
-  hudLandscape: { backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8 },
+  flex: { flex: 1 },
+  center: { flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  text: { color: theme.text, textAlign: 'center', marginBottom: 16, lineHeight: 20 },
+  hud: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 8, backgroundColor: theme.bg },
+  hudLandscape: { backgroundColor: 'rgba(13,14,18,0.6)', borderRadius: 10, margin: 6 },
   overlayTop: { ...StyleSheet.absoluteFillObject, alignItems: 'flex-start' },
-  button: { backgroundColor: '#222', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-  buttonText: { color: '#fff', fontWeight: '600' },
-  notice: { color: '#8f8', textAlign: 'center', paddingBottom: 4 },
+  button: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.border,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  buttonActive: { backgroundColor: theme.amber, borderColor: theme.amber },
+  pressed: { opacity: 0.7 },
+  buttonText: { color: theme.titaniumHi, fontWeight: '600', fontSize: 13 },
+  buttonTextActive: { color: theme.bg },
+  notice: { color: theme.amber, textAlign: 'center', paddingBottom: 4 },
   debug: { color: '#ff0', fontSize: 11, paddingHorizontal: 8, paddingBottom: 4 },
-  screenPortrait: { width: '100%', aspectRatio: 4 / 3, backgroundColor: '#000' },
-  padPortrait: { flex: 1 },
+  editPanel: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 70,
+    padding: 16,
+    borderRadius: 14,
+    backgroundColor: 'rgba(21,23,29,0.96)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
+  editPanelLandscape: { left: '28%', right: '28%', top: '22%' },
+  editTitle: { color: theme.text, fontSize: 16, fontWeight: '700' },
+  editHint: { color: theme.textDim, fontSize: 12, marginTop: 2, marginBottom: 6 },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
 });

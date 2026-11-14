@@ -10,12 +10,15 @@ import {
 } from 'react-native';
 import { Libretro } from 'react-native-libretro';
 import { Btn } from '../emulator/buttons';
+import { theme } from '../theme';
 import { evaluateZones, Pt } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 
 type Size = { w: number; h: number };
-type Touch = { identifier: string | number; locationX: number; locationY: number };
+type Touch = { identifier: string | number; locationX: number; locationY: number; pageX: number; pageY: number };
 type Knob = { x: number; y: number }; // desplazamiento normalizado del stick [-1, 1]
+// Arrastre en modo edición: desplazamiento en px desde el inicio del toque
+type Drag = { id: string; touchId: string | number; x0: number; y0: number; dx: number; dy: number };
 
 // Diagnóstico del último cálculo (se muestra en el panel Debug de PlayerScreen)
 let padDebugText = '';
@@ -30,11 +33,19 @@ export function VirtualPad({
   layout,
   style,
   opacity = 1,
+  editing = false,
+  onMoveCluster,
 }: {
   layout: PadLayout;
   style?: StyleProp<ViewStyle>;
   opacity?: number;
+  /** Modo edición: los toques arrastran controles en vez de pulsarlos. */
+  editing?: boolean;
+  /** Fin de un arrastre: desplazamiento normalizado al tamaño del pad. */
+  onMoveCluster?: (id: string, dx: number, dy: number) => void;
 }) {
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
   const [active, setActive] = useState(0); // máscara pintada (feedback al pulsar)
   const [knob, setKnob] = useState<Knob>({ x: 0, y: 0 }); // posición del puck del stick
@@ -51,6 +62,8 @@ export function VirtualPad({
     let ax = 0;
     let ay = 0;
     let stickPts = 0;
+    let kx = 0;
+    let ky = 0;
     for (const c of layout.clusters) {
       const cx = c.x * W;
       const cy = c.y * H;
@@ -68,6 +81,8 @@ export function VirtualPad({
       if (c.zones.some((z: Zone) => z.kind === 'stick')) {
         ax = r.ax;
         ay = r.ay;
+        kx = r.kx;
+        ky = r.ky;
         stickPts = pts.length;
       }
     }
@@ -85,9 +100,58 @@ export function VirtualPad({
     if (ax !== axis.current.x || ay !== axis.current.y) {
       axis.current = { x: ax, y: ay };
       Libretro.setAnalog(ax, ay);
-      setKnob({ x: ax, y: ay });
     }
+    setKnob((k) => (k.x === kx && k.y === ky ? k : { x: kx, y: ky }));
   };
+
+  // ---- Modo edición: arrastrar clusters --------------------------------------
+  const clusterAt = (x: number, y: number): Cluster | undefined => {
+    const W = sizeRef.current.w;
+    const H = sizeRef.current.h;
+    // El último dibujado está encima
+    for (let i = layout.clusters.length - 1; i >= 0; i--) {
+      const c = layout.clusters[i];
+      if (x >= c.x * W && x <= (c.x + c.w) * W && y >= c.y * H && y <= (c.y + c.h) * H) return c;
+    }
+    return undefined;
+  };
+  const setDragBoth = (d: Drag | null) => {
+    dragRef.current = d;
+    setDrag(d);
+  };
+  const editStart = (e: GestureResponderEvent) => {
+    if (dragRef.current) return;
+    const t = (e.nativeEvent.changedTouches as Touch[])[0];
+    const c = t && clusterAt(t.locationX, t.locationY);
+    if (c) setDragBoth({ id: c.id, touchId: t.identifier, x0: t.pageX, y0: t.pageY, dx: 0, dy: 0 });
+  };
+  const editMove = (e: GestureResponderEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const t = (e.nativeEvent.touches as Touch[]).find((tt) => tt.identifier === d.touchId);
+    if (t) setDragBoth({ ...d, dx: t.pageX - d.x0, dy: t.pageY - d.y0 });
+  };
+  const editEnd = (e: GestureResponderEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const ended = (e.nativeEvent.changedTouches as Touch[]).some((tt) => tt.identifier === d.touchId);
+    if (!ended) return;
+    const W = sizeRef.current.w || 1;
+    const H = sizeRef.current.h || 1;
+    if (d.dx !== 0 || d.dy !== 0) onMoveCluster?.(d.id, d.dx / W, d.dy / H);
+    setDragBoth(null);
+  };
+
+  // Al entrar en edición se sueltan todos los botones
+  useEffect(() => {
+    if (!editing) return;
+    mask.current = 0;
+    axis.current = { x: 0, y: 0 };
+    Libretro.setButtons(0);
+    Libretro.setAnalog(0, 0);
+    setActive(0);
+    setKnob({ x: 0, y: 0 });
+  }, [editing]);
 
   // Al levantar dedos, excluir los que terminan en este evento
   const remaining = (e: GestureResponderEvent): Touch[] => {
@@ -113,13 +177,23 @@ export function VirtualPad({
   return (
     <View
       onLayout={onLayout}
-      onTouchStart={(e) => compute(e.nativeEvent.touches as Touch[])}
-      onTouchMove={(e) => compute(e.nativeEvent.touches as Touch[])}
-      onTouchEnd={(e) => compute(remaining(e))}
-      onTouchCancel={(e) => compute(remaining(e))}
-      style={[styles.pad, style, { opacity }]}>
+      onTouchStart={(e) => (editing ? editStart(e) : compute(e.nativeEvent.touches as Touch[]))}
+      onTouchMove={(e) => (editing ? editMove(e) : compute(e.nativeEvent.touches as Touch[]))}
+      onTouchEnd={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
+      onTouchCancel={(e) => (editing ? editEnd(e) : compute(remaining(e)))}
+      style={[styles.pad, style]}>
       {layout.clusters.map((c) => (
-        <ClusterView key={c.id} cluster={c} size={size} active={active} knob={knob} />
+        <ClusterView
+          key={c.id}
+          cluster={c}
+          size={size}
+          active={active}
+          knob={knob}
+          opacity={opacity}
+          editing={editing}
+          dragging={drag?.id === c.id}
+          offset={drag?.id === c.id ? { x: drag.dx, y: drag.dy } : undefined}
+        />
       ))}
     </View>
   );
@@ -130,11 +204,19 @@ function ClusterView({
   size,
   active,
   knob,
+  opacity,
+  editing,
+  dragging,
+  offset,
 }: {
   cluster: Cluster;
   size: Size;
   active: number;
   knob: Knob;
+  opacity: number;
+  editing: boolean;
+  dragging: boolean;
+  offset?: { x: number; y: number };
 }) {
   return (
     <View
@@ -146,7 +228,11 @@ function ClusterView({
           top: `${cluster.y * 100}%`,
           width: `${cluster.w * 100}%`,
           height: `${cluster.h * 100}%`,
+          opacity,
         },
+        offset ? { transform: [{ translateX: offset.x }, { translateY: offset.y }] } : null,
+        editing && styles.clusterEditing,
+        dragging && styles.clusterDragging,
       ]}>
       {cluster.zones.map((z, i) => (
         <ZoneView
@@ -277,6 +363,15 @@ function ZoneView({
 const styles = StyleSheet.create({
   pad: { position: 'relative', width: '100%' },
   cluster: { position: 'absolute' },
+  // Modo edición: contorno ámbar discontinuo para ver qué se puede arrastrar
+  clusterEditing: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.amber,
+    borderRadius: 10,
+    backgroundColor: 'rgba(212,175,55,0.06)',
+  },
+  clusterDragging: { borderStyle: 'solid', backgroundColor: 'rgba(212,175,55,0.18)' },
   // Botón translúcido con relieve: borde claro arriba, sombra abajo
   key: {
     position: 'absolute',

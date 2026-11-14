@@ -6,6 +6,7 @@
 #import <react/renderer/components/RNLibretroSpec/RCTComponentViewHelpers.h>
 
 #include <mutex>
+#include <simd/simd.h>
 
 #include "LibretroHost.hpp"
 
@@ -24,11 +25,72 @@ static NSString *const kShaderSource =
     @"  o.uv = float2(p.x, 1.0 - p.y);\n"
     @"  return o;\n"
     @"}\n"
+    // texSize = tamaño de la textura en texels; outSize = tamaño del viewport en píxeles.
+    // mode 0 (2D): "sharp bilinear". Nearest dentro de cada texel y mezcla lineal solo en la
+    //   franja de 1 píxel de pantalla entre texels: bordes nítidos sin dientes desiguales a
+    //   escala no entera en pantallas Retina.
+    // mode 1 (3D): bilineal + realce de nitidez suave (unsharp mask de 5 muestras).
+    @"struct Params { float2 texSize; float2 outSize; uint mode; float sharpen; };\n"
     @"fragment float4 libretro_fs(VOut v [[stage_in]],\n"
     @"                            texture2d<float> tex [[texture(0)]],\n"
-    @"                            sampler s [[sampler(0)]]) {\n"
-    @"  return tex.sample(s, v.uv);\n"
+    @"                            sampler s [[sampler(0)]],\n"
+    @"                            constant Params &P [[buffer(0)]]) {\n"
+    @"  if (P.mode == 0u) {\n"
+    @"    float2 texel = v.uv * P.texSize;\n"
+    @"    float2 scale = max(P.outSize / P.texSize, float2(1.0));\n"
+    @"    float2 base = floor(texel);\n"
+    @"    float2 d = fract(texel) - 0.5;\n"
+    @"    float2 range = 0.5 - 0.5 / scale;\n"
+    @"    float2 f = (d - clamp(d, -range, range)) * scale + 0.5;\n"
+    @"    return float4(tex.sample(s, (base + f) / P.texSize).rgb, 1.0);\n"
+    @"  }\n"
+    @"  float2 px = 1.0 / P.texSize;\n"
+    @"  float3 c = tex.sample(s, v.uv).rgb;\n"
+    @"  float3 blur = 0.25 * (tex.sample(s, v.uv + float2(px.x, 0.0)).rgb +\n"
+    @"                        tex.sample(s, v.uv - float2(px.x, 0.0)).rgb +\n"
+    @"                        tex.sample(s, v.uv + float2(0.0, px.y)).rgb +\n"
+    @"                        tex.sample(s, v.uv - float2(0.0, px.y)).rgb);\n"
+    @"  return float4(clamp(c + (c - blur) * P.sharpen, 0.0, 1.0), 1.0);\n"
     @"}\n";
+
+// Respaldo si el shader principal no compila en algún dispositivo: muestreo directo
+static NSString *const kFallbackShaderSource =
+    @"#include <metal_stdlib>
+"
+    @"using namespace metal;
+"
+    @"struct VOut { float4 position [[position]]; float2 uv; };
+"
+    @"vertex VOut libretro_vs(uint vid [[vertex_id]]) {
+"
+    @"  float2 p = float2((vid << 1) & 2, vid & 2);
+"
+    @"  VOut o;
+"
+    @"  o.position = float4(p * 2.0 - 1.0, 0.0, 1.0);
+"
+    @"  o.uv = float2(p.x, 1.0 - p.y);
+"
+    @"  return o;
+"
+    @"}
+"
+    @"fragment float4 libretro_fs(VOut v [[stage_in]], texture2d<float> tex [[texture(0)]],
+"
+    @"                            sampler s [[sampler(0)]]) {
+"
+    @"  return tex.sample(s, v.uv);
+"
+    @"}
+";
+
+// Debe coincidir con `struct Params` del shader
+struct ShaderParams {
+  simd_float2 texSize;
+  simd_float2 outSize;
+  uint32_t mode;
+  float sharpen;
+};
 
 static const NSUInteger kTextureRing = 3;
 
@@ -51,7 +113,8 @@ static const NSUInteger kTextureRing = 3;
   NSUInteger _ringIndex;
   id<MTLTexture> _texture;  // la última subida, la que se dibuja
   uint32_t _uploadedVersion;
-  BOOL _linearFilter;
+  BOOL _linearFilter;  // true = juego 3D (bilineal + realce); false = 2D (sharp bilinear)
+  BOOL _stretch;       // true = "Expandir": ocupa toda la vista
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider {
@@ -83,12 +146,17 @@ static const NSUInteger kTextureRing = 3;
 - (void)updateProps:(const Props::Shared &)props oldProps:(const Props::Shared &)oldProps {
   const auto &newProps = static_cast<const LibretroViewProps &>(*props);
   _linearFilter = newProps.filter ? YES : NO;
+  _stretch = newProps.stretch ? YES : NO;
   [super updateProps:props oldProps:oldProps];
 }
 
 - (void)buildPipeline {
   NSError *error = nil;
   id<MTLLibrary> library = [_device newLibraryWithSource:kShaderSource options:nil error:&error];
+  if (!library) {
+    NSLog(@"[LibretroView] error compilando shaders, uso el de respaldo: %@", error);
+    library = [_device newLibraryWithSource:kFallbackShaderSource options:nil error:&error];
+  }
   if (!library) {
     NSLog(@"[LibretroView] error compilando shaders: %@", error);
     return;
@@ -154,24 +222,38 @@ static const NSUInteger kTextureRing = 3;
   MTLRenderPassDescriptor *pass = view.currentRenderPassDescriptor;
   if (!drawable || !pass || !_texture || !_pipeline) return;
 
-  // Letterbox: escala uniforme que encaja en la vista, centrada. Origen y tamaño en píxeles
-  // enteros: un origen fraccionario desplaza la rejilla de muestreo y, con filtro nearest,
-  // produce una columna duplicada/desplazada en el borde izquierdo.
+  // Letterbox con la relación de aspecto que declara el core (PS1 usa píxeles no cuadrados:
+  // 368x480 se ve 4:3, no 368:480). "Expandir" ocupa toda la vista. Origen y tamaño en
+  // píxeles enteros: un origen fraccionario desplaza la rejilla de muestreo y produce una
+  // columna desplazada en el borde izquierdo.
   const CGSize drawSize = view.drawableSize;
   const double tw = _texture.width;
   const double th = _texture.height;
-  const double scale = MIN(drawSize.width / tw, drawSize.height / th);
-  const double vw = floor(tw * scale);
-  const double vh = floor(th * scale);
+  double aspect = host::aspectRatio();
+  if (!(aspect > 0.0)) aspect = tw / th;
+  double vw = drawSize.width, vh = drawSize.height;
+  if (!_stretch) {
+    if (drawSize.width / drawSize.height > aspect) {
+      vw = drawSize.height * aspect;
+    } else {
+      vh = drawSize.width / aspect;
+    }
+  }
+  vw = floor(vw);
+  vh = floor(vh);
   MTLViewport viewport = { floor((drawSize.width - vw) / 2.0), floor((drawSize.height - vh) / 2.0),
                            vw, vh, 0.0, 1.0 };
+  ShaderParams params = { simd_make_float2(float(tw), float(th)), simd_make_float2(float(vw), float(vh)),
+                          _linearFilter ? 1u : 0u, 0.35f };
 
   id<MTLCommandBuffer> cmd = [_commandQueue commandBuffer];
   id<MTLRenderCommandEncoder> enc = [cmd renderCommandEncoderWithDescriptor:pass];
   [enc setViewport:viewport];
   [enc setRenderPipelineState:_pipeline];
   [enc setFragmentTexture:_texture atIndex:0];
-  [enc setFragmentSamplerState:(_linearFilter ? _linearSampler : _nearestSampler) atIndex:0];
+  // Ambos modos parten de muestreo lineal: el shader decide cuánto mezclar
+  [enc setFragmentSamplerState:_linearSampler atIndex:0];
+  [enc setFragmentBytes:&params length:sizeof(params) atIndex:0];
   [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
   [enc endEncoding];
   [cmd presentDrawable:drawable];

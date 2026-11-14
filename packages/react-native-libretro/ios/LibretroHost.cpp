@@ -76,6 +76,9 @@ std::atomic<uint32_t> g_dbgFrameH{0};
 std::atomic<uint32_t> g_dbgFramePitch{0};
 std::atomic<uint32_t> g_dbgFrameBpp{4};
 bool g_isN64 = false;
+// Relación de aspecto de pantalla que declara el core (no la del buffer: PS1 usa píxeles no
+// cuadrados). 0 = desconocida (se usa ancho/alto del frame).
+std::atomic<float> g_aspect{0.0f};
 FrameBuffer g_frame;
 AudioOutput g_audio;
 
@@ -102,6 +105,41 @@ void coreLog(enum retro_log_level level, const char *fmt, ...) {
   if (level >= RETRO_LOG_WARN && g_coreLog.size() < 1024) {
     g_coreLog += buf;
   }
+}
+
+// Opciones de core forzadas por el frontend: máxima nitidez estable por software.
+// Claves y valores verificados en libretro_core_options.h de cada core (upstream master).
+const char *forcedOption(const char *key) {
+  struct Opt {
+    const char *key;
+    const char *value;
+  };
+  static const Opt kOptions[] = {
+      // PCSX ReARMed (GPU NEON): resolución interna x2, sin pasada extra de la imagen
+      // principal (más rápido) y sin tramado (imagen limpia)
+      {"pcsx_rearmed_neon_enhancement_enable", "enabled"},
+      {"pcsx_rearmed_neon_enhancement_no_main", "enabled"},
+      {"pcsx_rearmed_neon_enhancement_tex_adj_v2", "enabled"},
+      {"pcsx_rearmed_dithering", "disabled"},
+      // Genesis Plus GX: oculta la columna de 8 px que el VDP de Master System deja con basura
+      // en el borde izquierdo (franja vertical), sin filtros NTSC/LCD que emborronan
+      {"genesis_plus_gx_left_border", "left border"},
+      {"genesis_plus_gx_blargg_ntsc_filter", "disabled"},
+      {"genesis_plus_gx_lcd_filter", "disabled"},
+      // Mupen64Plus (angrylion, RDP por software): antialiasing sin tramado, todos los hilos
+      {"mupen64plus-angrylion-vioverlay", "AA+Dedither"},
+      {"mupen64plus-angrylion-multithread", "all threads"},
+  };
+  for (const Opt &o : kOptions) {
+    if (std::strcmp(key, o.key) == 0) return o.value;
+  }
+  return nullptr;
+}
+
+void updateAspect(const retro_game_geometry &g) {
+  float a = g.aspect_ratio;
+  if (!(a > 0.0f) && g.base_width && g.base_height) a = float(g.base_width) / float(g.base_height);
+  g_aspect.store(a > 0.0f ? a : 0.0f, std::memory_order_relaxed);
 }
 
 // ---- Callbacks de Libretro (la API es C: deben tener enlace C) -------------
@@ -140,8 +178,20 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
       return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+      if (data) updateAspect(*static_cast<const struct retro_game_geometry *>(data));
+      return true;
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+      if (data) updateAspect(static_cast<const struct retro_system_av_info *>(data)->geometry);
+      return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
       auto *var = static_cast<struct retro_variable *>(data);
+      if (var && var->key) {
+        if (const char *forced = forcedOption(var->key)) {
+          var->value = forced;
+          return true;
+        }
+      }
       // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
       if (var && var->key && std::strcmp(var->key, "pcsx_rearmed_bios") == 0 && !hasPs1Bios()) {
         var->value = "HLE";  // PCSX ReARMed: BIOS HLE si no hay BIOS real
@@ -323,6 +373,7 @@ void unloadGameLocked() {
   }
   g_romData.clear();
   g_romData.shrink_to_fit();
+  g_aspect.store(0.0f, std::memory_order_relaxed);
 }
 
 void runLoop() {
@@ -474,6 +525,7 @@ bool loadGame(const char *romPath) {
   g_core.getSystemAvInfo(&av);
   g_sampleRate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32768.0;
   g_fps = av.timing.fps > 0 ? av.timing.fps : 60.0;
+  updateAspect(av.geometry);
 
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
   g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
@@ -553,6 +605,8 @@ bool loadState(int slot) {
 }
 
 FrameBuffer &frame() { return g_frame; }
+
+float aspectRatio() { return g_aspect.load(std::memory_order_relaxed); }
 
 std::string lastError() { return g_lastError; }
 
