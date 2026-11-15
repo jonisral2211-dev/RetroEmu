@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Image, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
 import type { DirMode } from '../input/layouts';
@@ -49,6 +49,22 @@ export function GearButton({ onPress, online }: { onPress: () => void; online: b
   );
 }
 
+// ---- Navegación con mando (cruceta + botones) -----------------------------------------------------
+// Cada control del menú se registra en orden al pintarse; la cruceta mueve el foco, el botón inferior
+// (✕ / A de Xbox) lo activa, izquierda/derecha cambian los selectores y el botón derecho (○ / B)
+// o SELECT cierran el menú.
+type FocusItem = { press: () => void; step?: (dir: -1 | 1) => void; ref: React.RefObject<View> };
+const FocusCtx = createContext<{ reg: (item: FocusItem) => number; focused: number } | null>(null);
+
+function useFocusItem(item: Omit<FocusItem, 'ref'>): { ref: React.RefObject<View>; focused: boolean } {
+  const ctx = useContext(FocusCtx);
+  const ref = useRef<View>(null);
+  const index = ctx ? ctx.reg({ ...item, ref }) : -1;
+  return { ref, focused: !!ctx && ctx.focused === index };
+}
+
+const PAD = { B: 1, SELECT: 4, START: 8, UP: 16, DOWN: 32, LEFT: 64, RIGHT: 128, A: 256 };
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
@@ -71,8 +87,10 @@ function Action({
   danger?: boolean;
   disabled?: boolean;
 }) {
+  const { ref, focused } = useFocusItem({ press: () => !disabled && onPress() });
   return (
     <Pressable
+      ref={ref}
       onPress={onPress}
       disabled={disabled}
       style={({ pressed }) => [
@@ -81,6 +99,7 @@ function Action({
         danger && styles.actionDanger,
         disabled && styles.disabled,
         pressed && styles.pressed,
+        focused && styles.focused,
       ]}>
       <Text style={[styles.actionText, primary && styles.actionTextPrimary, danger && styles.actionTextDanger]}>
         {label}
@@ -100,8 +119,13 @@ function Segmented<T extends string>({
   value: T;
   onChange: (v: T) => void;
 }) {
+  const i = Math.max(0, options.findIndex((o) => o.id === value));
+  const { ref, focused } = useFocusItem({
+    press: () => onChange(options[(i + 1) % options.length].id),
+    step: (dir) => onChange(options[Math.min(options.length - 1, Math.max(0, i + dir))].id),
+  });
   return (
-    <View style={styles.row}>
+    <View ref={ref} style={[styles.row, focused && styles.focusedRow]}>
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.segment}>
         {options.map((o) => {
@@ -171,11 +195,77 @@ export type GameMenuProps = {
   extras?: { label: string; value: string; options: Option<string>[]; onChange: (v: string) => void; note?: string }[];
 };
 
+// QR del enlace del mando web: los invitados lo escanean con la cámara y entran directos
+function WebPadQR({ link }: { link: string }) {
+  const [uri, setUri] = useState('');
+  useEffect(() => {
+    const path = Libretro.qrCode(link);
+    setUri(path ? `file://${path}` : '');
+  }, [link]);
+  if (!uri) return null;
+  return (
+    <View style={styles.qrWrap}>
+      <Image source={{ uri }} style={styles.qr} resizeMode="contain" />
+      <Text style={styles.qrHint}>Escanéalo con la cámara del móvil para entrar como J2, J3 o J4</Text>
+    </View>
+  );
+}
+
 function webPadLink(host: string, code: string, type?: string): string {
   return `http://${host}:${WEBPAD_HTTP_PORT}/play?code=${code}${type ? `&type=${type}` : ''}`;
 }
 
 export function GameMenu(p: GameMenuProps) {
+  // Foco del mando: lista de controles registrada en cada pintado (en orden de aparición)
+  const items = useRef<FocusItem[]>([]);
+  items.current = [];
+  const [focused, setFocused] = useState(-1);
+  const scrollRef = useRef<ScrollView>(null);
+  const contentRef = useRef<View>(null);
+  const focusCtx = { reg: (item: FocusItem) => items.current.push(item) - 1, focused };
+  const propsRef = useRef(p);
+  propsRef.current = p;
+  useEffect(() => {
+    let last = 0;
+    const id = setInterval(() => {
+      let buttons = 0;
+      try {
+        buttons = Number(JSON.parse(Libretro.gamepadInput()).buttons) || 0;
+      } catch {
+        return;
+      }
+      const pressed = buttons & ~last;
+      last = buttons;
+      if (!pressed) return;
+      const count = items.current.length;
+      if (!count) return;
+      if (pressed & (PAD.A | PAD.SELECT)) {
+        propsRef.current.onResume();
+        return;
+      }
+      setFocused((f) => {
+        if (pressed & PAD.DOWN) return f < 0 ? 0 : Math.min(count - 1, f + 1);
+        if (pressed & PAD.UP) return f < 0 ? 0 : Math.max(0, f - 1);
+        const item = items.current[f];
+        if (item && pressed & (PAD.LEFT | PAD.RIGHT)) item.step?.(pressed & PAD.LEFT ? -1 : 1);
+        if (item && pressed & (PAD.B | PAD.START)) item.press();
+        return f;
+      });
+    }, 70);
+    return () => clearInterval(id);
+  }, []);
+  // El control enfocado se desplaza a la vista
+  useEffect(() => {
+    const target = items.current[focused]?.ref.current;
+    const content = contentRef.current;
+    if (!target || !content) return;
+    try {
+      target.measureLayout(content as never, (_x, y) => scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true }), () => {});
+    } catch {
+      // medición no disponible
+    }
+  }, [focused]);
+
   const [address, setAddress] = useState('');
   const [relayText, setRelayText] = useState('');
   useEffect(() => {
@@ -208,7 +298,12 @@ export function GameMenu(p: GameMenuProps) {
           </View>
           <Action label="Reanudar" onPress={p.onResume} primary />
         </View>
-        <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        <FocusCtx.Provider value={focusCtx}>
+        <ScrollView ref={scrollRef} contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+          <View ref={contentRef} collapsable={false}>
+          {p.pad.connected ? (
+            <Text style={styles.padHint}>🎮 Mando: cruceta para moverte · ✕ / A elegir · ○ / B volver al juego</Text>
+          ) : null}
           <Section title="Partida">
             <View style={styles.grid}>
               <Action label="Guardar partida" onPress={p.onSave} />
@@ -424,6 +519,7 @@ export function GameMenu(p: GameMenuProps) {
                     <Text style={styles.link} selectable>
                       {webPadLink(relay.host, p.webPad.code, p.webPadType)}
                     </Text>
+                    <WebPadQR link={webPadLink(relay.host, p.webPad.code, p.webPadType)} />
                     <View style={styles.grid}>
                       <Action label="Copiar enlace" onPress={() => Libretro.copyToClipboard(webPadLink(relay.host, p.webPad.code, p.webPadType))} />
                       <Action
@@ -523,13 +619,21 @@ export function GameMenu(p: GameMenuProps) {
           <Section title="Diagnóstico">
             <Action label={p.debugOn ? 'Ocultar consola debug' : 'Mostrar consola debug'} onPress={p.onDebug} />
           </Section>
+          </View>
         </ScrollView>
+        </FocusCtx.Provider>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  focused: { borderColor: '#D4AF37', borderWidth: 2, shadowColor: '#D4AF37', shadowOpacity: 0.7, shadowRadius: 8 },
+  focusedRow: { borderRadius: 10, borderWidth: 2, borderColor: '#D4AF37' },
+  padHint: { color: '#D4AF37', fontSize: 12, fontWeight: '700', marginBottom: 8 },
+  qrWrap: { alignItems: 'center', marginVertical: 10, gap: 6 },
+  qr: { width: 190, height: 190, backgroundColor: '#fff', borderRadius: 10 },
+  qrHint: { color: '#9aa0a8', fontSize: 12, textAlign: 'center' },
   gear: {
     width: 38,
     height: 38,

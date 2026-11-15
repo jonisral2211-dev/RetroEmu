@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
   s.source_files        = 'ios/**/*.{h,hpp,m,mm,c,cpp}'
   s.private_header_files = 'ios/lzma/*.h'
   s.vendored_frameworks = 'ios/Frameworks/*.framework'
-  s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController', 'CoreHaptics', 'AVKit', 'PhotosUI', 'OpenGLES'
+  s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController', 'CoreHaptics', 'AVKit', 'PhotosUI', 'OpenGLES', 'CoreImage', 'UniformTypeIdentifiers'
   s.libraries           = 'c++', 'z'
   s.requires_arc        = true
 

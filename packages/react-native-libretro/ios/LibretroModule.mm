@@ -5,6 +5,8 @@
 #import <React/RCTEventEmitter.h>
 
 #import "GameRenderView.h"
+#import "JLTools.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "GamepadBridge.h"
 #import "TVOutput.h"
 #import <ReactCommon/RCTTurboModule.h>
@@ -66,6 +68,24 @@ static JLImagePicker *g_imagePicker;  // vivo mientras el selector está abierto
               }
               finish(ok);
             }];
+}
+@end
+
+// Selector de archivos (restaurar respaldo .zip)
+@interface JLFilePicker : NSObject <UIDocumentPickerDelegate>
+@property(nonatomic, copy) void (^done)(NSURL *_Nullable url);
+@end
+static JLFilePicker *g_filePicker;
+@implementation JLFilePicker
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+  void (^cb)(NSURL *) = self.done;
+  g_filePicker = nil;
+  cb(urls.firstObject);
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+  void (^cb)(NSURL *) = self.done;
+  g_filePicker = nil;
+  cb(nil);
 }
 @end
 
@@ -1358,6 +1378,114 @@ RCT_EXPORT_MODULE(Libretro)
       resolve(@(ok));
     };
     g_imagePicker = handler;
+    picker.delegate = handler;
+    [top presentViewController:picker animated:YES completion:nil];
+  });
+}
+
+// ---- Subir por Wi-Fi, QR, respaldo y BIOS ------------------------------------------------------
+// BIOS conocidas que llegan por Wi-Fi: van directas a system/ (Dreamcast a system/dc/)
+static NSString *biosDestination(NSString *docs, NSString *name) {
+  NSString *lower = name.lowercaseString;
+  if ([@[ @"dc_boot.bin", @"dc_flash.bin" ] containsObject:lower]) return [docs stringByAppendingPathComponent:@"system/dc"];
+  if ([lower hasPrefix:@"scph"] || [lower hasPrefix:@"bios_cd_"] ||
+      [@[ @"bios7.bin", @"bios9.bin", @"firmware.bin", @"saturn_bios.bin", @"gba_bios.bin" ] containsObject:lower]) {
+    return [docs stringByAppendingPathComponent:@"system"];
+  }
+  return nil;
+}
+
+- (NSString *)wifiStart {
+  __weak Libretro *weakSelf = self;
+  const BOOL ok = [JLTools startUploadServerOnPort:8888
+                                            onFile:^(NSString *path) {
+                                              dispatch_async(dispatch_get_main_queue(), ^{
+                                                NSString *docs = documentsDirectory();
+                                                NSString *bios = biosDestination(docs, path.lastPathComponent);
+                                                if (bios) {
+                                                  [NSFileManager.defaultManager createDirectoryAtPath:bios withIntermediateDirectories:YES attributes:nil error:nil];
+                                                  moveIfFree(path, [bios stringByAppendingPathComponent:path.lastPathComponent]);
+                                                  return;
+                                                }
+                                                // Como una descarga: zip/7z grandes a la cola, ROMs a su consola; lo
+                                                // demás (ports, .wad…) lo reparte el organizador al refrescar
+                                                [weakSelf importRom:path];
+                                              });
+                                            }];
+  if (!ok) return @"";
+  return [NSString stringWithFormat:@"http://%s:8888", host::localAddress().c_str()];
+}
+
+- (void)wifiStop {
+  [JLTools stopUploadServer];
+}
+
+- (NSString *)wifiStatus {
+  return [JLTools uploadStatus];
+}
+
+// PNG del código QR de `text` (carpeta temporal); '' si falla
+- (NSString *)qrCode:(NSString *)text {
+  NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                                               [NSString stringWithFormat:@"qr-%lu.png", (unsigned long)text.hash]];
+  return [JLTools writeQRCode:text toPath:path] ? path : @"";
+}
+
+- (NSString *)biosStatus {
+  return [JLTools biosStatus:documentsDirectory()];
+}
+
+// Crea el .zip de respaldo y abre el menú Compartir (Guardar en Archivos → iCloud Drive, AirDrop…)
+- (void)exportBackup:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *error = nil;
+    NSString *zip = [JLTools exportBackup:documentsDirectory() error:&error];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!zip) {
+        reject(@"backup", error ?: @"No se pudo crear el respaldo", nil);
+        return;
+      }
+      UIViewController *top = topViewController();
+      if (top) {
+        UIActivityViewController *share =
+            [[UIActivityViewController alloc] initWithActivityItems:@[ [NSURL fileURLWithPath:zip] ] applicationActivities:nil];
+        share.popoverPresentationController.sourceView = top.view;
+        share.popoverPresentationController.sourceRect =
+            CGRectMake(CGRectGetMidX(top.view.bounds), CGRectGetMidY(top.view.bounds), 1, 1);
+        [top presentViewController:share animated:YES completion:nil];
+      }
+      resolve(zip);
+    });
+  });
+}
+
+// Elige un .zip de respaldo (Archivos / iCloud Drive) y restaura saves/ y states/
+- (void)restoreBackup:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = topViewController();
+    if (!top || g_filePicker) {
+      resolve(@(-1));
+      return;
+    }
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeZIP ] asCopy:YES];
+    JLFilePicker *handler = [JLFilePicker new];
+    handler.done = ^(NSURL *url) {
+      if (!url) {
+        resolve(@(-1));
+        return;
+      }
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *error = nil;
+        const NSInteger n = [JLTools restoreBackup:url.path docs:documentsDirectory() error:&error];
+        if (n <= 0) {
+          reject(@"restore", error ?: @"No se pudo restaurar", nil);
+        } else {
+          resolve(@(n));
+        }
+      });
+    };
+    g_filePicker = handler;
     picker.delegate = handler;
     [top presentViewController:picker animated:YES completion:nil];
   });

@@ -41,6 +41,7 @@ import { ART_GLOW, ArtKind, ConsoleArt } from '../ui/ConsoleArt';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
 import { JLBadge } from '../ui/JLBadge';
 import OrganizerScreen from './OrganizerScreen';
+import { SettingsScreen, WifiUploadScreen } from './ToolsScreen';
 import { ContinueRow, DynamicBackdrop } from './ContinueRow';
 import { subscribePlaytime } from '../library/playtime';
 
@@ -331,6 +332,8 @@ export default function LibraryScreen({ onPlay }: Props) {
   const [view, setView] = useState<Console | null>(null);
   const [query, setQuery] = useState('');
   const [organizerOpen, setOrganizerOpen] = useState(false);
+  const [wifiOpen, setWifiOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
   const [unpacking, setUnpacking] = useState<string[] | null>(null);
@@ -476,6 +479,22 @@ export default function LibraryScreen({ onPlay }: Props) {
             />
           </Svg>
         </Pressable>
+        <Pressable
+          onPress={() => setSettingsOpen(true)}
+          hitSlop={8}
+          accessibilityLabel="Ajustes"
+          style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}>
+          <Svg width={18} height={18} viewBox="0 0 24 24">
+            <Path
+              d="M10.3 2.6h3.4l.5 2.6a7.5 7.5 0 0 1 1.9 1.1l2.5-.9 1.7 2.9-2 1.7a7.6 7.6 0 0 1 0 2.2l2 1.7-1.7 2.9-2.5-.9a7.5 7.5 0 0 1-1.9 1.1l-.5 2.6h-3.4l-.5-2.6a7.5 7.5 0 0 1-1.9-1.1l-2.5.9-1.7-2.9 2-1.7a7.6 7.6 0 0 1 0-2.2l-2-1.7 1.7-2.9 2.5.9a7.5 7.5 0 0 1 1.9-1.1z"
+              stroke={theme.amber}
+              strokeWidth={1.6}
+              fill="none"
+              strokeLinejoin="round"
+            />
+            <Circle cx="12" cy="12" r="3" stroke={theme.amber} strokeWidth={1.6} fill="none" />
+          </Svg>
+        </Pressable>
         </View>
       </View>
 
@@ -497,6 +516,14 @@ export default function LibraryScreen({ onPlay }: Props) {
         </Svg>
         <Text style={styles.organizeText}>Organizar archivos</Text>
         <Text style={styles.organizeHint}>mueve cada juego a su consola</Text>
+      </Pressable>
+      <Pressable onPress={() => setWifiOpen(true)} style={({ pressed }) => [styles.organize, pressed && styles.pressed]}>
+        <Svg width={18} height={18} viewBox="0 0 24 24">
+          <Path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0" stroke={theme.amber} strokeWidth={1.8} fill="none" strokeLinecap="round" />
+          <Circle cx="12" cy="19.2" r="1.4" fill={theme.amber} />
+        </Svg>
+        <Text style={styles.organizeText}>Subir por Wi-Fi</Text>
+        <Text style={styles.organizeHint}>arrastra juegos desde el PC o Mac</Text>
       </Pressable>
 
       <SectionTitle title="Consolas" />
@@ -550,6 +577,22 @@ export default function LibraryScreen({ onPlay }: Props) {
         {organizerOpen ? (
           <View style={StyleSheet.absoluteFill}>
             <OrganizerScreen onClose={() => setOrganizerOpen(false)} onDone={() => refresh(true)} />
+          </View>
+        ) : null}
+        {wifiOpen ? (
+          <View style={StyleSheet.absoluteFill}>
+            <WifiUploadScreen onClose={() => setWifiOpen(false)} onReceived={() => refresh()} />
+          </View>
+        ) : null}
+        {settingsOpen ? (
+          <View style={StyleSheet.absoluteFill}>
+            <SettingsScreen
+              onClose={() => setSettingsOpen(false)}
+              onWifi={() => {
+                setSettingsOpen(false);
+                setWifiOpen(true);
+              }}
+            />
           </View>
         ) : null}
       </View>

@@ -80,6 +80,19 @@ export interface Spec extends TurboModule {
   /** Copia texto al portapapeles del iPhone. */
   /** Abre Fotos y guarda la imagen elegida como PNG en destPath (dentro de Documents). */
   pickImage(destPath: string): Promise<boolean>;
+  /** Subir por Wi-Fi: arranca el servidor (puerto 8888) y devuelve la URL ('' si falla). */
+  wifiStart(): string;
+  wifiStop(): void;
+  /** JSON {running, port, files, bytes, current, progress, last, error}. */
+  wifiStatus(): string;
+  /** Ruta de un PNG con el código QR del texto ('' si falla). */
+  qrCode(text: string): string;
+  /** JSON [{console, file, found, md5ok, required, note}] de las BIOS conocidas. */
+  biosStatus(): string;
+  /** Crea el respaldo .zip de partidas y abre Compartir; resuelve la ruta. */
+  exportBackup(): Promise<string>;
+  /** Elige un .zip de respaldo y lo restaura; resuelve el número de archivos (-1 = cancelado). */
+  restoreBackup(): Promise<number>;
   copyToClipboard(text: string): void;
   netStop(): void;
   /** "fase|mensaje|código|ping_ms"; fase: idle, waiting, connecting, syncing, playing. */
