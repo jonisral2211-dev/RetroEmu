@@ -24,6 +24,10 @@ const SYSTEM_DIR: Record<string, string> = {
   psp: 'Sony - PlayStation Portable',
   nds: 'Nintendo - Nintendo DS',
   saturn: 'Sega - Saturn',
+  snes: 'Nintendo - Super Nintendo Entertainment System',
+  nes: 'Nintendo - Nintendo Entertainment System',
+  gb: 'Nintendo - Game Boy',
+  gbc: 'Nintendo - Game Boy Color',
 };
 
 /** Nombre de archivo según la convención de libretro-thumbnails: &*\/:`<>?\|" -> _ */
@@ -154,6 +158,8 @@ let running = 0;
 
 const keyOf = (console: string, name: string) => `${console}/${name}`;
 const fileOf = (console: string, name: string) => `${COVERS_DIR}/${console}/${name}.png`;
+// Miniatura elegida por el usuario desde Fotos: tiene prioridad sobre la descargada
+const customOf = (console: string, name: string) => `${COVERS_DIR}/${console}/${name}.custom.png`;
 
 function emit(key: string, uri: string | null) {
   resolved.set(key, uri);
@@ -176,7 +182,13 @@ async function tryDownload(console: string, official: string, file: string): Pro
 async function work(job: { key: string; console: string; name: string; rom: string }) {
   const file = fileOf(job.console, job.name);
   const miss = `${file}.miss3`;
+  const custom = customOf(job.console, job.name);
   try {
+    if (await RNFS.exists(custom)) {
+      const st = await RNFS.stat(custom);
+      emit(job.key, `file://${custom}?v=${new Date(st.mtime).getTime()}`);
+      return;
+    }
     if (await RNFS.exists(file)) {
       emit(job.key, `file://${file}`);
       return;
@@ -246,4 +258,51 @@ export function subscribeCover(romPath: string, console: string, cb: Listener): 
 /** Olvida la carátula en memoria (p. ej. al borrar el juego). */
 export function forgetCover(romPath: string, console: string): void {
   resolved.delete(keyOf(console, thumbnailName(romPath)));
+}
+
+/** Ruta donde se guarda la miniatura personalizada de una ROM (Documents/covers/<consola>/). */
+export function customCoverPath(romPath: string, console: string): string {
+  return customOf(console, thumbnailName(romPath));
+}
+
+function requeue(romPath: string, console: string) {
+  const rom = romPath.split('/').pop() ?? romPath;
+  const name = thumbnailName(romPath);
+  const key = keyOf(console, name);
+  resolved.delete(key);
+  if (!queued.has(key) && listeners.get(key)?.size) {
+    queued.add(key);
+    queue.push({ key, console, name, rom });
+    pump();
+  }
+}
+
+/** Tras guardar una miniatura desde Fotos: se muestra al momento en todas las tarjetas. */
+export function customCoverChanged(romPath: string, console: string): void {
+  requeue(romPath, console);
+}
+
+/**
+ * Recargar carátula: borra la personalizada, la descargada y la marca "sin carátula", y la
+ * vuelve a buscar en thumbnails.libretro.com (el índice del sistema también se renueva).
+ */
+export async function reloadCover(romPath: string, console: string): Promise<void> {
+  const name = thumbnailName(romPath);
+  for (const f of [customOf(console, name), fileOf(console, name), `${fileOf(console, name)}.miss3`]) {
+    try {
+      if (await RNFS.exists(f)) await RNFS.unlink(f);
+    } catch {
+      // sigue con el resto
+    }
+  }
+  if (SYSTEM_DIR[console]) {
+    const index = `${COVERS_DIR}/${console}/.index.json`;
+    try {
+      if (await RNFS.exists(index)) await RNFS.unlink(index);
+    } catch {
+      // índice en uso: se renovará en 30 días
+    }
+    indexes.delete(console);
+  }
+  requeue(romPath, console);
 }

@@ -17,9 +17,10 @@ import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-nativ
 import { Libretro } from 'react-native-libretro';
 import RNFS from 'react-native-fs';
 import { arcadeTitle } from '../covers/arcadeNames';
-import { forgetCover, subscribeCover } from '../covers/CoverCache';
+import { customCoverChanged, customCoverPath, forgetCover, reloadCover, subscribeCover } from '../covers/CoverCache';
 import { onRomImported } from '../downloads/DownloadManager';
 import {
+  ALL_CONSOLES,
   ARCADE_CORES,
   Console,
   CONSOLE_LABEL,
@@ -49,7 +50,11 @@ const CONSOLE_CARDS: { id: Console; name: string }[] = [
   { id: 'psp', name: 'PSP' },
   { id: 'n64', name: 'Nintendo 64' },
   { id: 'nds', name: 'Nintendo DS' },
+  { id: 'snes', name: 'Super Nintendo' },
   { id: 'gba', name: 'Game Boy Advance' },
+  { id: 'gbc', name: 'Game Boy Color' },
+  { id: 'gb', name: 'Game Boy' },
+  { id: 'nes', name: 'NES' },
   { id: 'saturn', name: 'Sega Saturn' },
   { id: 'sega', name: 'Mega Drive' },
   { id: 'fbneo', name: 'FBNeo Arcade' },
@@ -203,6 +208,15 @@ function chooseMoveTarget(entry: Entry, onMoved: () => void) {
       { text: 'Cancelar', style: 'cancel' as const },
     ],
   );
+}
+
+// Miniatura elegida desde la galería de Fotos (se guarda en Documents/covers/<consola>/)
+function pickCover(entry: Entry) {
+  Libretro.pickImage(customCoverPath(entry.path, entry.console))
+    .then((ok) => {
+      if (ok) customCoverChanged(entry.path, entry.console);
+    })
+    .catch((e) => Alert.alert('No se pudo cambiar la miniatura', String(e)));
 }
 
 // ---- Validación arcade antes de abrir el núcleo -------------------------------------------
@@ -382,7 +396,7 @@ export default function LibraryScreen({ onPlay }: Props) {
   useEffect(() => subscribeRecents(setRecents), []);
 
   const counts = useMemo(() => {
-    const c: Record<Console, number> = { gba: 0, n64: 0, sega: 0, mame: 0, fbneo: 0, ps1: 0, psp: 0, nds: 0, saturn: 0 };
+    const c = Object.fromEntries(ALL_CONSOLES.map((k) => [k, 0])) as Record<Console, number>;
     entries.forEach((e) => {
       if (e.console in c) c[e.console as Console] += 1;
     });
@@ -722,6 +736,12 @@ const GameCard = memo(function GameCard({
       ...(enabled && isArcadeConsole(entry.console)
         ? [{ text: 'Cambiar núcleo (FBNeo / MAME)', onPress: () => chooseArcadeCore(entry, onPlay) }]
         : []),
+      ...(entry.console
+        ? [
+            { text: 'Cambiar miniatura (Fotos)', onPress: () => pickCover(entry) },
+            { text: 'Recargar carátula', onPress: () => reloadCover(entry.path, entry.console) },
+          ]
+        : []),
       { text: 'Mover a otra consola', onPress: () => chooseMoveTarget(entry, onRemoved) },
       { text: 'Eliminar juego', style: 'destructive' as const, onPress: () => confirmDelete(entry, onRemoved) },
       { text: 'Cancelar', style: 'cancel' as const },
@@ -780,12 +800,7 @@ const GameCard = memo(function GameCard({
             <Image source={{ uri: cover }} style={StyleSheet.absoluteFill} resizeMode="contain" />
           </>
         ) : (
-          <View style={styles.monogram}>
-            <JLBadge size={width * 0.42} />
-            <Text style={styles.monogramTitle} numberOfLines={3}>
-              {displayTitle(entry.path)}
-            </Text>
-          </View>
+          <GeneratedCover console={entry.console} title={displayTitle(entry.path)} width={width} />
         )}
         {/* Brillo superior tipo vitrina */}
         <View style={styles.sheen} pointerEvents="none" />
@@ -818,6 +833,36 @@ const GameCard = memo(function GameCard({
     </Pressable>
   );
 });
+
+// Carátula generada cuando no hay oficial ni conexión: degradado del color de la consola,
+// su icono grande y el título del juego (nunca un cuadro roto)
+function GeneratedCover({ console, title, width }: { console: string; title: string; width: number }) {
+  const known = console in CONSOLE_LABEL;
+  const glow = known ? ART_GLOW[console as ArtKind] ?? theme.amber : theme.amber;
+  return (
+    <View style={styles.monogram}>
+      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+        <Defs>
+          <LinearGradient id="gc" x1="0" y1="0" x2="0.6" y2="1">
+            <Stop offset="0" stopColor={glow} stopOpacity="0.55" />
+            <Stop offset="0.55" stopColor={glow} stopOpacity="0.16" />
+            <Stop offset="1" stopColor="#07080B" stopOpacity="0.9" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#gc)" />
+        <Rect x="0" y="0" width="100%" height="3" fill={glow} fillOpacity="0.9" />
+      </Svg>
+      {known ? (
+        <ConsoleIcon kind={console as Console} size={width * 0.36} color="#FFFFFF" />
+      ) : (
+        <JLBadge size={width * 0.36} />
+      )}
+      <Text style={[styles.monogramTitle, { fontSize: Math.max(11, width * 0.085) }]} numberOfLines={4}>
+        {title}
+      </Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
@@ -950,7 +995,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
   monogram: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 10 },
-  monogramTitle: { color: theme.titaniumHi, fontSize: 11, fontWeight: '600', textAlign: 'center', marginTop: 8 },
+  monogramTitle: { color: '#FFFFFF', fontWeight: '800', textAlign: 'center', marginTop: 10, letterSpacing: 0.3 },
   badge: {
     position: 'absolute',
     left: 8,

@@ -165,6 +165,47 @@ const NDS: TvPad = {
   },
 };
 
+// Super Nintendo: rombo con los colores de Super Famicom y gatillos L/R
+const SNES_COLORS = { X: '#3b82f6', Y: '#22c55e', A: '#ef4444', B: '#facc15' };
+const SNES: TvPad = {
+  title: 'Super Nintendo',
+  accent: '#8B5CF6',
+  layout: {
+    name: 'SNES (TV)',
+    clusters: [
+      single('trig-left', 0, 0.3, ['L', Btn.L, GRAY]),
+      single('trig-right', 0.7, 0.3, ['R', Btn.R, GRAY]),
+      dpad(0.02, 0.2, 0.36, 0.72, true),
+      menu('menu', 0.36, 0.82, 0.28, ['SELECT', Btn.SELECT], ['START', Btn.START]),
+      {
+        id: 'face', x: 0.62, y: 0.2, w: 0.38, h: 0.66,
+        zones: diamond(['X', Btn.X, SNES_COLORS.X], ['Y', Btn.Y, SNES_COLORS.Y], ['A', Btn.A, SNES_COLORS.A], ['B', Btn.B, SNES_COLORS.B]),
+      },
+    ],
+  },
+};
+
+// NES y Game Boy: cruceta grande, B/A y SELECT/START
+function twoButton(title: string, accent: string, tint: string): TvPad {
+  return {
+    title,
+    accent,
+    layout: {
+      name: `${title} (TV)`,
+      clusters: [
+        dpad(0.02, 0.12, 0.4, 0.84, true),
+        menu('menu', 0.36, 0.84, 0.28, ['SELECT', Btn.SELECT], ['START', Btn.START]),
+        {
+          id: 'face', x: 0.58, y: 0.2, w: 0.42, h: 0.62,
+          zones: [circle('B', 0.28, 0.64, 0.42, Btn.B, tint), circle('A', 0.74, 0.36, 0.42, Btn.A, tint)],
+        },
+      ],
+    },
+  };
+}
+const NES = twoButton('NES', '#DC2626', '#dc2626');
+const GB = twoButton('Game Boy', '#84CC16', '#9d174d');
+
 // ---- Modo control vertical (iPhone bloqueado en vertical mientras el vídeo sale por la TV) ----
 // La franja superior (0-10 %) queda libre para el título y el engranaje.
 const vPair = (id: string, x: number, y: number, w: number, h: number, a: [string, number, string?], b: [string, number, string?]) => ({
@@ -301,6 +342,41 @@ const NDS_V: TvPad = {
   },
 };
 
+const SNES_V: TvPad = {
+  title: 'Super Nintendo',
+  accent: '#8B5CF6',
+  layout: {
+    name: 'SNES (vertical)',
+    clusters: [
+      vSingle('trig-left', 0, 0.11, 0.46, 0.09, ['L', Btn.L, GRAY]),
+      vSingle('trig-right', 0.54, 0.11, 0.46, 0.09, ['R', Btn.R, GRAY]),
+      dpad(0, 0.3, 0.5, 0.42, true),
+      {
+        id: 'face', x: 0.5, y: 0.3, w: 0.5, h: 0.42,
+        zones: diamond(['X', Btn.X, SNES_COLORS.X], ['Y', Btn.Y, SNES_COLORS.Y], ['A', Btn.A, SNES_COLORS.A], ['B', Btn.B, SNES_COLORS.B], 0.4),
+      },
+      vPair('menu', 0.2, 0.8, 0.6, 0.08, ['SELECT', Btn.SELECT], ['START', Btn.START]),
+    ],
+  },
+};
+
+function twoButtonV(title: string, accent: string, tint: string): TvPad {
+  return {
+    title,
+    accent,
+    layout: {
+      name: `${title} (vertical)`,
+      clusters: [
+        dpad(0, 0.26, 0.52, 0.46, true),
+        { id: 'face', x: 0.5, y: 0.3, w: 0.5, h: 0.4, zones: [circle('B', 0.3, 0.64, 0.44, Btn.B, tint), circle('A', 0.72, 0.36, 0.44, Btn.A, tint)] },
+        vPair('menu', 0.2, 0.8, 0.6, 0.08, ['SELECT', Btn.SELECT], ['START', Btn.START]),
+      ],
+    },
+  };
+}
+const NES_V = twoButtonV('NES', '#DC2626', '#dc2626');
+const GB_V = twoButtonV('Game Boy', '#84CC16', '#9d174d');
+
 /** Mando a pantalla completa en el iPhone mientras el vídeo sale por la TV. */
 export function tvPadFor(core: CoreId, portrait = false): TvPad {
   if (portrait) {
@@ -323,6 +399,12 @@ export function tvPadFor(core: CoreId, portrait = false): TvPad {
         return NDS_V;
       case 'mgba':
         return GBA_V;
+      case 'snes9x':
+        return SNES_V;
+      case 'fceumm':
+        return NES_V;
+      case 'gambatte':
+        return GB_V;
     }
   }
   return tvPadLandscape(core);
@@ -348,5 +430,11 @@ function tvPadLandscape(core: CoreId): TvPad {
       return NDS;
     case 'mgba':
       return GBA;
+    case 'snes9x':
+      return SNES;
+    case 'fceumm':
+      return NES;
+    case 'gambatte':
+      return GB;
   }
 }

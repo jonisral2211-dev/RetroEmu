@@ -88,6 +88,14 @@ std::string folderFor(romcheck::Kind kind, const Folders &f) {
       return f.sega;
     case romcheck::Kind::NDS:
       return f.nds;
+    case romcheck::Kind::SNES:
+      return f.snes;
+    case romcheck::Kind::NES:
+      return f.nes;
+    case romcheck::Kind::GB:
+      return f.gb;
+    case romcheck::Kind::GBC:
+      return f.gbc;
     default:
       return "";
   }
@@ -134,7 +142,9 @@ std::string extractRom(const std::string &zipPath, const Folders &folders) {
     const std::string base = baseName(name);
 
     // Ya importada en alguna carpeta de consola: no descomprimir otra vez
-    for (const std::string *dir : {&folders.gba, &folders.n64, &folders.sega}) {
+    for (const std::string *dir :
+         {&folders.gba, &folders.n64, &folders.sega, &folders.nds, &folders.snes, &folders.nes, &folders.gb, &folders.gbc}) {
+      if (dir->empty()) continue;
       const std::string existing = *dir + "/" + base;
       if (fileExists(existing)) return existing;
     }

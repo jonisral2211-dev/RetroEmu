@@ -16,7 +16,20 @@ import Svg, {
 // degradados de luz cenital, brillos especulares, sombra de contacto y halo de neón propio.
 // viewBox 160 x 110. Cada Svg tiene sus propias Defs (ids con prefijo por consola).
 
-export type ArtKind = 'ps1' | 'nds' | 'saturn' | 'fbneo' | 'mame' | 'n64' | 'gba' | 'psp' | 'sega';
+export type ArtKind =
+  | 'ps1'
+  | 'nds'
+  | 'saturn'
+  | 'fbneo'
+  | 'mame'
+  | 'n64'
+  | 'gba'
+  | 'psp'
+  | 'sega'
+  | 'snes'
+  | 'nes'
+  | 'gb'
+  | 'gbc';
 
 export const ART_GLOW: Record<ArtKind, string> = {
   ps1: '#3B82F6',
@@ -28,6 +41,10 @@ export const ART_GLOW: Record<ArtKind, string> = {
   gba: '#6366F1',
   psp: '#22D3EE',
   sega: '#F43F5E',
+  snes: '#8B5CF6',
+  nes: '#DC2626',
+  gb: '#84CC16',
+  gbc: '#EAB308',
 };
 
 /** Halo de neón y sombra de contacto comunes. */
@@ -480,6 +497,115 @@ function Sega() {
   );
 }
 
+// ---- Super Nintendo: consola gris claro con botones morados y mando de cuatro colores ----
+function Snes() {
+  return (
+    <>
+      <Stage id="snes" color={ART_GLOW.snes} />
+      <Defs>
+        <LinearGradient id="snes-top" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#ECEDF1" />
+          <Stop offset="1" stopColor="#B8BAC4" />
+        </LinearGradient>
+        <LinearGradient id="snes-front" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#A6A8B3" />
+          <Stop offset="1" stopColor="#787B87" />
+        </LinearGradient>
+        <LinearGradient id="snes-purple" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#A78BFA" />
+          <Stop offset="1" stopColor="#5B21B6" />
+        </LinearGradient>
+      </Defs>
+      <Path d="M12 50 Q12 34 28 34 L98 34 Q114 34 114 50 L114 66 L12 66 Z" fill="url(#snes-top)" />
+      <Path d="M12 66 L114 66 L112 76 L14 76 Z" fill="url(#snes-front)" />
+      <Rect x="38" y="38" width="50" height="14" rx="3" fill="#6B6E7A" />
+      <Rect x="42" y="41" width="42" height="8" rx="1.5" fill="#2E2F36" />
+      <Rect x="20" y="56" width="12" height="5" rx="2.5" fill="url(#snes-purple)" />
+      <Rect x="94" y="56" width="12" height="5" rx="2.5" fill="url(#snes-purple)" />
+      <Path d="M18 42 Q22 36 32 36 L96 36" stroke="#FFF" strokeOpacity="0.55" strokeWidth="0.9" fill="none" />
+      <G transform="translate(96 70)">
+        <Path d="M12 2 L46 2 Q58 2 58 14 Q58 26 46 26 L12 26 Q0 26 0 14 Q0 2 12 2 Z" fill="url(#snes-top)" stroke="#9CA0AB" strokeWidth="0.6" />
+        <Path d="M8 14 L16 14 M12 10 L12 18" stroke="#3F3F46" strokeWidth="2.2" />
+        <Circle cx="46" cy="8.5" r="2.6" fill="#3B82F6" />
+        <Circle cx="40.5" cy="14" r="2.6" fill="#22C55E" />
+        <Circle cx="51.5" cy="14" r="2.6" fill="#EF4444" />
+        <Circle cx="46" cy="19.5" r="2.6" fill="#FACC15" />
+        <Rect x="22" y="15" width="5" height="2" rx="1" fill="#6B6E7A" />
+        <Rect x="29" y="15" width="5" height="2" rx="1" fill="#6B6E7A" />
+      </G>
+    </>
+  );
+}
+
+// ---- NES: caja gris de carga frontal con franja negra y mando rectangular ------------
+function Nes() {
+  return (
+    <>
+      <Stage id="nes" color={ART_GLOW.nes} />
+      <Defs>
+        <LinearGradient id="nes-top" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#E5E5E5" />
+          <Stop offset="1" stopColor="#BDBDBD" />
+        </LinearGradient>
+        <LinearGradient id="nes-front" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#A3A3A3" />
+          <Stop offset="1" stopColor="#737373" />
+        </LinearGradient>
+      </Defs>
+      <Path d="M14 44 L28 34 L118 34 L106 44 Z" fill="url(#nes-top)" />
+      <Path d="M14 44 L106 44 L106 76 L14 76 Z" fill="url(#nes-front)" />
+      <Path d="M106 44 L118 34 L118 66 L106 76 Z" fill="#8A8A8A" />
+      <Rect x="14" y="44" width="92" height="12" fill="#262626" />
+      <Rect x="30" y="47" width="60" height="6" rx="1" fill="#0A0A0A" />
+      <Rect x="20" y="64" width="9" height="3" rx="1" fill="#DC2626" />
+      <Rect x="33" y="64" width="9" height="3" rx="1" fill="#404040" />
+      <Path d="M28 35 L117 35" stroke="#FFF" strokeOpacity="0.5" strokeWidth="0.8" />
+      <G transform="translate(94 74)">
+        <Rect x="0" y="0" width="56" height="22" rx="2" fill="#D4D4D4" stroke="#737373" strokeWidth="0.6" />
+        <Rect x="4" y="4" width="48" height="14" rx="1" fill="#171717" />
+        <Path d="M9 11 L17 11 M13 7 L13 15" stroke="#525252" strokeWidth="2.4" />
+        <Rect x="22" y="11" width="5" height="2" rx="1" fill="#737373" />
+        <Rect x="29" y="11" width="5" height="2" rx="1" fill="#737373" />
+        <Circle cx="40" cy="12" r="2.8" fill="#DC2626" />
+        <Circle cx="47" cy="12" r="2.8" fill="#DC2626" />
+      </G>
+    </>
+  );
+}
+
+// ---- Game Boy (gris, pantalla verde) y Game Boy Color (carcasa de color, pantalla a color) ----
+function GameBoy({ color }: { color: boolean }) {
+  const id = color ? 'gbc' : 'gb';
+  return (
+    <>
+      <Stage id={id} color={ART_GLOW[id]} />
+      <Defs>
+        <LinearGradient id={`${id}-body`} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={color ? '#FDE047' : '#E7E5E4'} />
+          <Stop offset="1" stopColor={color ? '#CA8A04' : '#A8A29E'} />
+        </LinearGradient>
+        <LinearGradient id={`${id}-scr`} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={color ? '#F472B6' : '#BEF264'} />
+          <Stop offset="0.5" stopColor={color ? '#38BDF8' : '#84CC16'} />
+          <Stop offset="1" stopColor={color ? '#4ADE80' : '#3F6212'} />
+        </LinearGradient>
+      </Defs>
+      <Path d="M56 8 L104 8 Q108 8 108 12 L108 88 Q108 100 96 100 L56 100 Q52 100 52 96 L52 12 Q52 8 56 8 Z" fill={`url(#${id}-body)`} />
+      <Path d="M55 11 L105 11" stroke="#FFF" strokeOpacity="0.55" strokeWidth="0.9" />
+      <Rect x="58" y="15" width="44" height="36" rx="3" fill={color ? '#1F2937' : '#57534E'} />
+      <Rect x="64" y="20" width="32" height="26" rx="1" fill={`url(#${id}-scr)`} />
+      <Path d="M64 20 L78 20 L68 46 L64 46 Z" fill="#FFF" fillOpacity="0.15" />
+      <Circle cx="61" cy="30" r="1.2" fill="#EF4444" />
+      <Path d="M60 68 L70 68 M65 63 L65 73" stroke="#1C1917" strokeWidth="3" />
+      <Circle cx="92" cy="70" r="3.6" fill={color ? '#7C3AED' : '#9D174D'} />
+      <Circle cx="100" cy="65" r="3.6" fill={color ? '#7C3AED' : '#9D174D'} />
+      <Rect x="70" y="82" width="7" height="2" rx="1" transform="rotate(-25 73 83)" fill="#57534E" />
+      <Rect x="80" y="82" width="7" height="2" rx="1" transform="rotate(-25 83 83)" fill="#57534E" />
+      <Path d="M92 90 L100 86 M93 93 L101 89 M94 96 L102 92" stroke="#57534E" strokeWidth="0.9" />
+    </>
+  );
+}
+
 export function ConsoleArt({ kind, width, height }: { kind: ArtKind; width: number; height: number }) {
   return (
     <Svg width={width} height={height} viewBox="0 0 160 110">
@@ -492,6 +618,10 @@ export function ConsoleArt({ kind, width, height }: { kind: ArtKind; width: numb
       {kind === 'gba' ? <Gba /> : null}
       {kind === 'psp' ? <Psp /> : null}
       {kind === 'sega' ? <Sega /> : null}
+      {kind === 'snes' ? <Snes /> : null}
+      {kind === 'nes' ? <Nes /> : null}
+      {kind === 'gb' ? <GameBoy color={false} /> : null}
+      {kind === 'gbc' ? <GameBoy color /> : null}
     </Svg>
   );
 }

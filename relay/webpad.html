@@ -155,6 +155,32 @@ const LAYOUTS = {
       { k: 'dpad', x: 27, y: 72, s: 48 },
       btn('B', B.B, 68, 79, 22), btn('A', B.A, 87, 66, 22),
     ] },
+  snes: { name: 'Super Nintendo',
+    landscape: [
+      { k: 'dpad', x: 18, y: 56, s: 50 },
+      btn('X', B.X, 82, 30, 18, '#3b82f6'), btn('A', B.A, 93, 52, 18, '#ef4444'),
+      btn('B', B.B, 82, 74, 18, '#facc15'), btn('Y', B.Y, 71, 52, 18, '#22c55e'),
+      rect('L', B.L, 11, 5, 18, 11, GRAY), rect('R', B.R, 89, 5, 18, 11, GRAY),
+      rect('SELECT', B.SELECT, 41, 94, 12, 10), rect('START', B.START, 59, 94, 12, 10),
+    ],
+    portrait: [
+      rect('L', B.L, 18, 30, 30, 6, GRAY), rect('R', B.R, 82, 30, 30, 6, GRAY),
+      rect('SELECT', B.SELECT, 37, 42, 22, 5), rect('START', B.START, 63, 42, 22, 5),
+      { k: 'dpad', x: 25, y: 72, s: 44 },
+      btn('X', B.X, 76, 60, 17, '#3b82f6'), btn('A', B.A, 91, 72, 17, '#ef4444'),
+      btn('B', B.B, 76, 84, 17, '#facc15'), btn('Y', B.Y, 61, 72, 17, '#22c55e'),
+    ] },
+  nes: { name: 'NES / Game Boy',
+    landscape: [
+      { k: 'dpad', x: 20, y: 54, s: 58 },
+      btn('B', B.B, 70, 62, 25, '#dc2626'), btn('A', B.A, 87, 44, 25, '#dc2626'),
+      rect('SELECT', B.SELECT, 41, 92, 13, 11), rect('START', B.START, 59, 92, 13, 11),
+    ],
+    portrait: [
+      rect('SELECT', B.SELECT, 37, 34, 24, 6), rect('START', B.START, 63, 34, 24, 6),
+      { k: 'dpad', x: 27, y: 68, s: 50 },
+      btn('B', B.B, 67, 76, 24, '#dc2626'), btn('A', B.A, 87, 62, 24, '#dc2626'),
+    ] },
 };
 
 const $ = (id) => document.getElementById(id);

@@ -3,6 +3,9 @@
 #include <AudioToolbox/AudioToolbox.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -21,6 +24,16 @@ class AudioOutput {
   unsigned occupancy() const;
   /** true si el ring está por debajo de medio objetivo: el core debería saltarse un frame. */
   bool underrunLikely() const;
+  /** Segundos de audio pendientes de sonar (ring + búferes ya encolados en AudioQueue). */
+  double bufferedSeconds() const;
+  /**
+   * Reloj maestro (como RetroEmu/RetroArch "audio sync"): bloquea al hilo de emulación mientras
+   * haya más de maxSeconds de audio pendiente. Así el juego nunca puede ir a más de 1.00x
+   * aunque el temporizador o la pantalla (120 Hz) vayan más rápido. Espera como mucho `limit`
+   * (si el audio está parado, p. ej. en segundo plano, no se cuelga). Devuelve true si esperó.
+   */
+  bool waitForRoom(double maxSeconds, std::chrono::milliseconds limit);
+  bool running() const { return queue_ != nullptr && primed_; }
 
  private:
   static void onBuffer(void *user, AudioQueueRef queue, AudioQueueBufferRef buffer);
@@ -47,7 +60,10 @@ class AudioOutput {
 
   // Consumidor: tras un vaciado espera a tener medio objetivo antes de volver a sonar, y
   // mientras tanto desvanece la última muestra (sin chasquido por corte seco)
-  bool primed_ = false;
+  std::atomic<bool> primed_{false};
+  // Despierta al productor bloqueado en waitForRoom cada vez que suena un búfer
+  mutable std::mutex waitMutex_;
+  std::condition_variable roomCv_;
   float lastL_ = 0.0f;
   float lastR_ = 0.0f;
 };

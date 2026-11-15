@@ -41,6 +41,22 @@ bool isSegaCd(const uint8_t *d, size_t n) {
   return false;
 }
 
+// Game Boy / Color: logo de Nintendo en 0x104; 0x143 = 0x80 (compatible GBC) o 0xC0 (solo GBC)
+const uint8_t kGbLogoStart[8] = {0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B};
+
+bool hasGbLogo(const uint8_t *d, size_t n) {
+  return n >= 0x150 && std::memcmp(d + 0x104, kGbLogoStart, 8) == 0;
+}
+
+// NES: cabecera iNES / NES 2.0 ("NES\x1A"), UNIF ("UNIF") y Famicom Disk System ("FDS\x1A" o
+// la cabecera de disco "\x01*NINTENDO-HVC*" sin la de 16 bytes)
+bool isNes(const uint8_t *d, size_t n) { return n >= 16 && std::memcmp(d, "NES\x1A", 4) == 0; }
+bool isUnif(const uint8_t *d, size_t n) { return n >= 32 && std::memcmp(d, "UNIF", 4) == 0; }
+bool isFds(const uint8_t *d, size_t n) {
+  if (n >= 16 && std::memcmp(d, "FDS\x1A", 4) == 0) return true;
+  return n >= 15 && d[0] == 0x01 && std::memcmp(d + 1, "*NINTENDO-HVC*", 14) == 0;
+}
+
 bool isNds(const uint8_t *d, size_t n) {
   return n >= 0xC8 && std::memcmp(d + 0xC0, kGbaLogoStart, 8) == 0;
 }
@@ -72,7 +88,9 @@ bool isRomExtension(const std::string &ext) {
   return ext == "gba" || ext == "agb" || ext == "bin" || ext == "z64" || ext == "n64" ||
          ext == "v64" || ext == "md" || ext == "gen" || ext == "smd" || ext == "iso" ||
          ext == "cue" || ext == "chd" || ext == "nds" || ext == "cso" || ext == "pbp" ||
-         ext == "sms" || ext == "gg" || ext == "sg";
+         ext == "sms" || ext == "gg" || ext == "sg" || ext == "sfc" || ext == "smc" || ext == "fig" ||
+         ext == "swc" || ext == "nes" || ext == "fds" || ext == "unf" || ext == "unif" || ext == "gb" ||
+         ext == "gbc" || ext == "dmg" || ext == "sgb";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
@@ -90,6 +108,20 @@ Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
   // Master System, Game Gear y SG-1000 (Genesis Plus GX): muchas ROMs japonesas no llevan la
   // cabecera "TMR SEGA", así que basta la extensión
   if (ext == "sms" || ext == "gg" || ext == "sg") return Kind::Sega;
+  // Super Nintendo (Snes9x): la cabecera interna está en 0x7FC0/0xFFC0 (+512 con cabecera de
+  // copiadora) y no siempre es fiable; basta la extensión y un tamaño mínimo de ROM
+  if ((ext == "sfc" || ext == "smc" || ext == "fig" || ext == "swc") && size >= 0x8000) return Kind::SNES;
+  // NES / Famicom Disk System (FCEUmm)
+  if (ext == "nes" && isNes(data, size)) return Kind::NES;
+  if ((ext == "unf" || ext == "unif") && isUnif(data, size)) return Kind::NES;
+  if (ext == "fds" && isFds(data, size)) return Kind::NES;
+  // Game Boy / Game Boy Color (Gambatte): el indicador CGB decide la carpeta
+  if (ext == "gb" || ext == "gbc" || ext == "dmg" || ext == "sgb") {
+    if (hasGbLogo(data, size) && (data[0x143] & 0x80)) return Kind::GBC;
+    if (hasGbLogo(data, size)) return Kind::GB;
+    // Sin logo (hacks, homebrew): se respeta la extensión
+    if (size >= 0x4000) return ext == "gbc" ? Kind::GBC : Kind::GB;
+  }
   // Mega-CD / Sega CD (necesita la BIOS bios_CD_U.bin / _E / _J en system/)
   if ((ext == "iso" || ext == "bin") && isSegaCd(data, size)) return Kind::Sega;
   if ((ext == "iso" || ext == "bin") && isPs1(data, size)) return Kind::PS1;

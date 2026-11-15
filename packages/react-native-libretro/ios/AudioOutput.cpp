@@ -135,4 +135,31 @@ void AudioOutput::fill(float *dst, size_t frames) {
   }
   if (take < frames) primed_ = false;  // rellenar medio objetivo antes de volver a sonar
   readIdx_.store(r + take, std::memory_order_release);
+  roomCv_.notify_all();
+}
+
+double AudioOutput::bufferedSeconds() const {
+  const double ring =
+      double(writeIdx_.load(std::memory_order_acquire) - readIdx_.load(std::memory_order_acquire));
+  // Además del ring, AudioQueue tiene en vuelo ~kBuffers búferes ya rellenados
+  return (ring + double(kBufferFrames) * (kBuffers - 1)) / outRate_;
+}
+
+bool AudioOutput::waitForRoom(double maxSeconds, std::chrono::milliseconds limit) {
+  if (!queue_ || !primed_) return false;
+  const double ringLimit = maxSeconds * outRate_ - double(kBufferFrames) * (kBuffers - 1);
+  auto full = [&] {
+    return double(writeIdx_.load(std::memory_order_acquire) - readIdx_.load(std::memory_order_acquire)) > ringLimit;
+  };
+  if (!full()) return false;
+  std::unique_lock<std::mutex> lock(waitMutex_);
+  const auto deadline = std::chrono::steady_clock::now() + limit;
+  // wait_until con predicado y despertar periódico (el notify del hilo de audio es sin lock)
+  while (full() && primed_ && queue_) {
+    if (roomCv_.wait_for(lock, std::chrono::milliseconds(4)) == std::cv_status::timeout &&
+        std::chrono::steady_clock::now() >= deadline) {
+      break;
+    }
+  }
+  return true;
 }

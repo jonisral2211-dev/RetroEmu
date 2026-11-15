@@ -16,3 +16,7 @@ desmume_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/de
 yabause_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/yabause_libretro_ios.dylib.zip|latest|prebuilt|||true
 fbneo_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/fbneo_libretro_ios.dylib.zip|latest|prebuilt|||true
 ppsspp_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/ppsspp_libretro.dylib.zip|latest|prebuilt|||true
+# SNES, NES y Game Boy / Color: precompilados oficiales sin JIT
+snes9x_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/snes9x_libretro_ios.dylib.zip|latest|prebuilt|||true
+fceumm_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/fceumm_libretro_ios.dylib.zip|latest|prebuilt|||true
+gambatte_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/gambatte_libretro_ios.dylib.zip|latest|prebuilt|||true

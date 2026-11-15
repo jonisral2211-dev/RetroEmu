@@ -375,6 +375,88 @@ export const NDS_LANDSCAPE_LAYOUT: PadLayout = {
   }),
 };
 
+// ---- Super Nintendo (Snes9x) ------------------------------------------------
+// Rombo como en el mando de Super Famicom: X azul arriba, Y verde izquierda, A roja derecha,
+// B amarilla abajo. Snes9x usa los mismos bits libretro (A=A, B=B, X=X, Y=Y).
+const snesFace = (d: number): Zone[] => [
+  circle('X', 0.5, 0.2, d, Btn.X, '#3b82f6'),
+  circle('Y', 0.2, 0.5, d, Btn.Y, '#22c55e'),
+  circle('A', 0.8, 0.5, d, Btn.A, '#ef4444'),
+  circle('B', 0.5, 0.8, d, Btn.B, '#facc15'),
+];
+
+export const SNES_LAYOUT: PadLayout = {
+  name: 'Super Nintendo',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.16,
+      zones: [rect('L', 0.02, 0.1, 0.3, 0.8, Btn.L, GRAY), rect('R', 0.68, 0.1, 0.3, 0.8, Btn.R, GRAY)],
+    },
+    {
+      id: 'dpad', x: 0, y: 0.2, w: 0.42, h: 0.8,
+      zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: true }],
+    },
+    { id: 'face', x: 0.58, y: 0.2, w: 0.42, h: 0.8, zones: snesFace(0.3) },
+    {
+      id: 'menu', x: 0.42, y: 0.5, w: 0.16, h: 0.5,
+      zones: [rect('SELECT', 0, 0.2, 1, 0.25, Btn.SELECT), rect('START', 0, 0.6, 1, 0.25, Btn.START)],
+    },
+  ],
+};
+
+export const SNES_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Super Nintendo (horizontal)',
+  clusters: sideClusters({
+    leftTriggers: [trig('L', 0.06, 0.88, Btn.L, GRAY)],
+    rightTriggers: [trig('R', 0.06, 0.88, Btn.R, GRAY)],
+    face: snesFace(0.34),
+    select: footBtn('SELECT', Btn.SELECT),
+    start: footBtn('START', Btn.START),
+    eightWay: true,
+  }),
+};
+
+// ---- NES (FCEUmm) y Game Boy / Color (Gambatte) ------------------------------
+// Cruceta grande, B y A en diagonal, SELECT y START. Ambos núcleos: B=JOYPAD_B, A=JOYPAD_A.
+function twoButtonLayout(name: string, tint: string): PadLayout {
+  return {
+    name,
+    clusters: [
+      {
+        id: 'dpad', x: 0, y: 0.08, w: 0.46, h: 0.92,
+        zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.48, eightWay: true }],
+      },
+      {
+        id: 'face', x: 0.54, y: 0.12, w: 0.46, h: 0.88,
+        zones: [circle('B', 0.28, 0.62, 0.36, Btn.B, tint), circle('A', 0.72, 0.38, 0.36, Btn.A, tint)],
+      },
+      {
+        id: 'menu', x: 0.46, y: 0.5, w: 0.08, h: 0.5,
+        zones: [rect('SEL', 0, 0.2, 1, 0.25, Btn.SELECT), rect('START', 0, 0.6, 1, 0.25, Btn.START)],
+      },
+    ],
+  };
+}
+
+function twoButtonLandscape(name: string, tint: string): PadLayout {
+  return {
+    name,
+    clusters: sideClusters({
+      leftTriggers: [],
+      rightTriggers: [],
+      face: [circle('B', 0.28, 0.62, 0.44, Btn.B, tint), circle('A', 0.72, 0.38, 0.44, Btn.A, tint)],
+      select: footBtn('SELECT', Btn.SELECT),
+      start: footBtn('START', Btn.START),
+      eightWay: true,
+    }),
+  };
+}
+
+export const NES_LAYOUT = twoButtonLayout('NES', '#dc2626');
+export const NES_LANDSCAPE_LAYOUT = twoButtonLandscape('NES (horizontal)', '#dc2626');
+export const GB_LAYOUT = twoButtonLayout('Game Boy', '#9d174d');
+export const GB_LANDSCAPE_LAYOUT = twoButtonLandscape('Game Boy (horizontal)', '#9d174d');
+
 // ---- Sega Saturn (Yabause) -------------------------------------------------
 // Mapeo del core (yabause/src/libretro/libretro.c): A<-B, B<-A, C<-R, X<-Y, Y<-X, Z<-L,
 // gatillos L/R <- L2/R2.
@@ -576,6 +658,12 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
         return FBNEO_LANDSCAPE_LAYOUT;
       case 'ppsspp':
         return PSP_LANDSCAPE_LAYOUT;
+      case 'snes9x':
+        return SNES_LANDSCAPE_LAYOUT;
+      case 'fceumm':
+        return NES_LANDSCAPE_LAYOUT;
+      case 'gambatte':
+        return GB_LANDSCAPE_LAYOUT;
     }
   }
   switch (core) {
@@ -599,5 +687,11 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       return FBNEO_LAYOUT;
     case 'ppsspp':
       return PSP_LAYOUT;
+    case 'snes9x':
+      return SNES_LAYOUT;
+    case 'fceumm':
+      return NES_LAYOUT;
+    case 'gambatte':
+      return GB_LAYOUT;
   }
 }

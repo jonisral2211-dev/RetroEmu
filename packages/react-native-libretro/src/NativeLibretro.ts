@@ -66,6 +66,8 @@ export interface Spec extends TurboModule {
   /** Ruta del juego antes de loadCore (arcade: su carpeta hace de system directory). */
   prepareContent(romPath: string): void;
   /** Copia texto al portapapeles del iPhone. */
+  /** Abre Fotos y guarda la imagen elegida como PNG en destPath (dentro de Documents). */
+  pickImage(destPath: string): Promise<boolean>;
   copyToClipboard(text: string): void;
   netStop(): void;
   /** "fase|mensaje|código|ping_ms"; fase: idle, waiting, connecting, syncing, playing. */

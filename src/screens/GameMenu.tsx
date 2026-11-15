@@ -160,10 +160,14 @@ export type GameMenuProps = {
   webPad: WebPadState;
   tvOrient: 'portrait' | 'landscape' | 'auto';
   onTvOrient: (v: 'portrait' | 'landscape' | 'auto') => void;
+  /** Ajustes propios de la consola (pantallas de DS, paleta de Game Boy…). */
+  /** Diseño del mando web (/play?type=) para esta consola: arcade, ps, n64, gba, snes, nes. */
+  webPadType?: string;
+  extras?: { label: string; value: string; options: Option<string>[]; onChange: (v: string) => void; note?: string }[];
 };
 
-function webPadLink(host: string, code: string): string {
-  return `http://${host}:${WEBPAD_HTTP_PORT}/play?code=${code}`;
+function webPadLink(host: string, code: string, type?: string): string {
+  return `http://${host}:${WEBPAD_HTTP_PORT}/play?code=${code}${type ? `&type=${type}` : ''}`;
 }
 
 export function GameMenu(p: GameMenuProps) {
@@ -268,6 +272,12 @@ export function GameMenu(p: GameMenuProps) {
                 { id: 'smooth', label: 'Suavizado ligero' },
               ]}
             />
+            {(p.extras ?? []).map((x) => (
+              <View key={x.label}>
+                <Segmented label={x.label} value={x.value} onChange={x.onChange} options={x.options} />
+                {x.note ? <Text style={styles.note}>{x.note}</Text> : null}
+              </View>
+            ))}
           </Section>
 
           <Section title="Jugar en línea (Netplay)">
@@ -401,10 +411,10 @@ export function GameMenu(p: GameMenuProps) {
                       {p.webPad.code}
                     </Text>
                     <Text style={styles.link} selectable>
-                      {webPadLink(relay.host, p.webPad.code)}
+                      {webPadLink(relay.host, p.webPad.code, p.webPadType)}
                     </Text>
                     <View style={styles.grid}>
-                      <Action label="Copiar enlace" onPress={() => Libretro.copyToClipboard(webPadLink(relay.host, p.webPad.code))} />
+                      <Action label="Copiar enlace" onPress={() => Libretro.copyToClipboard(webPadLink(relay.host, p.webPad.code, p.webPadType))} />
                       <Action
                         label="Compartir enlace / código"
                         primary
@@ -412,7 +422,7 @@ export function GameMenu(p: GameMenuProps) {
                           Share.share({
                             message:
                               `¡Juega conmigo ${p.title} en JL Emulator! Abre este enlace en tu móvil y serás el ` +
-                              `Jugador 2, 3 o 4 (no hace falta instalar nada): ${webPadLink(relay.host, p.webPad.code)} ` +
+                              `Jugador 2, 3 o 4 (no hace falta instalar nada): ${webPadLink(relay.host, p.webPad.code, p.webPadType)} ` +
                               `(código ${p.webPad.code})`,
                           }).catch(() => {})
                         }

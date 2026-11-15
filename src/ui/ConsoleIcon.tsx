@@ -1,7 +1,21 @@
 import React from 'react';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
-export type IconKind = 'all' | 'gba' | 'n64' | 'sega' | 'mame' | 'fbneo' | 'ps1' | 'psp' | 'nds' | 'saturn';
+export type IconKind =
+  | 'all'
+  | 'gba'
+  | 'n64'
+  | 'sega'
+  | 'mame'
+  | 'fbneo'
+  | 'ps1'
+  | 'psp'
+  | 'nds'
+  | 'saturn'
+  | 'snes'
+  | 'nes'
+  | 'gb'
+  | 'gbc';
 
 // Siluetas vectoriales minimalistas (trazo fino, viewBox 24x24)
 export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?: number; color: string }) {
@@ -99,6 +113,39 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Circle cx={12.5} cy={17} r={0.9} fill={color} />
           <Circle cx={15.5} cy={16.4} r={0.9} fill={color} />
           <Circle cx={18.5} cy={15.8} r={0.9} fill={color} />
+        </>
+      ) : null}
+      {kind === 'snes' ? (
+        // Mando de Super Nintendo: hueso redondeado, cruceta y rombo de cuatro botones
+        <>
+          <Path d="M7.5 7h9a5 5 0 0 1 0 10h-9a5 5 0 0 1 0-10z" {...stroke} />
+          <Path d="M5.6 12h3.4M7.3 10.3v3.4" {...stroke} />
+          <Circle cx={16.6} cy={9.9} r={0.8} fill={color} />
+          <Circle cx={14.7} cy={12} r={0.8} fill={color} />
+          <Circle cx={18.5} cy={12} r={0.8} fill={color} />
+          <Circle cx={16.6} cy={14.1} r={0.8} fill={color} />
+          <Path d="M10.8 13.6l1-.6M12.6 13.6l1-.6" {...stroke} />
+        </>
+      ) : null}
+      {kind === 'nes' ? (
+        // Mando rectangular de NES: cruceta, SELECT/START y dos botones redondos
+        <>
+          <Rect x={2.5} y={7.5} width={19} height={9} rx={1.4} {...stroke} />
+          <Path d="M4.8 12h3.4M6.5 10.3v3.4" {...stroke} />
+          <Path d="M10.2 12.8h1.4M12.4 12.8h1.4" {...stroke} />
+          <Circle cx={16.4} cy={12.4} r={1.1} fill={color} />
+          <Circle cx={19.2} cy={12.4} r={1.1} fill={color} />
+        </>
+      ) : null}
+      {kind === 'gb' || kind === 'gbc' ? (
+        // Portátil vertical clásica: pantalla, cruceta, A/B y esquina inferior redondeada
+        <>
+          <Path d="M6 2.5h12a1.5 1.5 0 0 1 1.5 1.5v14c0 2.2-1.8 3.5-4 3.5H6A1.5 1.5 0 0 1 4.5 20V4A1.5 1.5 0 0 1 6 2.5z" {...stroke} />
+          <Rect x={7} y={5} width={10} height={6.6} rx={0.8} {...stroke} />
+          <Path d="M7.2 16h2.8M8.6 14.6v2.8" {...stroke} />
+          <Circle cx={14.4} cy={16.6} r={0.85} fill={color} />
+          <Circle cx={16.4} cy={15.2} r={0.85} fill={color} />
+          {kind === 'gbc' ? <Path d="M9 8.3h6" {...stroke} /> : null}
         </>
       ) : null}
       {kind === 'ps1' ? (

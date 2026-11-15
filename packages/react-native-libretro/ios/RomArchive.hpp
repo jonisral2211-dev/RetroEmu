@@ -12,6 +12,10 @@ struct Folders {
   std::string n64;
   std::string sega;
   std::string nds;
+  std::string snes;
+  std::string nes;
+  std::string gb;
+  std::string gbc;
 };
 
 /**

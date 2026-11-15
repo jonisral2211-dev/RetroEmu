@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -302,6 +303,13 @@ const char *forcedOption(const char *key) {
       {"ppsspp_software_rendering", "enabled"},
       {"ppsspp_texture_scaling_level", "disabled"},
       {"ppsspp_inflight_frames", "No buffer"},
+      // Gambatte (GB/GBC): juegos de Game Boy con su paleta de color automática (como en una GBC);
+      // el menú permite elegir otra paleta clásica (opción del usuario, prioritaria)
+      {"gambatte_gb_colorization", "auto"},
+      {"gambatte_gb_internal_palette", "GB - DMG"},
+      // FCEUmm (NES): sin recorte extra y sonido a 48 kHz
+      {"fceumm_sndquality", "High"},
+      {"fceumm_sndrate", "48000"},
       // Yabause (Saturn): render por software multihilo y salto de frames automático
       {"yabause_frameskip", "enabled"},
       {"yabause_numthreads", "4"},
@@ -1083,13 +1091,27 @@ void netStepLocked() {
 // Bucle de emulación a la velocidad exacta del núcleo (retro_get_system_av_info, p. ej. 59.94,
 // 60 o 50 Hz), independiente de la pantalla (60/120 Hz ProMotion): cada frame tiene su hora
 // objetivo y se espera hasta ella; nunca se ejecutan frames de más para "recuperar".
+// Audio pendiente máximo antes de frenar la emulación (objetivo del DRC: 50 ms en el ring)
+constexpr double kAudioMaxSeconds = 0.11;  // ~65 ms en el ring + ~43 ms ya en AudioQueue
+std::atomic<unsigned> g_audioWaits{0};
+
 void runLoop() {
   using clock = std::chrono::steady_clock;
   auto next = clock::now();
   auto statsStart = next;
   int statsFrames = 0;
+  bool wasPaused = false;
   while (g_running) {
     const double fps = g_fps.load();
+    // Al despausar (menú, cambio de app, carga de estado): el reloj empieza de cero, sin
+    // ráfaga de frames para "ponerse al día"
+    const bool pausedNow = g_paused.load();
+    if (wasPaused && !pausedNow) {
+      next = clock::now();
+      statsStart = next;
+      statsFrames = 0;
+    }
+    wasPaused = pausedNow;
     const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
     if (!g_paused) {
       std::lock_guard<std::mutex> lock(g_coreMutex);
@@ -1099,6 +1121,13 @@ void runLoop() {
         if (g_audioStatus) g_audioStatus(true, g_audio.occupancy(), g_audio.underrunLikely());
         g_core.run();
       }
+    }
+    // Reloj maestro de audio: con más de ~60 ms pendientes de sonar, se espera a que el
+    // altavoz los consuma. Garantiza 1.00x aunque el núcleo genere frames de más (N64, PSP…).
+    if (!g_paused && g_audio.waitForRoom(kAudioMaxSeconds, std::chrono::milliseconds(120))) {
+      g_audioWaits.fetch_add(1, std::memory_order_relaxed);
+      const auto after = clock::now();
+      if (next < after) next = after;  // el audio manda: el temporizador no acelera después
     }
     next += period;
     const auto now = clock::now();
@@ -1690,6 +1719,14 @@ double measuredFps() { return g_measuredFps.load(); }
 
 void setOption(const char *key, const char *value) {
   if (!key || !value) return;
+  // Pseudo-opción del frontend: dispositivo del puerto 2 (SNES multitap = subclase 0 de JOYPAD,
+  // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0) = 0x101). Con él, J2-J4 se leen de los puertos 1-3.
+  if (std::strcmp(key, "jl_port1_device") == 0) {
+    const unsigned device = unsigned(std::strtoul(value, nullptr, 0));
+    std::lock_guard<std::mutex> lock(g_coreMutex);
+    if (g_gameLoaded && g_core.setControllerPortDevice) g_core.setControllerPortDevice(1, device);
+    return;
+  }
   {
     std::lock_guard<std::mutex> lock(g_optionsMutex);
     auto &slot = g_userOptions[key];
@@ -1712,11 +1749,12 @@ std::string debugState() {
                 "UI pulsado (ult. 0.5s) btn=%04x\n"
                 "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
                 "stick devuelto x=%d y=%d\n"
-                "velocidad %.2f fps (objetivo %.2f)\n"
+                "velocidad %.0f%% (%.2f / %.2f fps) · audio %.0f ms · esperas audio %u\n"
                 "frame %ux%u pitch=%u (esperado %u)\n"
                 "color col0=#%06x col1=#%06x centro=#%06x",
                 g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
-                reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_measuredFps.load(), g_fps.load(),
+                reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_fps.load() > 0 ? g_measuredFps.load() / g_fps.load() * 100.0 : 0.0,
+                g_measuredFps.load(), g_fps.load(), g_audio.bufferedSeconds() * 1000.0, g_audioWaits.load(),
                 g_dbgFrameW.load(), g_dbgFrameH.load(),
                 g_dbgFramePitch.load(), g_dbgFrameW.load() * g_dbgFrameBpp.load(), g_dbgCol0.load(),
                 g_dbgCol1.load(), g_dbgColMid.load());

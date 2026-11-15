@@ -20,6 +20,15 @@ export const ROM_EXTENSIONS = [
   '.pbp',
   '.sms',
   '.gg',
+  '.sfc',
+  '.smc',
+  '.fig',
+  '.swc',
+  '.nes',
+  '.fds',
+  '.unf',
+  '.gb',
+  '.gbc',
 ];
 
 export function hasRomExtension(name: string): boolean {

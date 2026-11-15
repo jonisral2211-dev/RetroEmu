@@ -9,6 +9,7 @@
 #import <ReactCommon/RCTTurboModule.h>
 #import <RNLibretroSpec/RNLibretroSpec.h>
 
+#import <PhotosUI/PhotosUI.h>
 #import <objc/runtime.h>
 
 #include <memory>
@@ -22,24 +23,85 @@
 #include "RomInspector.hpp"
 #include "Unpack.hpp"
 
+// ---- Selector de imagen de Fotos (Biblioteca → "Cambiar miniatura") -------------------------
+// PHPicker no pide permiso de acceso a Fotos: el usuario solo comparte la imagen que elige.
+@interface JLImagePicker : NSObject <PHPickerViewControllerDelegate>
+@property(nonatomic, copy) NSString *dest;
+@property(nonatomic, copy) void (^done)(BOOL ok);
+@end
+
+static JLImagePicker *g_imagePicker;  // vivo mientras el selector está abierto
+
+@implementation JLImagePicker
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+  [picker dismissViewControllerAnimated:YES completion:nil];
+  void (^finish)(BOOL) = self.done;
+  NSString *dest = self.dest;
+  g_imagePicker = nil;
+  NSItemProvider *provider = results.firstObject.itemProvider;
+  if (!provider || ![provider canLoadObjectOfClass:UIImage.class]) {
+    finish(NO);
+    return;
+  }
+  [provider loadObjectOfClass:UIImage.class
+            completionHandler:^(id<NSItemProviderReading> object, NSError *error) {
+              UIImage *image = [(NSObject *)object isKindOfClass:UIImage.class] ? (UIImage *)object : nil;
+              BOOL ok = NO;
+              if (image && image.size.width > 0 && image.size.height > 0) {
+                // Carátula: como mucho 640 px de lado (carga instantánea en la cuadrícula)
+                const CGFloat scale = MIN(1.0, 640.0 / MAX(image.size.width, image.size.height));
+                const CGSize size = CGSizeMake(round(image.size.width * scale), round(image.size.height * scale));
+                UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+                format.scale = 1;
+                UIImage *small = [[[UIGraphicsImageRenderer alloc] initWithSize:size format:format]
+                    imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+                      [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
+                    }];
+                [NSFileManager.defaultManager createDirectoryAtPath:dest.stringByDeletingLastPathComponent
+                                        withIntermediateDirectories:YES
+                                                         attributes:nil
+                                                              error:nil];
+                ok = [UIImagePNGRepresentation(small) writeToFile:dest atomically:YES];
+              }
+              finish(ok);
+            }];
+}
+@end
+
+static UIViewController *topViewController(void) {
+  UIViewController *top = nil;
+  for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    if (![scene isKindOfClass:UIWindowScene.class]) continue;
+    for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+      if (w.isKeyWindow) top = w.rootViewController;
+    }
+  }
+  while (top.presentedViewController) top = top.presentedViewController;
+  return top;
+}
+
 static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
 }
 
 // Carpetas dentro de Documents: una por consola + states/ (save states)
 static NSArray<NSString *> *consoleFolders(void) {
-  return @[ @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"states" ];
+  return @[
+    @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"snes", @"nes", @"gb", @"gbc",
+    @"states"
+  ];
 }
 
 // Consolas que aún no tienen núcleo en la app: el organizador las aparta en su carpeta
 static NSDictionary<NSString *, NSString *> *unsupportedFolders(void) {
-  return @{@"gb" : @"gb", @"gbc" : @"gbc", @"nes" : @"nes", @"fds" : @"nes", @"sfc" : @"snes", @"smc" : @"snes"};
+  // SNES, NES, GB y GBC ya tienen núcleo (Snes9x, FCEUmm, Gambatte): de momento ninguna
+  return @{};
 }
 
 // Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
 // fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
 static NSArray<NSString *> *unpackFolders(void) {
-  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds" ];
+  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc" ];
 }
 // Descargas comprimidas grandes (o .7z): se descomprimen en segundo plano a la raíz de Documents
 // y desde ahí la auto-organización reparte cada juego en su carpeta
@@ -154,7 +216,17 @@ static romzip::Folders romFolders(NSString *docs) {
   f.n64 = [docs stringByAppendingPathComponent:@"n64"].UTF8String;
   f.sega = [docs stringByAppendingPathComponent:@"sega"].UTF8String;
   f.nds = [docs stringByAppendingPathComponent:@"nds"].UTF8String;
+  f.snes = [docs stringByAppendingPathComponent:@"snes"].UTF8String;
+  f.nes = [docs stringByAppendingPathComponent:@"nes"].UTF8String;
+  f.gb = [docs stringByAppendingPathComponent:@"gb"].UTF8String;
+  f.gbc = [docs stringByAppendingPathComponent:@"gbc"].UTF8String;
   return f;
+}
+
+// gb/ y gbc/ comparten núcleo (Gambatte): un juego en cualquiera de las dos está bien colocado
+static BOOL isGameBoyPair(NSString *a, NSString *b) {
+  NSArray<NSString *> *pair = @[ @"gb", @"gbc" ];
+  return [pair containsObject:a] && [pair containsObject:b];
 }
 
 // Consola de un tipo de ROM verificado por contenido (nil = no verificada)
@@ -167,6 +239,10 @@ static NSString *consoleForKind(romcheck::Kind kind) {
     case romcheck::Kind::NDS: return @"nds";
     case romcheck::Kind::Saturn: return @"saturn";
     case romcheck::Kind::PSP: return @"psp";
+    case romcheck::Kind::SNES: return @"snes";
+    case romcheck::Kind::NES: return @"nes";
+    case romcheck::Kind::GB: return @"gb";
+    case romcheck::Kind::GBC: return @"gbc";
     default: return nil;
   }
 }
@@ -418,7 +494,8 @@ static NSString *folderForExtension(NSString *ext) {
     map = @{
       @"gba" : @"gba", @"agb" : @"gba", @"n64" : @"n64", @"z64" : @"n64", @"v64" : @"n64", @"nds" : @"nds",
       @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"sms" : @"sega", @"gg" : @"sega", @"sg" : @"sega",
-      @"cso" : @"psp",
+      @"cso" : @"psp", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
+      @"fds" : @"nes", @"unf" : @"nes", @"unif" : @"nes", @"gb" : @"gb", @"dmg" : @"gb", @"sgb" : @"gb", @"gbc" : @"gbc",
     };
   });
   return map[ext] ?: unsupportedFolders()[ext];
@@ -467,8 +544,8 @@ static NSString *folderLabel(NSString *folder) {
     labels = @{
       @"psp" : @"PSP", @"ps1" : @"PlayStation", @"n64" : @"Nintendo 64", @"gba" : @"Game Boy Advance",
       @"nds" : @"Nintendo DS", @"sega" : @"Sega", @"saturn" : @"Saturn", @"arcade" : @"Arcade",
-      @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy (sin núcleo)",
-      @"gbc" : @"Game Boy Color (sin núcleo)", @"nes" : @"NES (sin núcleo)", @"snes" : @"Super Nintendo (sin núcleo)",
+      @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy",
+      @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo",
     };
   });
   return labels[folder] ?: folder;
@@ -480,7 +557,9 @@ static NSArray<NSDictionary *> *scanMisplaced(NSString *docs) {
   NSFileManager *fm = NSFileManager.defaultManager;
   NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
   NSArray<NSString *> *scan = [@[ @"", @"Download", @"Downloads", @"Descargas", @"Inbox" ]
-      arrayByAddingObjectsFromArray:@[ @"psp", @"ps1", @"n64", @"gba", @"nds", @"sega", @"saturn", @"arcade", @"fbneo" ]];
+      arrayByAddingObjectsFromArray:@[
+        @"psp", @"ps1", @"n64", @"gba", @"nds", @"sega", @"saturn", @"arcade", @"fbneo", @"snes", @"nes", @"gb", @"gbc"
+      ]];
   NSMutableSet<NSString *> *tracks = [NSMutableSet set];
   for (NSString *dirName in scan) {
     NSString *dir = dirName.length ? [docs stringByAppendingPathComponent:dirName] : docs;
@@ -507,7 +586,7 @@ static NSArray<NSDictionary *> *scanMisplaced(NSString *docs) {
       // En una carpeta de consola, los .zip/.7z ya se descomprimen solos
       if (consoleDir && [unpackFolders() containsObject:dirName] && ([ext isEqualToString:@"zip"] || [ext isEqualToString:@"7z"])) continue;
       NSString *to = classifyFile(full, dirName);
-      if (!to || [to isEqualToString:dirName]) continue;
+      if (!to || [to isEqualToString:dirName] || isGameBoyPair(to, dirName)) continue;
       if ([to isEqualToString:@"arcade"] && [dirName isEqualToString:@"fbneo"]) continue;
       [out addObject:@{
         @"path" : full,
@@ -748,6 +827,9 @@ RCT_EXPORT_MODULE(Libretro)
     @"yabause" : @"yabause_libretro",
     @"fbneo" : @"fbneo_libretro",
     @"ppsspp" : @"ppsspp_libretro",
+    @"snes9x" : @"snes9x_libretro",
+    @"fceumm" : @"fceumm_libretro",
+    @"gambatte" : @"gambatte_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
@@ -916,7 +998,7 @@ RCT_EXPORT_MODULE(Libretro)
           NSString *ext = f.pathExtension.lowercaseString;
           if ([ext isEqualToString:@"cue"] || [ext isEqualToString:@"bin"]) continue;
           NSString *console = consoleForKind(sniffFile(f));
-          if (console && ![console isEqualToString:folder]) {
+          if (console && ![console isEqualToString:folder] && !isGameBoyPair(console, folder)) {
             moveIfFree(f, [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:f.lastPathComponent]);
           }
         }
@@ -1051,6 +1133,36 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (void)setTVOptions:(BOOL)stretch smooth:(BOOL)smooth playing:(BOOL)playing {
   [[TVOutput shared] setStretch:stretch smooth:smooth playing:playing];
+}
+
+// Abre Fotos y guarda la imagen elegida (PNG) en destPath. Resuelve true si se guardó.
+- (void)pickImage:(NSString *)destPath resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  NSString *docs = documentsDirectory();
+  NSString *dest = normalizeRomPath(destPath);
+  if (![dest hasPrefix:docs] || [dest containsString:@".."]) {
+    resolve(@NO);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = topViewController();
+    if (!top || g_imagePicker) {
+      resolve(@NO);
+      return;
+    }
+    PHPickerConfiguration *config = [[PHPickerConfiguration alloc] init];
+    config.filter = [PHPickerFilter imagesFilter];
+    config.selectionLimit = 1;
+    PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:config];
+    picker.modalInPresentation = YES;  // se cierra con Cancelar: así siempre hay respuesta
+    JLImagePicker *handler = [JLImagePicker new];
+    handler.dest = dest;
+    handler.done = ^(BOOL ok) {
+      resolve(@(ok));
+    };
+    g_imagePicker = handler;
+    picker.delegate = handler;
+    [top presentViewController:picker animated:YES completion:nil];
+  });
 }
 
 - (void)showAirPlayPicker {
@@ -1384,7 +1496,11 @@ RCT_EXPORT_MODULE(Libretro)
     if (isInDocsFolder(path, @"sega")) return @"sega";  // Mega-CD
     return isInDocsFolder(path, @"saturn") ? @"saturn" : @"ps1";
   }
-  return consoleForKind(sniffFile(path)) ?: @"";
+  NSString *console = consoleForKind(sniffFile(path));
+  // Game Boy y Game Boy Color comparten núcleo: se respeta la carpeta elegida por el usuario
+  if ([console isEqualToString:@"gb"] && isInDocsFolder(path, @"gbc")) return @"gbc";
+  if ([console isEqualToString:@"gbc"] && isInDocsFolder(path, @"gb")) return @"gb";
+  return console ?: @"";
 }
 
 @end

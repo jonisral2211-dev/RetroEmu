@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import {
   CoreId,
@@ -81,10 +82,45 @@ function slotsFor(core: CoreId | null): { save: number; auto: number } {
 
 const isNdsCore = (c: CoreId | null) => c === 'melonds' || c === 'desmume';
 
-// Disposición de las dos pantallas de DS: apiladas en vertical, lado a lado en horizontal
-function setNdsLayout(landscape: boolean) {
-  Libretro.setCoreOption('melonds_screen_layout', landscape ? 'Left/Right' : 'Top/Bottom');
-  Libretro.setCoreOption('desmume_screens_layout', landscape ? 'left/right' : 'top/bottom');
+// Disposición de las dos pantallas de DS: apiladas en vertical, lado a lado en horizontal.
+// 'swap' intercambia las pantallas; 'top'/'bottom' muestran una sola (la táctil sigue
+// funcionando tocando la imagen: el núcleo traduce el puntero según su disposición).
+// Diseño del mando web (/play?type=) que corresponde a cada núcleo
+const WEB_PAD_TYPE: Record<CoreId, string> = {
+  mgba: 'gba', genesis: 'arcade', mupen64: 'n64', mame: 'arcade', pcsx: 'ps', melonds: 'snes', desmume: 'snes',
+  yabause: 'arcade', fbneo: 'arcade', ppsspp: 'ps', snes9x: 'snes', fceumm: 'nes', gambatte: 'nes',
+};
+
+export type NdsScreen = 'both' | 'swap' | 'top' | 'bottom';
+let ndsScreenMode: NdsScreen = 'both';
+
+function setNdsLayout(landscape: boolean, mode: NdsScreen = ndsScreenMode) {
+  ndsScreenMode = mode;
+  const melon =
+    mode === 'top' ? 'Top Only' : mode === 'bottom' ? 'Bottom Only'
+    : mode === 'swap' ? (landscape ? 'Right/Left' : 'Bottom/Top') : landscape ? 'Left/Right' : 'Top/Bottom';
+  const desmume =
+    mode === 'top' ? 'top only' : mode === 'bottom' ? 'bottom only'
+    : mode === 'swap' ? (landscape ? 'right/left' : 'bottom/top') : landscape ? 'left/right' : 'top/bottom';
+  Libretro.setCoreOption('melonds_screen_layout', melon);
+  Libretro.setCoreOption('desmume_screens_layout', desmume);
+}
+
+// Paleta de los juegos de Game Boy clásico (Gambatte). 'auto' = colores de GBC por juego.
+export type GbPalette = 'auto' | 'dmg' | 'pocket' | 'light' | 'gray';
+const GB_PALETTE: Record<GbPalette, [string, string]> = {
+  auto: ['auto', 'GB - DMG'],
+  dmg: ['internal', 'GB - DMG'],
+  pocket: ['internal', 'GB - Pocket'],
+  light: ['internal', 'GB - Light'],
+  gray: ['internal', 'GBC - Grayscale'],
+};
+const GB_PALETTE_KEY = 'jl.gbpalette.v1';
+
+function applyGbPalette(p: GbPalette) {
+  const [colorization, palette] = GB_PALETTE[p] ?? GB_PALETTE.auto;
+  Libretro.setCoreOption('gambatte_gb_colorization', colorization);
+  Libretro.setCoreOption('gambatte_gb_internal_palette', palette);
 }
 
 // Rectángulo de la imagen dentro de una vista (mismo cálculo que el letterbox de Metal)
@@ -267,6 +303,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const fourPlayers = (webPad.seats & 0b1100) !== 0 || physicalCount > 2;
   useEffect(() => {
     if (core === 'pcsx' && ready) Libretro.setCoreOption('pcsx_rearmed_multitap', fourPlayers ? 'port 1' : 'disabled');
+    // SNES: Super Multitap en el puerto 2 -> J2-J4 en los puertos 1-3 (Snes9x).
+    // 257 = RETRO_DEVICE_SUBCLASS(JOYPAD, 0); 1 = mando normal.
+    if (core === 'snes9x' && ready) Libretro.setCoreOption('jl_port1_device', fourPlayers ? '257' : '1');
   }, [core, ready, fourPlayers]);
   const online = net.phase !== 'idle';
 
@@ -420,10 +459,28 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   }, [romPath, baseCore]);
 
   // DS: al girar el iPhone las pantallas pasan de apiladas a lado a lado (en caliente)
+  const [ndsScreen, setNdsScreen] = useState<NdsScreen>(ndsScreenMode);
   useEffect(() => {
     // En la TV las dos pantallas van apiladas (como la consola)
-    if (ready && isNdsCore(core)) setNdsLayout(landscape && !tvConnected);
-  }, [ready, core, landscape, tvConnected]);
+    if (ready && isNdsCore(core)) setNdsLayout(landscape && !tvConnected, ndsScreen);
+  }, [ready, core, landscape, tvConnected, ndsScreen]);
+
+  // Game Boy: paleta clásica elegida (recordada en el dispositivo)
+  const [gbPalette, setGbPalette] = useState<GbPalette>('auto');
+  useEffect(() => {
+    AsyncStorage.getItem(GB_PALETTE_KEY)
+      .then((v) => {
+        if (v && v in GB_PALETTE) setGbPalette(v as GbPalette);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (core === 'gambatte') applyGbPalette(gbPalette);
+  }, [core, gbPalette]);
+  const chooseGbPalette = (p: GbPalette) => {
+    setGbPalette(p);
+    AsyncStorage.setItem(GB_PALETTE_KEY, p).catch(() => {});
+  };
 
   // PS1: resolución interna 1x (fluido, por defecto) o 2x HD. Se aplica en caliente.
   const [ps1Hd, setPs1Hd] = useState(false);
@@ -730,6 +787,42 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       webPad={webPad}
       tvOrient={tvOrient}
       onTvOrient={setTvOrient}
+      webPadType={WEB_PAD_TYPE[core ?? 'mame']}
+      extras={[
+        ...(isNdsCore(core)
+          ? [
+              {
+                label: 'Pantallas DS',
+                value: ndsScreen,
+                onChange: (v: string) => setNdsScreen(v as NdsScreen),
+                options: [
+                  { id: 'both', label: 'Ambas' },
+                  { id: 'swap', label: 'Cambiar pantalla' },
+                  { id: 'top', label: 'Solo superior' },
+                  { id: 'bottom', label: 'Solo táctil' },
+                ],
+                note: 'Toca directamente la pantalla inferior con el dedo para usar la pantalla táctil.',
+              },
+            ]
+          : []),
+        ...(core === 'gambatte'
+          ? [
+              {
+                label: 'Paleta Game Boy',
+                value: gbPalette,
+                onChange: (v: string) => chooseGbPalette(v as GbPalette),
+                options: [
+                  { id: 'auto', label: 'Color auto' },
+                  { id: 'dmg', label: 'Verde clásico' },
+                  { id: 'pocket', label: 'Pocket' },
+                  { id: 'light', label: 'Light' },
+                  { id: 'gray', label: 'Gris' },
+                ],
+                note: 'Se aplica a los juegos de Game Boy clásico; los de Game Boy Color usan sus colores.',
+              },
+            ]
+          : []),
+      ]}
     />
   ) : null;
   const controllerScreen = controllerTest ? (
