@@ -22,6 +22,8 @@ PAGE = (Path(__file__).with_name("webpad.html")).read_bytes()
 
 # código -> (writer de la app, asyncio.Lock para escribir líneas sin mezclarlas)
 pads: dict[str, tuple[asyncio.StreamWriter, asyncio.Lock]] = {}
+# código -> navegadores conectados (para reenviarles la vibración del juego)
+viewers: dict[str, set] = {}
 
 
 def new_code(taken) -> str:
@@ -55,16 +57,27 @@ async def pad_host(reader, writer, taken):
     try:
         while True:
             try:
-                data = await asyncio.wait_for(reader.read(256), timeout=20)
-                if not data:
+                raw = await asyncio.wait_for(reader.readline(), timeout=20)
+                if not raw:
                     break
             except asyncio.TimeoutError:
                 if not await send_line(code, "PING"):
                     break
+                continue
+            # "R fuerte débil" (0-100): vibración del Jugador 2 que manda el juego
+            parts = raw.decode("ascii", "ignore").split()
+            if len(parts) == 3 and parts[0] == "R":
+                frame = ws_frame(1, f"rumble:{parts[1]},{parts[2]}".encode())
+                for w in list(viewers.get(code, ())):
+                    try:
+                        w.write(frame)
+                    except Exception:
+                        viewers.get(code, set()).discard(w)
     except Exception:
         pass
     finally:
         pads.pop(code, None)
+        viewers.pop(code, None)
         writer.close()
         print(f"mando web {code} cerrado", flush=True)
 
@@ -104,6 +117,7 @@ async def websocket(reader, writer, code: str):
         await writer.drain()
         return
     await send_line(code, "J")
+    viewers.setdefault(code, set()).add(writer)
     writer.write(ws_frame(1, b"ok"))
     await writer.drain()
     print(f"mando web {code}: jugador conectado", flush=True)
@@ -138,6 +152,7 @@ async def websocket(reader, writer, code: str):
     except (asyncio.IncompleteReadError, ConnectionError):
         pass
     finally:
+        viewers.get(code, set()).discard(writer)
         await send_line(code, "P 0 0 0")
         await send_line(code, "L")
         print(f"mando web {code}: jugador desconectado", flush=True)

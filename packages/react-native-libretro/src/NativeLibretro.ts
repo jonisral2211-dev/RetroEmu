@@ -81,6 +81,8 @@ export interface Spec extends TurboModule {
   discoverControllers(): void;
   /** Bloquea la interfaz del iPhone en vertical (modo control mientras se transmite a la TV). */
   setOrientationLock(portrait: boolean): void;
+  /** Orientación de la interfaz: 'portrait', 'landscape', 'auto' (libre) o 'normal'. */
+  setOrientationMode(mode: string): void;
   /** Intercambia Jugador 1 y Jugador 2 entre los dos mandos físicos. */
   swapPlayers(): void;
   /** Vibración háptica breve (0..1 = intensidad). */

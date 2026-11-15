@@ -155,6 +155,8 @@ export type GameMenuProps = {
   onForceController: (v: boolean) => void;
   onControllerTest: () => void;
   webPad: WebPadState;
+  tvOrient: 'portrait' | 'landscape' | 'auto';
+  onTvOrient: (v: 'portrait' | 'landscape' | 'auto') => void;
 };
 
 function webPadLink(host: string, code: string): string {
@@ -409,6 +411,20 @@ export function GameMenu(p: GameMenuProps) {
                 onPress={() => p.onForceController(!p.forceController)}
               />
             ) : null}
+            <Segmented
+              label="Orientación del control en TV"
+              value={p.tvOrient}
+              onChange={p.onTvOrient}
+              options={[
+                { id: 'portrait', label: 'Vertical (Palanca)' },
+                { id: 'landscape', label: 'Horizontal (Mando)' },
+                { id: 'auto', label: 'Automático' },
+              ]}
+            />
+            <Text style={styles.note}>
+              Vertical: palanca bloqueada en vertical · Horizontal: mando clásico con las dos manos, como PSP/PS1 ·
+              Automático: gira con el teléfono. El vídeo sigue fijo en la TV.
+            </Text>
             <Segmented
               label="Imagen en la TV"
               value={p.tvStretch ? 'fill' : 'orig'}

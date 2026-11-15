@@ -887,6 +887,16 @@ RCT_EXPORT_MODULE(Libretro)
   });
 }
 
+// 'portrait' | 'landscape' | 'auto' (gira libremente) | cualquier otro = normal
+- (void)setOrientationMode:(NSString *)mode {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIInterfaceOrientationMask mask = UIInterfaceOrientationMaskAllButUpsideDown;
+    if ([mode isEqualToString:@"portrait"]) mask = UIInterfaceOrientationMaskPortrait;
+    if ([mode isEqualToString:@"landscape"]) mask = UIInterfaceOrientationMaskLandscape;
+    applyOrientationMask(mask);
+  });
+}
+
 - (void)swapPlayers {
   [[GamepadBridge sharedBridge] swapPlayers];
 }

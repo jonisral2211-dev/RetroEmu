@@ -4,37 +4,46 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JL Mando">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0D0E12">
 <title>JL Emulator · Mando</title>
 <style>
-  :root { --bg:#0D0E12; --surface:#15171D; --border:#2A2E37; --text:#ECEDEF; --dim:#7D828C; --gold:#D4AF37; }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); overflow:hidden;
+  :root { --bg:#0D0E12; --surface:#15171D; --border:#2A2E37; --text:#ECEDEF; --dim:#7D828C; --gold:#D4AF37;
+    --pad-top:calc(18px + env(safe-area-inset-top)); --pad-right:calc(18px + env(safe-area-inset-right));
+    --pad-bottom:calc(18px + env(safe-area-inset-bottom)); --pad-left:calc(18px + env(safe-area-inset-left)); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  html, body { margin:0; position:fixed; inset:0; width:100vw; height:100dvh; overflow:hidden; background:var(--bg); color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; touch-action:none; overscroll-behavior:none; }
-  #join { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:24px; }
+  #join { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+    padding:var(--pad-top) var(--pad-right) var(--pad-bottom) var(--pad-left); }
   .brand { font-weight:900; letter-spacing:4px; color:var(--gold); font-size:26px; }
   .brand span { color:var(--text); font-weight:300; }
   .sub { color:var(--dim); font-size:14px; text-align:center; max-width:340px; line-height:1.4; }
-  input { width:min(320px,90vw); font-size:34px; letter-spacing:10px; text-align:center; text-transform:uppercase;
+  input#code { width:min(320px,86vw); font-size:34px; letter-spacing:10px; text-align:center; text-transform:uppercase;
     background:var(--surface); color:var(--text); border:1px solid var(--gold); border-radius:14px; padding:12px; outline:none; -webkit-user-select:text; user-select:text; }
   .types { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:360px; }
-  .type { padding:10px 14px; border-radius:20px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:14px; font-weight:600; }
+  .type, .chip { padding:10px 14px; border-radius:20px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:14px; font-weight:600; }
   .type.on { background:var(--gold); color:var(--bg); border-color:var(--gold); }
   .go { padding:14px 34px; border-radius:24px; border:none; background:var(--gold); color:var(--bg); font-size:17px; font-weight:900; }
   #msg { min-height:20px; color:#F87171; font-size:14px; text-align:center; }
+  .hint { max-width:340px; font-size:12px; color:var(--dim); text-align:center; line-height:1.45; border:1px dashed var(--border); border-radius:12px; padding:8px 10px; display:none; }
   #pad { position:fixed; inset:0; display:none; }
-  #status { position:absolute; top:max(8px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); font-size:12px; color:#4ADE80; font-weight:700; white-space:nowrap; }
-  #leave { position:absolute; top:max(6px,env(safe-area-inset-top)); right:max(10px,env(safe-area-inset-right)); font-size:12px; color:var(--gold); border:1px solid var(--gold); border-radius:14px; padding:5px 10px; background:transparent; }
+  #bar { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(6px + env(safe-area-inset-top)); height:30px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px; z-index:2; }
+  #status { flex:1; text-align:center; font-size:12px; color:#4ADE80; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .small { font-size:11px; padding:5px 9px; border-radius:12px; border:1px solid var(--gold); color:var(--gold); background:transparent; font-weight:700; }
+  /* Zona de controles: margen de 18 px + zonas seguras, bajo la barra superior */
+  #area { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(var(--pad-top) + 26px); bottom:var(--pad-bottom); }
   .ctl { position:absolute; display:flex; align-items:center; justify-content:center; border-radius:50%;
-    border:2px solid rgba(255,255,255,.28); background:rgba(255,255,255,.08); color:rgba(255,255,255,.88);
+    border:2px solid rgba(255,255,255,.28); background:rgba(255,255,255,.08); color:rgba(255,255,255,.9);
     font-weight:800; transform:translate(-50%,-50%); pointer-events:none; text-shadow:0 1px 3px #000; }
   .ctl.rect { border-radius:12px; }
   .ctl.on { background:rgba(255,255,255,.42); transform:translate(-50%,-50%) scale(.93); }
   .base { border-color:rgba(212,175,55,.6); background:rgba(0,0,0,.35); }
   .knob { position:absolute; width:46%; height:46%; border-radius:50%; background:rgba(255,255,255,.35); border:2px solid rgba(255,255,255,.7); left:27%; top:27%; }
-  #rotate { position:fixed; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:30px; background:rgba(13,14,18,.92); color:var(--gold); font-weight:800; font-size:18px; }
-  @media (orientation: portrait) { body.playing #rotate { display:flex; } }
+  #haptic { position:fixed; left:-200px; top:-200px; opacity:0; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -45,52 +54,103 @@
   <div class="types" id="types"></div>
   <button class="go" id="go">Conectar</button>
   <div id="msg"></div>
+  <div class="hint" id="iosHint">En iPhone, para ocultar del todo la barra de Safari: toca Compartir ⎋ → <b>Añadir a pantalla de inicio</b> y abre el mando desde ese icono.</div>
 </div>
-<div id="pad"><div id="status"></div><button id="leave">Salir</button></div>
-<div id="rotate">Gira el móvil en horizontal para usar el mando</div>
+<div id="pad">
+  <div id="bar">
+    <button class="small" id="vib">Vibración: ON</button>
+    <div id="status"></div>
+    <button class="small" id="fs">Pantalla completa</button>
+    <button class="small" id="leave">Salir</button>
+  </div>
+  <div id="area"></div>
+</div>
+<label id="haptic"><input type="checkbox" switch id="hapticSwitch"></label>
 <script>
 'use strict';
 // Bits RETRO_DEVICE_ID_JOYPAD_*
 const B = { B:1, Y:2, SELECT:4, START:8, UP:16, DOWN:32, LEFT:64, RIGHT:128, A:256, X:512, L:1024, R:2048, L2:4096, R2:8192 };
+const DIRS = B.UP | B.DOWN | B.LEFT | B.RIGHT;
 const GRAY = '#9aa0a8';
-// Controles: x/y = centro en % de la pantalla (horizontal); s = tamaño en % del lado menor
+// x/y = centro en % de la zona de controles; s = diámetro en % de su lado menor; w/h = % de ancho/alto
+const btn = (t, b, x, y, s, c) => ({ k: 'btn', t, b, x, y, s, c });
+const rect = (t, b, x, y, w, h, c) => ({ k: 'rect', t, b, x, y, w, h, c });
 const LAYOUTS = {
-  arcade: { name: 'Arcade / Neo Geo', controls: [
-    { k: 'stick', x: 20, y: 60, s: 52, digital: true },
-    { k: 'btn', t: 'A', b: B.B, x: 62, y: 70, s: 19, c: '#f87171' }, { k: 'btn', t: 'B', b: B.A, x: 76, y: 62, s: 19, c: '#facc15' },
-    { k: 'btn', t: 'C', b: B.Y, x: 62, y: 44, s: 19, c: '#f0abfc' }, { k: 'btn', t: 'D', b: B.X, x: 76, y: 36, s: 19, c: '#60a5fa' },
-    { k: 'btn', t: 'E', b: B.L, x: 90, y: 54, s: 16 }, { k: 'btn', t: 'F', b: B.R, x: 90, y: 28, s: 16 },
-    { k: 'rect', t: 'COIN', b: B.SELECT, x: 40, y: 12, w: 16, h: 9, c: '#facc15' }, { k: 'rect', t: 'START', b: B.START, x: 60, y: 12, w: 16, h: 9 },
-  ] },
-  ps: { name: 'PlayStation / PSP', controls: [
-    { k: 'dpad', x: 16, y: 44, s: 40 }, { k: 'stick', x: 33, y: 76, s: 34 },
-    { k: 'btn', t: '△', b: B.X, x: 84, y: 30, s: 17, c: '#22c55e' }, { k: 'btn', t: '○', b: B.A, x: 93, y: 50, s: 17, c: '#ef4444' },
-    { k: 'btn', t: '✕', b: B.B, x: 84, y: 70, s: 17, c: '#3b82f6' }, { k: 'btn', t: '□', b: B.Y, x: 75, y: 50, s: 17, c: '#ec4899' },
-    { k: 'rect', t: 'L2', b: B.L2, x: 6, y: 10, w: 10, h: 9, c: GRAY }, { k: 'rect', t: 'L1', b: B.L, x: 19, y: 10, w: 13, h: 9, c: GRAY },
-    { k: 'rect', t: 'R1', b: B.R, x: 81, y: 10, w: 13, h: 9, c: GRAY }, { k: 'rect', t: 'R2', b: B.R2, x: 94, y: 10, w: 10, h: 9, c: GRAY },
-    { k: 'rect', t: 'SELECT', b: B.SELECT, x: 44, y: 88, w: 13, h: 8 }, { k: 'rect', t: 'START', b: B.START, x: 58, y: 88, w: 13, h: 8 },
-  ] },
-  n64: { name: 'Nintendo 64', controls: [
-    { k: 'stick', x: 22, y: 62, s: 48 }, { k: 'dpad', x: 8, y: 22, s: 22 },
-    { k: 'btn', t: 'A', b: B.B, x: 82, y: 70, s: 21, c: '#3b82f6' }, { k: 'btn', t: 'B', b: B.Y, x: 70, y: 56, s: 17, c: '#22c55e' },
-    { k: 'btn', t: 'C▲', b: B.X, x: 82, y: 26, s: 13, c: '#facc15' }, { k: 'btn', t: 'C▼', b: B.A, x: 82, y: 46, s: 13, c: '#facc15' },
-    { k: 'btn', t: 'C◀', b: B.L, x: 73, y: 36, s: 13, c: '#facc15' }, { k: 'btn', t: 'C▶', b: B.R, x: 91, y: 36, s: 13, c: '#facc15' },
-    { k: 'rect', t: 'Z', b: B.L2, x: 22, y: 10, w: 12, h: 9, c: GRAY }, { k: 'rect', t: 'L', b: B.SELECT, x: 36, y: 10, w: 10, h: 9, c: GRAY },
-    { k: 'rect', t: 'R', b: B.R2, x: 85, y: 10, w: 14, h: 9, c: GRAY }, { k: 'rect', t: 'START', b: B.START, x: 52, y: 86, w: 14, h: 9, c: '#ef4444' },
-  ] },
-  gba: { name: 'GBA', controls: [
-    { k: 'dpad', x: 20, y: 56, s: 50 },
-    { k: 'btn', t: 'B', b: B.B, x: 72, y: 64, s: 22 }, { k: 'btn', t: 'A', b: B.A, x: 87, y: 48, s: 22 },
-    { k: 'rect', t: 'L', b: B.L, x: 12, y: 10, w: 18, h: 9 }, { k: 'rect', t: 'R', b: B.R, x: 88, y: 10, w: 18, h: 9 },
-    { k: 'rect', t: 'SELECT', b: B.SELECT, x: 43, y: 86, w: 13, h: 8 }, { k: 'rect', t: 'START', b: B.START, x: 57, y: 86, w: 13, h: 8 },
-  ] },
+  arcade: { name: 'Arcade / Neo Geo',
+    landscape: [
+      { k: 'stick', x: 20, y: 58, s: 62, digital: true },
+      btn('A', B.B, 60, 72, 21, '#f87171'), btn('B', B.A, 75, 64, 21, '#facc15'),
+      btn('C', B.Y, 60, 42, 21, '#f0abfc'), btn('D', B.X, 75, 34, 21, '#60a5fa'),
+      btn('E', B.L, 90, 56, 18), btn('F', B.R, 90, 26, 18),
+      rect('COIN', B.SELECT, 38, 6, 14, 11, '#facc15'), rect('START', B.START, 60, 6, 14, 11),
+    ],
+    portrait: [
+      rect('COIN', B.SELECT, 33, 30, 28, 6, '#facc15'), rect('START', B.START, 67, 30, 28, 6),
+      { k: 'stick', x: 26, y: 70, s: 50, digital: true },
+      btn('A', B.B, 64, 58, 20, '#f87171'), btn('B', B.A, 86, 54, 20, '#facc15'),
+      btn('C', B.Y, 64, 71, 20, '#f0abfc'), btn('D', B.X, 86, 67, 20, '#60a5fa'),
+      btn('E', B.L, 64, 84, 18), btn('F', B.R, 86, 80, 18),
+    ] },
+  ps: { name: 'PlayStation / PSP',
+    landscape: [
+      { k: 'dpad', x: 15, y: 40, s: 40 }, { k: 'stick', x: 28, y: 73, s: 30 },
+      btn('△', B.X, 84, 30, 18, '#22c55e'), btn('○', B.A, 94, 52, 18, '#ef4444'),
+      btn('✕', B.B, 84, 74, 18, '#3b82f6'), btn('□', B.Y, 74, 52, 18, '#ec4899'),
+      rect('L2', B.L2, 6, 5, 11, 11, GRAY), rect('L1', B.L, 20, 5, 13, 11, GRAY),
+      rect('R1', B.R, 80, 5, 13, 11, GRAY), rect('R2', B.R2, 94, 5, 11, 11, GRAY),
+      rect('SELECT', B.SELECT, 41, 94, 12, 10), rect('START', B.START, 59, 94, 12, 10),
+    ],
+    portrait: [
+      rect('L2', B.L2, 10, 30, 18, 6, GRAY), rect('L1', B.L, 31, 30, 20, 6, GRAY),
+      rect('R1', B.R, 69, 30, 20, 6, GRAY), rect('R2', B.R2, 90, 30, 18, 6, GRAY),
+      rect('SELECT', B.SELECT, 37, 42, 22, 5), rect('START', B.START, 63, 42, 22, 5),
+      { k: 'dpad', x: 24, y: 62, s: 42 }, { k: 'stick', x: 26, y: 87, s: 30 },
+      btn('△', B.X, 76, 59, 17, '#22c55e'), btn('○', B.A, 91, 71, 17, '#ef4444'),
+      btn('✕', B.B, 76, 83, 17, '#3b82f6'), btn('□', B.Y, 61, 71, 17, '#ec4899'),
+    ] },
+  n64: { name: 'Nintendo 64',
+    landscape: [
+      { k: 'stick', x: 22, y: 62, s: 52 }, { k: 'dpad', x: 7, y: 24, s: 22 },
+      btn('A', B.B, 82, 72, 22, '#3b82f6'), btn('B', B.Y, 69, 58, 18, '#22c55e'),
+      btn('C▲', B.X, 83, 24, 14, '#facc15'), btn('C▼', B.A, 83, 46, 14, '#facc15'),
+      btn('C◀', B.L, 74, 35, 14, '#facc15'), btn('C▶', B.R, 92, 35, 14, '#facc15'),
+      rect('Z', B.L2, 22, 5, 12, 11, GRAY), rect('L', B.SELECT, 36, 5, 10, 11, GRAY),
+      rect('R', B.R2, 86, 5, 14, 11, GRAY), rect('START', B.START, 50, 93, 14, 11, '#ef4444'),
+    ],
+    portrait: [
+      rect('L', B.SELECT, 14, 30, 24, 6, GRAY), rect('Z', B.L2, 40, 30, 22, 6, GRAY), rect('R', B.R2, 82, 30, 30, 6, GRAY),
+      rect('START', B.START, 50, 41, 24, 5, '#ef4444'),
+      { k: 'dpad', x: 17, y: 54, s: 28 },
+      btn('C▲', B.X, 78, 50, 14, '#facc15'), btn('C◀', B.L, 66, 57, 14, '#facc15'),
+      btn('C▶', B.R, 90, 57, 14, '#facc15'), btn('C▼', B.A, 78, 64, 14, '#facc15'),
+      { k: 'stick', x: 28, y: 81, s: 46 },
+      btn('B', B.Y, 66, 78, 18, '#22c55e'), btn('A', B.B, 86, 87, 21, '#3b82f6'),
+    ] },
+  gba: { name: 'GBA',
+    landscape: [
+      { k: 'dpad', x: 20, y: 56, s: 52 },
+      btn('B', B.B, 72, 64, 23), btn('A', B.A, 87, 46, 23),
+      rect('L', B.L, 11, 5, 18, 11), rect('R', B.R, 89, 5, 18, 11),
+      rect('SELECT', B.SELECT, 41, 94, 12, 10), rect('START', B.START, 59, 94, 12, 10),
+    ],
+    portrait: [
+      rect('L', B.L, 18, 30, 30, 6), rect('R', B.R, 82, 30, 30, 6),
+      rect('SELECT', B.SELECT, 37, 42, 22, 5), rect('START', B.START, 63, 42, 22, 5),
+      { k: 'dpad', x: 27, y: 72, s: 48 },
+      btn('B', B.B, 68, 79, 22), btn('A', B.A, 87, 66, 22),
+    ] },
 };
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 let type = params.get('type') || localStorage.getItem('jl.type') || 'arcade';
 if (!LAYOUTS[type]) type = 'arcade';
+let vibOn = localStorage.getItem('jl.vib') !== 'off';
 $('code').value = (params.get('code') || '').toUpperCase();
+if (isIOS && !standalone) $('iosHint').style.display = 'block';
+if (!document.documentElement.requestFullscreen && !document.documentElement.webkitRequestFullscreen) $('fs').style.display = 'none';
 
 function renderTypes() {
   $('types').innerHTML = '';
@@ -104,12 +164,41 @@ function renderTypes() {
 }
 renderTypes();
 
-// ---- Conexión --------------------------------------------------------------------------
-let ws = null, sent = '', state = { b: 0, lx: 0, ly: 0 };
+// ---- Vibración ---------------------------------------------------------------------------
+// Android/Chrome: navigator.vibrate. iPhone/Safari (sin vibrate): pulsar un <input type=checkbox
+// switch> oculto hace sonar el Taptic Engine (iOS 17.4+), siempre dentro de un gesto del usuario.
+function haptic(ms) {
+  if (!vibOn) return;
+  if (navigator.vibrate) { navigator.vibrate(ms); return; }
+  if (isIOS) $('haptic').click();
+}
+function paintVib() { $('vib').textContent = vibOn ? 'Vibración: ON' : 'Vibración: OFF'; }
+paintVib();
+function tap(el, fn) {
+  el.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false });
+  el.addEventListener('click', fn);
+}
+tap($('vib'), () => { vibOn = !vibOn; localStorage.setItem('jl.vib', vibOn ? 'on' : 'off'); paintVib(); haptic(18); });
+tap($('fs'), () => {
+  const d = document.documentElement;
+  (d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : d.webkitRequestFullscreen && d.webkitRequestFullscreen());
+});
+
+// ---- Conexión ----------------------------------------------------------------------------
+let ws = null, sent = '', state = { b: 0, lx: 0, ly: 0 }, rumbleTimer = null;
 function send() {
   const msg = `${state.b},${state.lx},${state.ly}`;
   if (msg === sent || !ws || ws.readyState !== 1) return;
   sent = msg; ws.send(msg);
+}
+function rumble(strong, weak) {
+  clearInterval(rumbleTimer); rumbleTimer = null;
+  const level = Math.max(strong, weak * 0.6) / 100;
+  if (!vibOn || level < 0.05) { if (navigator.vibrate) navigator.vibrate(0); return; }
+  const pulse = () => (navigator.vibrate ? navigator.vibrate(Math.round(40 + 90 * level)) : isIOS && $('haptic').click());
+  pulse();
+  rumbleTimer = setInterval(pulse, 130);
+  setTimeout(() => { clearInterval(rumbleTimer); rumbleTimer = null; }, 1500); // por si no llega el "parar"
 }
 function connect() {
   const code = $('code').value.trim().toUpperCase();
@@ -117,8 +206,10 @@ function connect() {
   $('msg').style.color = '#7D828C'; $('msg').textContent = 'Conectando…';
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?code=${code}`);
   ws.onmessage = (e) => {
-    if (e.data === 'ok') { showPad(code); return; }
-    if (String(e.data).startsWith('err:')) { fail(String(e.data).slice(4)); }
+    const d = String(e.data);
+    if (d === 'ok') { showPad(code); return; }
+    if (d.startsWith('err:')) { fail(d.slice(4)); return; }
+    if (d.startsWith('rumble:')) { const [s, w] = d.slice(7).split(',').map(Number); rumble(s || 0, w || 0); }
   };
   ws.onclose = () => { if (document.body.classList.contains('playing')) fail('Conexión cerrada'); else if ($('msg').textContent === 'Conectando…') fail('No se pudo conectar'); };
 }
@@ -126,67 +217,71 @@ function fail(text) {
   document.body.classList.remove('playing');
   $('pad').style.display = 'none'; $('join').style.display = 'flex';
   $('msg').style.color = '#F87171'; $('msg').textContent = text;
+  rumble(0, 0);
   try { ws && ws.close(); } catch (e) {}
 }
 $('go').onclick = connect;
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
-$('leave').addEventListener('touchend', (e) => { e.preventDefault(); fail('Desconectado'); });
-$('leave').onclick = () => fail('Desconectado');
+tap($('leave'), () => fail('Desconectado'));
 
-// ---- Mando -----------------------------------------------------------------------------
-let controls = [];
-function showPad(code) {
+// ---- Mando -------------------------------------------------------------------------------
+let controls = [], code = '';
+function showPad(c) {
+  code = c;
   document.body.classList.add('playing');
   $('join').style.display = 'none'; $('pad').style.display = 'block';
-  $('status').textContent = `Jugador 2 · sala ${code} · ${LAYOUTS[type].name}`;
   buildPad();
-  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  window.scrollTo(0, 1);
 }
 function buildPad() {
-  document.querySelectorAll('.ctl').forEach((n) => n.remove());
-  const W = innerWidth, H = innerHeight, m = Math.min(W, H);
-  controls = LAYOUTS[type].controls.map((c) => {
+  const area = $('area');
+  area.innerHTML = '';
+  const r = area.getBoundingClientRect(), W = r.width, H = r.height, m = Math.min(W, H);
+  const portrait = H > W;
+  $('status').textContent = `J2 · ${code} · ${LAYOUTS[type].name}`;
+  controls = LAYOUTS[type][portrait ? 'portrait' : 'landscape'].map((c) => {
     const el = document.createElement('div');
     el.className = 'ctl' + (c.k === 'rect' ? ' rect' : '') + (c.k === 'stick' || c.k === 'dpad' ? ' base' : '');
-    const cx = (c.x / 100) * W, cy = (c.y / 100) * H;
     let w, h;
     if (c.k === 'rect') { w = (c.w / 100) * W; h = (c.h / 100) * H; } else { w = h = (c.s / 100) * m; }
+    // Nunca fuera de la zona segura: el centro se ajusta para que el control quepa entero
+    const cx = Math.min(W - w / 2, Math.max(w / 2, (c.x / 100) * W));
+    const cy = Math.min(H - h / 2, Math.max(h / 2, (c.y / 100) * H));
     Object.assign(el.style, { left: cx + 'px', top: cy + 'px', width: w + 'px', height: h + 'px', fontSize: Math.max(12, Math.min(w, h) * 0.32) + 'px' });
     if (c.c) el.style.borderColor = c.c;
     if (c.k === 'btn' || c.k === 'rect') el.textContent = c.t;
     if (c.k === 'dpad') el.textContent = '✚';
     let knob = null;
     if (c.k === 'stick') { knob = document.createElement('div'); knob.className = 'knob'; el.appendChild(knob); }
-    $('pad').appendChild(el);
-    return { ...c, el, knob, cx, cy, w, h, r: Math.min(w, h) / 2 };
+    area.appendChild(el);
+    return { ...c, el, knob, cx: cx + r.left, cy: cy + r.top, w, h, rad: Math.min(w, h) / 2 };
   });
 }
-addEventListener('resize', () => { if (document.body.classList.contains('playing')) buildPad(); });
+addEventListener('resize', () => { if (document.body.classList.contains('playing')) setTimeout(buildPad, 60); });
+addEventListener('orientationchange', () => setTimeout(() => { if (document.body.classList.contains('playing')) buildPad(); }, 250));
 
-const owners = new Map(); // touch.identifier -> índice de stick/cruceta que controla
+const owners = new Map(); // dedo -> stick/cruceta que controla
+let lastDir = 0;
 function dirBits(dx, dy, dead) {
-  let b = 0;
   if (dx * dx + dy * dy < dead * dead) return 0;
   const a = Math.atan2(dy, dx), s = Math.round(a / (Math.PI / 4)), i = ((s % 8) + 8) % 8;
-  const map = [B.RIGHT, B.RIGHT | B.DOWN, B.DOWN, B.LEFT | B.DOWN, B.LEFT, B.LEFT | B.UP, B.UP, B.RIGHT | B.UP];
-  return map[i];
+  return [B.RIGHT, B.RIGHT | B.DOWN, B.DOWN, B.LEFT | B.DOWN, B.LEFT, B.LEFT | B.UP, B.UP, B.RIGHT | B.UP][i];
 }
 function onTouches(e) {
   e.preventDefault();
-  const touches = e.touches;
+  if (e.type === 'touchstart') window.scrollTo(0, 1);
   const live = new Set();
   let bits = 0, lx = 0, ly = 0;
   const knobs = new Map();
-  for (const t of touches) {
+  for (const t of e.touches) {
     live.add(t.identifier);
     let idx = owners.get(t.identifier);
     if (idx === undefined) {
-      // Nuevo dedo: el control más cercano que lo contenga (zona táctil algo mayor que el dibujo)
       let best = -1, bestD = Infinity;
       controls.forEach((c, i) => {
-        let d;
-        if (c.k === 'rect') d = Math.max(Math.abs(t.clientX - c.cx) / (c.w / 2), Math.abs(t.clientY - c.cy) / (c.h / 2));
-        else d = Math.hypot(t.clientX - c.cx, t.clientY - c.cy) / c.r;
+        const d = c.k === 'rect'
+          ? Math.max(Math.abs(t.clientX - c.cx) / (c.w / 2), Math.abs(t.clientY - c.cy) / (c.h / 2))
+          : Math.hypot(t.clientX - c.cx, t.clientY - c.cy) / c.rad;
         if (d <= (c.k === 'stick' || c.k === 'dpad' ? 1.4 : 1.25) && d < bestD) { best = i; bestD = d; }
       });
       if (best < 0) continue;
@@ -195,19 +290,22 @@ function onTouches(e) {
     }
     const c = controls[idx];
     if (c.k === 'btn' || c.k === 'rect') { bits |= c.b; continue; }
-    const dx = (t.clientX - c.cx) / c.r, dy = (t.clientY - c.cy) / c.r, d = Math.hypot(dx, dy), k = d > 1 ? 1 / d : 1;
+    const dx = (t.clientX - c.cx) / c.rad, dy = (t.clientY - c.cy) / c.rad, d = Math.hypot(dx, dy), k = d > 1 ? 1 / d : 1;
     if (c.k === 'dpad') { bits |= dirBits(dx, dy, 0.25); continue; }
     knobs.set(idx, [dx * k, dy * k]);
     if (c.digital) bits |= dirBits(dx, dy, 0.3);
-    else if (d > 0.12) { lx = Math.round(dx * k * 32767); ly = Math.round(dy * k * 32767); }
+    else if (d > 0.12) { lx = Math.round(dx * k * 32767); ly = Math.round(dy * k * 32767); bits |= 0; }
   }
   for (const id of [...owners.keys()]) if (!live.has(id)) owners.delete(id);
-  // Pintado y vibración al pulsar algo nuevo
-  const newly = bits & ~state.b;
-  if (newly && navigator.vibrate) navigator.vibrate(12);
+  // Vibración: botón nuevo (18 ms) o nueva dirección de stick/cruceta (10 ms)
+  const newButtons = bits & ~DIRS & ~state.b;
+  const dir = (bits & DIRS) || (Math.abs(lx) > 16000 || Math.abs(ly) > 16000 ? dirBits(lx, ly, 0) : 0);
+  if (newButtons) haptic(18);
+  else if (dir && dir !== lastDir) haptic(10);
+  lastDir = dir;
   controls.forEach((c, i) => {
     if (c.k === 'btn' || c.k === 'rect') c.el.classList.toggle('on', (bits & c.b) !== 0);
-    if (c.k === 'dpad') c.el.classList.toggle('on', (bits & (B.UP | B.DOWN | B.LEFT | B.RIGHT)) !== 0);
+    if (c.k === 'dpad') c.el.classList.toggle('on', (bits & DIRS) !== 0);
     if (c.knob) {
       const [kx, ky] = knobs.get(i) || [0, 0];
       c.knob.style.transform = `translate(${kx * 60}%, ${ky * 60}%)`;
@@ -217,12 +315,12 @@ function onTouches(e) {
   send();
 }
 for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
-  $('pad').addEventListener(ev, onTouches, { passive: false });
+  $('area').addEventListener(ev, onTouches, { passive: false });
 }
-// Sin zoom ni gestos del navegador
-document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('dblclick', (e) => e.preventDefault());
-// Latido: reenvía el estado cada segundo (si un paquete se perdiera, los botones no se quedan pegados)
+// Sin zoom, desplazamiento ni gestos del navegador
+for (const ev of ['gesturestart', 'gesturechange', 'dblclick', 'contextmenu']) document.addEventListener(ev, (e) => e.preventDefault());
+document.addEventListener('touchmove', (e) => { if (document.body.classList.contains('playing')) e.preventDefault(); }, { passive: false });
+// Latido: reenvía el estado cada segundo (si un mensaje se perdiera, los botones no se quedan pegados)
 setInterval(() => { sent = ''; send(); }, 1000);
 if ($('code').value.length === 6 && params.get('code')) $('msg').textContent = 'Elige el tipo de mando y pulsa Conectar';
 </script>

@@ -33,6 +33,8 @@
 #include "libretro.h"
 
 namespace host {
+// Reenvío de la vibración del Jugador 2 al móvil del mando web (definida más abajo)
+void webPadRumble(float strong, float weak);
 namespace {
 
 // Punteros a la API de Libretro resueltos con dlsym.
@@ -331,6 +333,7 @@ static bool onRumble(unsigned port, enum retro_rumble_effect effect, uint16_t st
   if (g_rumbleHandler) {
     g_rumbleHandler(port, g_rumbleStrong[port].load() / 65535.0f, g_rumbleWeak[port].load() / 65535.0f);
   }
+  if (port == 1) webPadRumble(g_rumbleStrong[1].load() / 65535.0f, g_rumbleWeak[1].load() / 65535.0f);
   return true;
 }
 
@@ -1526,6 +1529,15 @@ bool webPadStart(const char *relayHost, int relayPort) {
     }
   }).detach();
   return true;
+}
+
+// "R fuerte débil" (0-100) hacia el relay, que lo reenvía al navegador del Jugador 2
+void webPadRumble(float strong, float weak) {
+  const int fd = g_webPadFd.load();
+  if (fd < 0 || g_webPadPhase.load() != 3) return;
+  char line[32];
+  const int n = std::snprintf(line, sizeof line, "R %d %d\n", int(strong * 100), int(weak * 100));
+  if (n > 0) ::send(fd, line, size_t(n), MSG_DONTWAIT);
 }
 
 std::string webPadStatus() {

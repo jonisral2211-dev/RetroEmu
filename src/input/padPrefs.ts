@@ -2,8 +2,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CoreId } from '../emulator/cores';
 import type { DirMode } from './layouts';
 
-// 'tv' = mando a pantalla completa del modo TV (vertical), con su propio acomodo por consola
-export type Orientation = 'portrait' | 'landscape' | 'tv';
+// 'tv' / 'tvl' = mando a pantalla completa del modo TV en vertical / horizontal (acomodo propio)
+export type Orientation = 'portrait' | 'landscape' | 'tv' | 'tvl';
+
+/** Orientación del iPhone como mando en modo TV. */
+export type TvOrientation = 'portrait' | 'landscape' | 'auto';
+const TV_ORIENT_KEY = 'jl.tvorient.v1';
+
+export async function loadTvOrientation(): Promise<TvOrientation> {
+  try {
+    const v = await AsyncStorage.getItem(TV_ORIENT_KEY);
+    return v === 'landscape' || v === 'auto' ? v : 'portrait';
+  } catch {
+    return 'portrait';
+  }
+}
+
+export function saveTvOrientation(v: TvOrientation): void {
+  AsyncStorage.setItem(TV_ORIENT_KEY, v).catch(() => {});
+}
 
 /** Ajustes del pad por consola y orientación. Offsets normalizados al área del pad. */
 export type PadPrefs = {

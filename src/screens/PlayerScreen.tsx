@@ -30,7 +30,10 @@ import {
   loadPadPrefs,
   loadPs1Hd,
   loadQuality,
+  loadTvOrientation,
   saveQuality,
+  saveTvOrientation,
+  TvOrientation,
   OPACITY_MIN,
   Orientation,
   PadPrefs,
@@ -286,17 +289,28 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   }, [tvStretch, tvSmooth, ready]);
   useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
   const controllerMode = tvConnected || forceController;
+  // Orientación del mando de TV: Vertical (palanca), Horizontal (mando clásico) o Automática
+  const [tvOrient, setTvOrientState] = useState<TvOrientation>('portrait');
+  useEffect(() => {
+    loadTvOrientation().then(setTvOrientState);
+  }, []);
+  const setTvOrient = (v: TvOrientation) => {
+    setTvOrientState(v);
+    saveTvOrientation(v);
+  };
+  const tvLayoutPortrait = tvOrient === 'portrait' || (tvOrient === 'auto' && height >= width);
+  const tvPrefsKey = tvLayoutPortrait ? 'tv' : 'tvl';
   useEffect(() => {
     let alive = true;
-    if (core) loadPadPrefs(core, 'tv').then((pp) => alive && setTvPrefs(pp));
+    if (core) loadPadPrefs(core, tvPrefsKey).then((pp) => alive && setTvPrefs(pp));
     return () => {
       alive = false;
     };
-  }, [core]);
+  }, [core, tvPrefsKey]);
   const updateTvPrefs = (fn: (pp: PadPrefs) => PadPrefs) =>
     setTvPrefs((prev) => {
       const next = fn(prev);
-      if (core) savePadPrefs(core, 'tv', next);
+      if (core) savePadPrefs(core, tvPrefsKey, next);
       return next;
     });
   // Fuera del modo control no se edita el mando de TV
@@ -306,17 +320,20 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       setTvSelected(null);
     }
   }, [controllerMode]);
-  // Mientras el iPhone es el mando, la interfaz queda bloqueada en vertical
+  // Mientras el iPhone es el mando, la interfaz se bloquea según la orientación elegida
+  const orientMode = controllerMode ? tvOrient : 'normal';
   useEffect(() => {
-    Libretro.setOrientationLock(controllerMode);
-  }, [controllerMode]);
+    Libretro.setOrientationMode(orientMode);
+  }, [orientMode]);
+  // Si iOS aún no giró a la orientación pedida, se vuelve a pedir
+  const orientMismatch = (orientMode === 'portrait' && landscape) || (orientMode === 'landscape' && !landscape);
   useEffect(() => {
-    if (!controllerMode || !landscape) return;
-    Libretro.setOrientationLock(true);
-    const id = setTimeout(() => Libretro.setOrientationLock(true), 600);
+    if (!orientMismatch) return;
+    Libretro.setOrientationMode(orientMode);
+    const id = setTimeout(() => Libretro.setOrientationMode(orientMode), 600);
     return () => clearTimeout(id);
-  }, [controllerMode, landscape]);
-  useEffect(() => () => Libretro.setOrientationLock(false), []);
+  }, [orientMismatch, orientMode]);
+  useEffect(() => () => Libretro.setOrientationMode('normal'), []);
   // Al conectarse una pantalla real ya no hace falta el modo forzado
   useEffect(() => {
     if (tvConnected) setAirplayModal(false);
@@ -690,6 +707,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       }}
       onControllerTest={() => setControllerTest(true)}
       webPad={webPad}
+      tvOrient={tvOrient}
+      onTvOrient={setTvOrient}
     />
   ) : null;
   const controllerScreen = controllerTest ? (
@@ -777,10 +796,10 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // ---- Modo TV: el iPhone es el mando (sin vídeo duplicado) ----------------------------------
   if (controllerMode) {
-    // Todas las consolas usan el mando vertical. Si iOS mantiene la interfaz en horizontal (bloqueo
-    // de rotación del usuario), el mando se dibuja girado 90° para que siga siendo vertical.
-    const tv = tvPadFor(core, true);
-    const rotated = area.w > area.h;
+    // Mando vertical u horizontal según la orientación elegida. Si iOS no gira la interfaz (bloqueo
+    // de rotación del usuario), el mando se dibuja girado 90° para respetar la elegida.
+    const tv = tvPadFor(core, tvLayoutPortrait);
+    const rotated = tvOrient !== 'auto' && (tvLayoutPortrait ? area.w > area.h : area.h > area.w);
     const padW = rotated ? area.h : area.w;
     const padH = rotated ? area.w : area.h;
     const trackpad = tv.trackpad
@@ -827,7 +846,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
                       height: padH,
                       left: (area.w - padW) / 2,
                       top: (area.h - padH) / 2,
-                      transform: [{ rotate: '-90deg' }],
+                      transform: [{ rotate: tvLayoutPortrait ? '-90deg' : '90deg' }],
                     }
                   : StyleSheet.absoluteFill
               }>
@@ -865,7 +884,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
                 label="Restablecer"
                 onPress={() => {
                   setTvSelected(null);
-                  updateTvPrefs(() => defaultPadPrefs('tv'));
+                  updateTvPrefs(() => defaultPadPrefs(tvPrefsKey));
                 }}
               />
               <Text style={styles.tvEditHint}>Arrastra cada botón · tócalo para su tamaño</Text>
