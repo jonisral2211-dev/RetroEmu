@@ -457,6 +457,178 @@ export const NES_LANDSCAPE_LAYOUT = twoButtonLandscape('NES (horizontal)', '#dc2
 export const GB_LAYOUT = twoButtonLayout('Game Boy', '#9d174d');
 export const GB_LANDSCAPE_LAYOUT = twoButtonLandscape('Game Boy (horizontal)', '#9d174d');
 
+// ---- Ports (Doom, Quake, Wolfenstein 3D, Cave Story…) -----------------------------------------
+// Shooters: stick izquierdo = moverse / desplazarse; zona 'look' = stick derecho flotante (mirar y
+// girar la cámara con el pulgar). Botones según el mapeo oficial de cada núcleo (docs de libretro):
+//  - PrBoom y TyrQuake en modo "Modern" (el host lo elige solo): disparo R2, usar/saltar L2,
+//    armas L1/R1, correr L3, mapa SELECT, menú START.
+//  - ECWolf: disparo A, usar B, correr X, armas L2/R2, mapa SELECT, pausa START.
+type ShooterMap = {
+  fire: number;
+  second: [string, number];
+  run?: number;
+  prev: number;
+  next: number;
+  map: [string, number];
+  esc: number;
+};
+const FIRE_RED = '#ef4444';
+const SHOOTER_MAPS: Partial<Record<CoreId, ShooterMap>> = {
+  prboom: { fire: Btn.R2, second: ['USAR', Btn.L2], run: Btn.L3, prev: Btn.L, next: Btn.R, map: ['MAPA', Btn.SELECT], esc: Btn.START },
+  tyrquake: { fire: Btn.R2, second: ['SALTAR', Btn.L2], prev: Btn.L, next: Btn.R, map: ['PUNTOS', Btn.SELECT], esc: Btn.START },
+  vitaquake2: { fire: Btn.R2, second: ['SALTAR', Btn.L2], prev: Btn.L, next: Btn.R, map: ['PUNTOS', Btn.SELECT], esc: Btn.START },
+  ecwolf: { fire: Btn.A, second: ['USAR', Btn.B], run: Btn.X, prev: Btn.L2, next: Btn.R2, map: ['MAPA', Btn.SELECT], esc: Btn.START },
+};
+
+export const isShooterCore = (core: CoreId) => core in SHOOTER_MAPS;
+
+function shooterLayout(core: CoreId, landscape: boolean): PadLayout {
+  const m = SHOOTER_MAPS[core]!;
+  const face: Zone[] = [
+    circle('FIRE', 0.5, 0.3, 0.6, m.fire, FIRE_RED),
+    circle(m.second[0], 0.5, m.run ? 0.66 : 0.74, 0.42, m.second[1], '#22c55e'),
+    ...(m.run ? [rect('CORRER', 0.1, 0.86, 0.8, 0.12, m.run, GRAY)] : []),
+  ];
+  const look = (x: number, y: number, w: number, h: number): Cluster => ({
+    id: 'look', x, y, w, h, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }],
+  });
+  if (landscape) {
+    return {
+      name: `${SHOOTER_TITLE[core] ?? 'Shooter'} (horizontal)`,
+      clusters: [
+        { id: 'trig-left', x: 0, y: 0, w: SIDE_W, h: TRIG_H, zones: [trig('ARMA-', 0.06, 0.88, m.prev, GRAY)] },
+        { id: 'trig-right', x: 1 - SIDE_W, y: 0, w: SIDE_W, h: TRIG_H, zones: [trig('ARMA+', 0.06, 0.88, m.next, GRAY)] },
+        { id: 'stick', x: 0, y: BODY_Y, w: SIDE_W, h: BODY_H, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+        { id: 'face', x: 1 - SIDE_W, y: 0.19, w: SIDE_W, h: 0.36, zones: face },
+        look(1 - SIDE_W, 0.56, SIDE_W, 0.3),
+        { id: 'select', x: 0.04, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [footBtn(m.map[0], m.map[1])] },
+        { id: 'start', x: 1 - SIDE_W + 0.02, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [footBtn('ESC', m.esc)] },
+      ],
+    };
+  }
+  return {
+    name: SHOOTER_TITLE[core] ?? 'Shooter',
+    clusters: [
+      {
+        id: 'top', x: 0, y: 0, w: 1, h: 0.14,
+        zones: [
+          rect('ARMA-', 0.02, 0.1, 0.22, 0.8, m.prev, GRAY),
+          rect(m.map[0], 0.27, 0.1, 0.2, 0.8, m.map[1]),
+          rect('ESC', 0.53, 0.1, 0.2, 0.8, m.esc),
+          rect('ARMA+', 0.76, 0.1, 0.22, 0.8, m.next, GRAY),
+        ],
+      },
+      { id: 'stick', x: 0, y: 0.2, w: 0.42, h: 0.8, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+      look(0.42, 0.24, 0.32, 0.76),
+      { id: 'face', x: 0.74, y: 0.2, w: 0.26, h: 0.8, zones: face },
+    ],
+  };
+}
+const SHOOTER_TITLE: Partial<Record<CoreId, string>> = {
+  prboom: 'Doom', tyrquake: 'Quake', vitaquake2: 'Quake II', ecwolf: 'Wolfenstein 3D',
+};
+
+// Ports 2D: rombo con las acciones de cada juego (mapeos oficiales de NXEngine, REminiscence, EasyRPG)
+type Labels = Partial<Record<'X' | 'Y' | 'A' | 'B' | 'L' | 'R' | 'SELECT' | 'START', string>>;
+function labeledPad(name: string, l: Labels, landscape: boolean, accent = '#f59e0b'): PadLayout {
+  const d = landscape ? 0.34 : 0.3;
+  const face: Zone[] = [
+    ...(l.X ? [circle(l.X, 0.5, 0.2, d, Btn.X)] : []),
+    ...(l.Y ? [circle(l.Y, 0.2, 0.5, d, Btn.Y)] : []),
+    ...(l.A ? [circle(l.A, 0.8, 0.5, d, Btn.A, accent)] : []),
+    ...(l.B ? [circle(l.B, 0.5, 0.8, d, Btn.B, accent)] : []),
+  ];
+  const shoulders = [
+    ...(l.L ? [trig(l.L, 0.06, 0.88, Btn.L, GRAY)] : []),
+  ];
+  if (landscape) {
+    return {
+      name: `${name} (horizontal)`,
+      clusters: sideClusters({
+        leftTriggers: shoulders,
+        rightTriggers: l.R ? [trig(l.R, 0.06, 0.88, Btn.R, GRAY)] : [],
+        face,
+        select: l.SELECT ? footBtn(l.SELECT, Btn.SELECT) : undefined,
+        start: footBtn(l.START ?? 'START', Btn.START),
+        eightWay: true,
+      }),
+    };
+  }
+  return {
+    name,
+    clusters: [
+      ...(l.L || l.R
+        ? [{
+            id: 'shoulders', x: 0, y: 0, w: 1, h: 0.16,
+            zones: [
+              ...(l.L ? [rect(l.L, 0.02, 0.1, 0.3, 0.8, Btn.L, GRAY)] : []),
+              ...(l.R ? [rect(l.R, 0.68, 0.1, 0.3, 0.8, Btn.R, GRAY)] : []),
+            ],
+          }]
+        : []),
+      { id: 'dpad', x: 0, y: 0.2, w: 0.42, h: 0.8, zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: true }] },
+      { id: 'face', x: 0.58, y: 0.2, w: 0.42, h: 0.8, zones: face },
+      {
+        id: 'menu', x: 0.42, y: 0.5, w: 0.16, h: 0.5,
+        zones: [
+          ...(l.SELECT ? [rect(l.SELECT, 0, 0.2, 1, 0.25, Btn.SELECT)] : []),
+          rect(l.START ?? 'START', 0, 0.6, 1, 0.25, Btn.START),
+        ],
+      },
+    ],
+  };
+}
+
+// Stick + botones (Cannonball: volante analógico; ScummVM: el stick mueve el puntero)
+function stickPad(name: string, buttons: [string, number, string?][], menu: [string, number][], landscape: boolean): PadLayout {
+  const face: Zone[] = buttons.map(([label, bits, tint], i) =>
+    circle(label, buttons.length === 1 ? 0.5 : i % 2 ? 0.72 : 0.3, buttons.length === 1 ? 0.5 : i % 2 ? 0.34 : 0.66, 0.4, bits, tint),
+  );
+  if (landscape) {
+    return {
+      name: `${name} (horizontal)`,
+      clusters: [
+        { id: 'stick', x: 0, y: BODY_Y, w: SIDE_W, h: BODY_H, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+        { id: 'face', x: 1 - SIDE_W, y: BODY_Y, w: SIDE_W, h: BODY_H, zones: face },
+        { id: 'select', x: 0.04, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [footBtn(menu[0][0], menu[0][1])] },
+        ...(menu[1]
+          ? [{ id: 'start', x: 1 - SIDE_W + 0.02, y: FOOT_Y, w: SIDE_W - 0.06, h: FOOT_H, zones: [footBtn(menu[1][0], menu[1][1])] }]
+          : []),
+      ],
+    };
+  }
+  return {
+    name,
+    clusters: [
+      { id: 'stick', x: 0, y: 0.15, w: 0.46, h: 0.85, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+      { id: 'face', x: 0.54, y: 0.2, w: 0.46, h: 0.8, zones: face },
+      {
+        id: 'menu', x: 0.46, y: 0.5, w: 0.08, h: 0.5,
+        zones: menu.map(([label, bits], i) => rect(label, 0, i ? 0.6 : 0.2, 1, 0.25, bits)),
+      },
+    ],
+  };
+}
+
+/** Mando táctil de un port (null si el núcleo no es un port). */
+export function portLayout(core: CoreId, landscape: boolean): PadLayout | null {
+  if (isShooterCore(core)) return shooterLayout(core, landscape);
+  switch (core) {
+    case 'nxengine':
+      return labeledPad('Cave Story', { A: 'DISPARO', B: 'SALTAR', X: 'MAPA', L: 'ARMA-', R: 'ARMA+', START: 'INVENT.', SELECT: 'AJUSTES' }, landscape);
+    case 'reminiscence':
+      return labeledPad('Flashback', { A: 'USAR', B: 'ARMA', X: 'ACCIÓN', Y: 'INVENT.', START: 'PAUSA' }, landscape);
+    case 'easyrpg':
+      return labeledPad('RPG Maker', { A: 'OK', B: 'MENÚ', START: 'START', SELECT: 'SELECT' }, landscape);
+    case 'cannonball':
+      return stickPad('OutRun', [['ACELERAR', Btn.B, '#22c55e'], ['FRENO', Btn.Y, FIRE_RED], ['MARCHA', Btn.A]], [['MONEDA', Btn.SELECT], ['START', Btn.START]], landscape);
+    case 'scummvm':
+      return stickPad('ScummVM', [['CLIC', Btn.A, '#3b82f6'], ['CLIC DER', Btn.B]], [['MENÚ', Btn.START]], landscape);
+    default:
+      return null;
+  }
+}
+
 // ---- Sega Saturn (Yabause) -------------------------------------------------
 // Mapeo del core (yabause/src/libretro/libretro.c): A<-B, B<-A, C<-R, X<-Y, Y<-X, Z<-L,
 // gatillos L/R <- L2/R2.
@@ -598,6 +770,7 @@ export function defaultDirMode(core: CoreId): DirMode {
   if (core === 'mupen64') return 'stick';
   if (core === 'fbneo') return 'stick'; // stick arcade
   if (core === 'ppsspp') return 'both'; // cruceta + nub analógico
+  if (isShooterCore(core) || core === 'cannonball' || core === 'scummvm') return 'stick';
   return 'dpad';
 }
 
@@ -638,6 +811,8 @@ export function withDirMode(layout: PadLayout, mode: DirMode): PadLayout {
 }
 
 export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
+  const port = portLayout(core, landscape);
+  if (port) return port;
   if (landscape) {
     switch (core) {
       case 'mupen64':
@@ -693,5 +868,7 @@ export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = f
       return NES_LAYOUT;
     case 'gambatte':
       return GB_LAYOUT;
+    default:
+      return GBA_LAYOUT;
   }
 }

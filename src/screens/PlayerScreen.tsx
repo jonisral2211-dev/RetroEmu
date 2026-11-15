@@ -89,6 +89,8 @@ const isNdsCore = (c: CoreId | null) => c === 'melonds' || c === 'desmume';
 const WEB_PAD_TYPE: Record<CoreId, string> = {
   mgba: 'gba', genesis: 'arcade', mupen64: 'n64', mame: 'arcade', pcsx: 'ps', melonds: 'snes', desmume: 'snes',
   yabause: 'arcade', fbneo: 'arcade', ppsspp: 'ps', snes9x: 'snes', fceumm: 'nes', gambatte: 'nes',
+  prboom: 'fps', ecwolf: 'fps', tyrquake: 'fps', vitaquake2: 'fps', nxengine: 'snes', cannonball: 'arcade',
+  reminiscence: 'snes', easyrpg: 'nes', scummvm: 'nes',
 };
 
 export type NdsScreen = 'both' | 'swap' | 'top' | 'bottom';
@@ -165,7 +167,7 @@ function gameTitle(path: string): string {
 export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore }: Props) {
   // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
   const baseCore = useMemo(
-    () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath)),
+    () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath), romPath),
     [romPath, coreOverride],
   );
   // Núcleo que realmente arrancó (NDS: DeSmuME si melonDS no pudo)

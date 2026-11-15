@@ -95,6 +95,9 @@ export function VirtualPad({
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
   const [active, setActive] = useState(0); // máscara pintada (feedback al pulsar)
   const [knob, setKnob] = useState<Knob>({ x: 0, y: 0 }); // posición del puck del stick
+  // Zona "Mirar" de los shooters (stick derecho): su propio puck y su propio eje
+  const [lookKnob, setLookKnob] = useState<Knob>({ x: 0, y: 0 });
+  const look = useRef({ x: 0, y: 0 });
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const mask = useRef(0);
   const axis = useRef({ x: 0, y: 0 });
@@ -160,13 +163,22 @@ export function VirtualPad({
     let ay = 0;
     let kx = 0;
     let ky = 0;
+    let lx = 0;
+    let ly = 0;
+    let lkx = 0;
+    let lky = 0;
     for (const c of clusters) {
       const pts = ptsBy.get(c.id);
       if (!pts) continue;
       // El área ampliada ya se aplicó al elegir el control: dentro de él cuenta todo el botón
       const r = evaluateZones(c.zones, pts, c.w * W, c.h * H, { ...tuningRef.current, hitSlop: Math.max(1, tuningRef.current.hitSlop) * 1.5 });
       bits |= r.bits;
-      if (c.zones[0]?.kind === 'stick') {
+      if (c.zones[0]?.kind === 'stick' && c.id === 'look') {
+        lx = r.ax;
+        ly = r.ay;
+        lkx = r.kx;
+        lky = r.ky;
+      } else if (c.zones[0]?.kind === 'stick') {
         ax = r.ax;
         ay = r.ay;
         kx = r.kx;
@@ -215,6 +227,11 @@ export function VirtualPad({
       Libretro.setAnalog(ax, ay);
     }
     setKnob((k) => (k.x === kx && k.y === ky ? k : { x: kx, y: ky }));
+    if (lx !== look.current.x || ly !== look.current.y) {
+      look.current = { x: lx, y: ly };
+      Libretro.setLook(lx, ly);
+    }
+    setLookKnob((k) => (k.x === lkx && k.y === lky ? k : { x: lkx, y: lky }));
     // Vibración suave al llevar el stick al tope
     const edge = kx * kx + ky * ky > 0.94;
     if (edge && !stickEdge.current && hapticsRef.current) Libretro.haptic(0.3);
@@ -275,8 +292,11 @@ export function VirtualPad({
     owners.current.clear();
     Libretro.setButtons(0);
     Libretro.setAnalog(0, 0);
+    Libretro.setLook(0, 0);
+    look.current = { x: 0, y: 0 };
     setActive(0);
     setKnob({ x: 0, y: 0 });
+    setLookKnob({ x: 0, y: 0 });
   }, [editing]);
 
   // Al levantar dedos, excluir los que terminan en este evento
@@ -290,6 +310,7 @@ export function VirtualPad({
     () => () => {
       Libretro.setButtons(0);
       Libretro.setAnalog(0, 0);
+      Libretro.setLook(0, 0);
       Libretro.setPointer(0, 0, false);
     },
     [],
@@ -325,7 +346,7 @@ export function VirtualPad({
           cluster={c}
           size={size}
           active={active}
-          knob={knob}
+          knob={c.id === 'look' ? lookKnob : knob}
           opacity={opacity * (prefs.alphas?.[c.id] ?? 1)}
           editing={editing}
           selected={editing && selectedId === c.id}

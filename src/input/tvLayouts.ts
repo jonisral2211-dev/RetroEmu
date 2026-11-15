@@ -1,6 +1,6 @@
 import { Btn } from '../emulator/buttons';
 import type { CoreId } from '../emulator/cores';
-import { circle, PadLayout, rect, Zone } from './layouts';
+import { circle, PadLayout, portLayout, rect, Zone } from './layouts';
 
 // Modo TV sin mandos físicos: el iPhone entero es el mando (no se ve el juego en el teléfono).
 // Diseños a pantalla completa en horizontal, con la disposición y colores de cada consola.
@@ -379,6 +379,8 @@ const GB_V = twoButtonV('Game Boy', '#84CC16', '#9d174d');
 
 /** Mando a pantalla completa en el iPhone mientras el vídeo sale por la TV. */
 export function tvPadFor(core: CoreId, portrait = false): TvPad {
+  const port = portLayout(core, !portrait);
+  if (port) return { title: port.name.replace(/ \(horizontal\)$/, ''), accent: '#F59E0B', layout: port };
   if (portrait) {
     switch (core) {
       case 'pcsx':
@@ -436,5 +438,7 @@ function tvPadLandscape(core: CoreId): TvPad {
       return NES;
     case 'gambatte':
       return GB;
+    default:
+      return GBA;
   }
 }

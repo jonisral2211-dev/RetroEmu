@@ -213,16 +213,16 @@ async def websocket(reader, writer, code: str, wanted: int):
                 await writer.drain()
                 continue
             parts = text.split(",")
-            if len(parts) != 3:
+            # "b,lx,ly" o "b,lx,ly,rx,ry" (stick derecho: mirar en Doom/Quake)
+            if len(parts) not in (3, 5):
                 continue
             try:
-                b, lx, ly = (int(p) for p in parts)
+                vals = [int(p) for p in parts]
             except ValueError:
                 continue
-            b &= 0xFFFF
-            lx = max(-32767, min(32767, lx))
-            ly = max(-32767, min(32767, ly))
-            if not await send_line(room, f"P {port} {b} {lx} {ly}"):
+            b = vals[0] & 0xFFFF
+            axes = [max(-32767, min(32767, v)) for v in vals[1:]]
+            if not await send_line(room, f"P {port} {b} " + " ".join(str(v) for v in axes)):
                 ws_text(writer, "err:El Jugador 1 cerró la sala")
                 await writer.drain()
                 break

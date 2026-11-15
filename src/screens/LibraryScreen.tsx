@@ -32,6 +32,7 @@ import {
   isMisplacedZip,
   misplacedZipMessage,
   MOVE_TARGETS,
+  portTitle,
   SYSTEM_NAME,
 } from '../emulator/cores';
 import { removeRecent, subscribeRecents } from '../library/recents';
@@ -55,6 +56,7 @@ const CONSOLE_CARDS: { id: Console; name: string }[] = [
   { id: 'gbc', name: 'Game Boy Color' },
   { id: 'gb', name: 'Game Boy' },
   { id: 'nes', name: 'NES' },
+  { id: 'ports', name: 'Ports PC' },
   { id: 'saturn', name: 'Sega Saturn' },
   { id: 'sega', name: 'Mega Drive' },
   { id: 'fbneo', name: 'FBNeo Arcade' },
@@ -113,6 +115,8 @@ function relativeToDocuments(path: string): string {
 
 // Título legible: sin extensión ni etiquetas entre paréntesis/corchetes
 function displayTitle(path: string): string {
+  const port = portTitle(path);
+  if (port) return port;
   const arcade = /\.zip$/i.test(path) ? arcadeTitle(path) : null;
   if (arcade) return arcade;
   const file = path.split('/').pop() ?? path;
@@ -300,7 +304,7 @@ function validateArcade(entry: Entry, onRemoved: () => void): Promise<boolean> {
 // Alerta descriptiva en vez de intentar cargar la ROM en blanco
 function explainUnavailable(entry: Entry) {
   const name = entry.path.split('/').pop() ?? entry.path;
-  const core = coreForConsole(entry.console);
+  const core = coreForConsole(entry.console, entry.path);
   if (core === null && isMisplacedZip(entry.path)) {
     Alert.alert('Carpeta incorrecta', misplacedZipMessage(entry.path));
     return;
@@ -560,6 +564,7 @@ export default function LibraryScreen({ onPlay }: Props) {
           <Text style={styles.viewTitle}>{card?.name ?? CONSOLE_LABEL[view]}</Text>
           <Text style={styles.viewCount}>
             {counts[view] === 1 ? '1 juego' : `${counts[view]} juegos`} · {view === 'mame' ? 'arcade' : view}/
+            {view === 'ports' ? ' · Doom, Quake, Wolfenstein 3D, Cave Story, OutRun, Flashback, RPG Maker, ScummVM' : ''}
           </Text>
         </View>
       </View>
@@ -724,7 +729,7 @@ const GameCard = memo(function GameCard({
     };
   }, [entry.path]);
   const broken = size !== null && size < MIN_GAME_BYTES && !isSheet(entry.path);
-  const core = coreForConsole(entry.console);
+  const core = coreForConsole(entry.console, entry.path);
   const enabled = core !== null && ENABLED_CORES.has(core);
   const misplaced = core === null && isMisplacedZip(entry.path);
 

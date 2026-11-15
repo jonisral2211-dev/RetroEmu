@@ -10,6 +10,15 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <string>
+
+#if defined(_WIN32)
+#include <direct.h>
+#define U_MKDIR(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#define U_MKDIR(p) mkdir(p, 0755)
+#endif
 
 #include "lzma/7z.h"
 #include "lzma/7zCrc.h"
@@ -51,6 +60,34 @@ std::string baseName(const std::string &name) {
   return slash == std::string::npos ? name : name.substr(slash + 1);
 }
 
+// Modo "árbol" (ports: Quake id1/, Cave Story data/…): conserva las subcarpetas del comprimido
+// y no descarta .exe/.ini/.txt (el motor los necesita)
+bool g_tree = false;
+
+void makeDirs(const std::string &dir) {
+  for (size_t i = 1; i <= dir.size(); ++i) {
+    if (i == dir.size() || dir[i] == '/') U_MKDIR(dir.substr(0, i).c_str());
+  }
+}
+
+// Ruta de salida de una entrada: nombre plano, o ruta relativa saneada en modo árbol
+std::string entryPath(const std::string &entry) {
+  if (!g_tree) return baseName(entry);
+  std::string rel;
+  size_t start = 0;
+  std::string e = entry;
+  std::replace(e.begin(), e.end(), '\\', '/');
+  while (start <= e.size()) {
+    const size_t slash = e.find('/', start);
+    const std::string part = e.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+    if (part == "..") return baseName(entry);  // nunca fuera de la carpeta de destino
+    if (!part.empty() && part != ".") rel += (rel.empty() ? "" : "/") + part;
+    if (slash == std::string::npos) break;
+    start = slash + 1;
+  }
+  return rel.empty() ? baseName(entry) : rel;
+}
+
 bool exists(const std::string &path) {
   FILE *f = std::fopen(path.c_str(), "rb");
   if (!f) return false;
@@ -63,6 +100,7 @@ bool isJunk(const std::string &entryName) {
   if (entryName.find("__MACOSX/") != std::string::npos) return true;
   const std::string base = baseName(entryName);
   if (base.empty() || base[0] == '.') return true;
+  if (g_tree) return false;
   static const char *const kJunk[] = {"txt", "nfo", "diz", "url", "html", "htm", "jpg", "jpeg", "png",
                                       "gif", "bmp", "webp", "pdf", "doc", "docx", "rtf", "ini", "db",
                                       "sfv", "md5", "sha1", "exe", "lnk", "torrent", "xml", "json"};
@@ -83,7 +121,10 @@ struct OutFile {
 
   bool open(const std::string &dir, const std::string &name) {
     finalPath = dir + "/" + name;
-    partPath = dir + "/." + name + ".part";
+    const auto slash = name.find_last_of('/');
+    const std::string sub = slash == std::string::npos ? dir : dir + "/" + name.substr(0, slash);
+    if (slash != std::string::npos) makeDirs(sub);
+    partPath = sub + "/." + baseName(name) + ".part";
     f.reset(std::fopen(partPath.c_str(), "wb"));
     return bool(f);
   }
@@ -272,7 +313,7 @@ Result extractZip(FILE *f, uint64_t fileSize, const std::string &destDir) {
     p += 46 + nameLen + extraLen + commentLen;
 
     if (name.empty() || name.back() == '/' || name.back() == '\\' || isJunk(name)) continue;
-    const std::string base = baseName(name);
+    const std::string base = entryPath(name);
     const std::string target = destDir + "/" + base;
     if (exists(target)) {
       r.files.push_back(target);
@@ -517,7 +558,7 @@ Result extract7z(FILE *f, const std::string &destDir) {
       std::vector<UInt16> w(len);
       SzArEx_GetFileNameUtf16(&db, i, w.data());
       const std::string full = utf16ToUtf8(w);
-      const std::string base = baseName(full);
+      const std::string base = entryPath(full);
       Item it{i, SzArEx_GetFileSize(&db, i), base, false};
       if (!SzArEx_IsDir(&db, i) && !isJunk(full) && it.size > 0) {
         if (exists(destDir + "/" + base)) {
@@ -657,6 +698,17 @@ Result extractAll(const std::string &archivePath, const std::string &destDir) {
     return {{}, "No es un .zip ni un .7z válido"};
   }
   return extractZip(f.get(), size, destDir);
+}
+
+}  // namespace unpack
+
+namespace unpack {
+
+Result extractTree(const std::string &archivePath, const std::string &destDir) {
+  g_tree = true;  // la cola de descompresión es serie: no hay otra extracción en paralelo
+  Result r = extractAll(archivePath, destDir);
+  g_tree = false;
+  return r;
 }
 
 }  // namespace unpack

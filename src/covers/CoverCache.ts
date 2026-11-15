@@ -1,4 +1,5 @@
 import RNFS from 'react-native-fs';
+import { portCoreFor, portTitle } from '../emulator/cores';
 import { arcadeTitle } from './arcadeNames';
 
 // Carátulas de https://thumbnails.libretro.com/<Sistema>/Named_Boxarts/<Nombre>.png
@@ -28,7 +29,26 @@ const SYSTEM_DIR: Record<string, string> = {
   nes: 'Nintendo - Nintendo Entertainment System',
   gb: 'Nintendo - Game Boy',
   gbc: 'Nintendo - Game Boy Color',
+  // Ports: un "sistema" de libretro-thumbnails por motor (ver portThumbConsole)
+  'ports-prboom': 'DOOM',
+  'ports-tyrquake': 'Quake',
+  'ports-vitaquake2': 'Quake II',
+  'ports-ecwolf': 'Wolfenstein 3D',
+  'ports-nxengine': 'Cave Story',
+  'ports-cannonball': 'Cannonball',
+  'ports-reminiscence': 'Flashback',
+  'ports-scummvm': 'ScummVM',
+  'ports-easyrpg': 'RPG Maker',
 };
+
+// Un port se busca en el repositorio de su motor y por el nombre de su carpeta si el archivo es
+// genérico (pak0.pak, Doukutsu.exe…)
+function portThumbConsole(romPath: string): { console: string; name: string } | null {
+  const core = portCoreFor(romPath);
+  if (!core) return null;
+  const title = portTitle(romPath);
+  return { console: `ports-${core}`, name: title ? `${title}.png` : (romPath.split('/').pop() ?? romPath) };
+}
 
 /** Nombre de archivo según la convención de libretro-thumbnails: &*\/:`<>?\|" -> _ */
 export function thumbnailName(romPath: string): string {
@@ -233,6 +253,15 @@ function pump() {
  * está en caché). Devuelve la función para cancelar la suscripción.
  */
 export function subscribeCover(romPath: string, console: string, cb: Listener): () => void {
+  if (console === 'ports') {
+    const port = portThumbConsole(romPath);
+    if (!port) {
+      cb(null);
+      return () => {};
+    }
+    romPath = port.name;
+    console = port.console;
+  }
   if (!SYSTEM_DIR[console]) {
     cb(null);
     return () => {};
@@ -262,10 +291,21 @@ export function forgetCover(romPath: string, console: string): void {
 
 /** Ruta donde se guarda la miniatura personalizada de una ROM (Documents/covers/<consola>/). */
 export function customCoverPath(romPath: string, console: string): string {
+  if (console === 'ports') {
+    const port = portThumbConsole(romPath);
+    if (port) return customOf(port.console, thumbnailName(port.name));
+  }
   return customOf(console, thumbnailName(romPath));
 }
 
 function requeue(romPath: string, console: string) {
+  if (console === 'ports') {
+    const port = portThumbConsole(romPath);
+    if (port) {
+      romPath = port.name;
+      console = port.console;
+    }
+  }
   const rom = romPath.split('/').pop() ?? romPath;
   const name = thumbnailName(romPath);
   const key = keyOf(console, name);
@@ -287,6 +327,13 @@ export function customCoverChanged(romPath: string, console: string): void {
  * vuelve a buscar en thumbnails.libretro.com (el índice del sistema también se renueva).
  */
 export async function reloadCover(romPath: string, console: string): Promise<void> {
+  if (console === 'ports') {
+    const port = portThumbConsole(romPath);
+    if (port) {
+      await reloadCover(port.name, port.console);
+      return;
+    }
+  }
   const name = thumbnailName(romPath);
   for (const f of [customOf(console, name), fileOf(console, name), `${fileOf(console, name)}.miss3`]) {
     try {

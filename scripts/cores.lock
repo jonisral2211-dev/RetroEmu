@@ -20,3 +20,13 @@ ppsspp_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/pps
 snes9x_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/snes9x_libretro_ios.dylib.zip|latest|prebuilt|||true
 fceumm_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/fceumm_libretro_ios.dylib.zip|latest|prebuilt|||true
 gambatte_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/gambatte_libretro_ios.dylib.zip|latest|prebuilt|||true
+# Ports (motores nativos sin JIT). optional = si falta en el buildbot, el IPA se genera sin él
+prboom_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/prboom_libretro_ios.dylib.zip|latest|prebuilt|||optional
+ecwolf_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/ecwolf_libretro_ios.dylib.zip|latest|prebuilt|||optional
+tyrquake_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/tyrquake_libretro_ios.dylib.zip|latest|prebuilt|||optional
+vitaquake2_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/vitaquake2_libretro_ios.dylib.zip|latest|prebuilt|||optional
+nxengine_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/nxengine_libretro_ios.dylib.zip|latest|prebuilt|||optional
+cannonball_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/cannonball_libretro_ios.dylib.zip|latest|prebuilt|||optional
+reminiscence_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/reminiscence_libretro_ios.dylib.zip|latest|prebuilt|||optional
+easyrpg_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/easyrpg_libretro.dylib.zip|latest|prebuilt|||optional
+scummvm_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/scummvm_libretro_ios.dylib.zip|latest|prebuilt|||optional

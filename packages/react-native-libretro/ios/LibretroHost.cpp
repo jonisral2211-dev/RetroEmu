@@ -76,6 +76,10 @@ std::mutex g_coreMutex;  // serializa retro_run() frente a save/load/reset/unloa
 std::thread g_thread;
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_paused{false};
+// Tipo de mando "Modern" del core (0 = ninguno) y zona táctil de mirar (stick derecho)
+unsigned g_modernDevice = 0;
+std::atomic<int16_t> g_lookX{0};
+std::atomic<int16_t> g_lookY{0};
 std::atomic<uint16_t> g_buttons{0};
 std::atomic<int16_t> g_axisX{0};  // stick izquierdo (RETRO_DEVICE_ANALOG)
 std::atomic<int16_t> g_axisY{0};
@@ -390,8 +394,23 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
-    case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
       return true;
+    case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO: {
+      // Ports (PrBoom, TyrQuake): su tipo de mando "Modern" usa doble stick (mover + mirar) y
+      // gatillos para disparar, como un shooter moderno. Se elige al cargar el juego.
+      g_modernDevice = 0;
+      const auto *info = static_cast<const struct retro_controller_info *>(data);
+      if (info && info[0].types) {
+        for (unsigned i = 0; i < info[0].num_types; ++i) {
+          const char *desc = info[0].types[i].desc;
+          if (desc && std::strstr(desc, "Modern")) {
+            g_modernDevice = info[0].types[i].id;
+            break;
+          }
+        }
+      }
+      return true;
+    }
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
       if (data) updateAspect(*static_cast<const struct retro_game_geometry *>(data));
       return true;
@@ -590,8 +609,11 @@ static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsi
   if (port >= 1 && port <= 3) return extraInputState(port, device, index, id);
   if (port != 0) return 0;
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
-    if (id == RETRO_DEVICE_ID_ANALOG_X) return g_padRX.load();
-    if (id == RETRO_DEVICE_ID_ANALOG_Y) return g_padRY.load();
+    // Stick derecho del mando; si está en reposo, la zona táctil de mirar
+    const int16_t rx = g_padRX.load(), ry = g_padRY.load();
+    const bool usePad = rx != 0 || ry != 0;
+    if (id == RETRO_DEVICE_ID_ANALOG_X) return usePad ? rx : g_lookX.load();
+    if (id == RETRO_DEVICE_ID_ANALOG_Y) return usePad ? ry : g_lookY.load();
     return 0;
   }
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_BUTTON && id < 16) {
@@ -1218,6 +1240,7 @@ bool loadCore(const char *frameworkBinaryPath) {
   }
 
   // El orden importa: el entorno se registra antes de init()
+  g_modernDevice = 0;
   c.setEnvironment(onEnvironment);
   c.setVideoRefresh(onVideo);
   c.setAudioSampleBatch(onAudioBatch);
@@ -1294,6 +1317,7 @@ bool loadGame(const char *romPath) {
 
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
   g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
+  if (g_modernDevice) g_core.setControllerPortDevice(0, g_modernDevice);
   restoreSram();
   return true;
 }
@@ -1323,6 +1347,15 @@ void setPaused(bool paused) { g_paused = paused; }
 void setButtons(uint16_t mask) {
   g_buttons = mask;
   g_dbgUiHits.fetch_or(mask, std::memory_order_relaxed);  // acumula también toques breves
+}
+
+void setLook(double x, double y) {
+  auto toAxis = [](double v) {
+    v = std::max(-1.0, std::min(1.0, v));
+    return static_cast<int16_t>(v * 32767.0);
+  };
+  g_lookX = toAxis(x);
+  g_lookY = toAxis(y);
 }
 
 void setAnalog(double x, double y) {
@@ -1598,9 +1631,11 @@ bool webPadStart(const char *relayHost, int relayPort) {
         webPadSet(g_webPadSeats.load() ? 3 : 2, seatsMessage());
       } else if (line.rfind("P ", 0) == 0) {
         unsigned b = 0;
-        int lx = 0, ly = 0;
-        if (std::sscanf(line.c_str() + 2, "%d %u %d %d", &port, &b, &lx, &ly) == 4 && port >= 1 && port <= 3) {
-          setGamepadPort(port, uint16_t(b), lx / 32767.0, ly / 32767.0, 0, 0, 0, 0);
+        int lx = 0, ly = 0, rx = 0, ry = 0;
+        // "P puerto botones lx ly [rx ry]" (el stick derecho es opcional)
+        if (std::sscanf(line.c_str() + 2, "%d %u %d %d %d %d", &port, &b, &lx, &ly, &rx, &ry) >= 4 && port >= 1 &&
+            port <= 3) {
+          setGamepadPort(port, uint16_t(b), lx / 32767.0, ly / 32767.0, rx / 32767.0, ry / 32767.0, 0, 0);
         }
       }
     }

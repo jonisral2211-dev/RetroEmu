@@ -14,7 +14,7 @@ type PxBox = { id: string; group: string; cx: number; cy: number; w: number; h: 
 /** Id estable de cada control: "dpad", "stick" o "<grupo>:<etiqueta>". */
 export function controlId(group: string, zone: Zone): string {
   if (zone.kind === 'dpad') return 'dpad';
-  if (zone.kind === 'stick') return 'stick';
+  if (zone.kind === 'stick') return group === 'look' ? 'look' : 'stick';
   return `${group}:${zone.label}`;
 }
 
@@ -104,5 +104,6 @@ export function buildPad(layout: PadLayout, prefs: PadPrefs, W: number, H: numbe
 export function controlLabel(id: string): string {
   if (id === 'dpad') return 'Cruceta';
   if (id === 'stick') return 'Stick analógico';
+  if (id === 'look') return 'Mirar (stick derecho)';
   return id.slice(id.indexOf(':') + 1);
 }

@@ -88,7 +88,7 @@ static NSString *documentsDirectory(void) {
 static NSArray<NSString *> *consoleFolders(void) {
   return @[
     @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"snes", @"nes", @"gb", @"gbc",
-    @"states"
+    @"ports", @"states"
   ];
 }
 
@@ -101,7 +101,7 @@ static NSDictionary<NSString *, NSString *> *unsupportedFolders(void) {
 // Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
 // fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
 static NSArray<NSString *> *unpackFolders(void) {
-  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc" ];
+  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc", @"ports" ];
 }
 // Descargas comprimidas grandes (o .7z): se descomprimen en segundo plano a la raíz de Documents
 // y desde ahí la auto-organización reparte cada juego en su carpeta
@@ -155,6 +155,66 @@ static BOOL isInDocsFolder(NSString *path, NSString *folder) {
 // .zip se abren con MAME 2003-Plus o FBNeo)
 static BOOL isInArcadeFolder(NSString *path) {
   return isInDocsFolder(path, @"arcade") || isInDocsFolder(path, @"fbneo");
+}
+
+// ---- Ports (Doom, Quake, Wolfenstein 3D, Cave Story…) ------------------------------------------
+// Núcleo que abre un archivo de port, o nil. Solo se lista el archivo "de arranque" de cada juego
+// (pak0.pak, Doukutsu.exe, VSWAP.*, RPG_RT.ldb…), no el resto de sus datos.
+static NSString *portCoreFor(NSString *path) {
+  NSString *name = path.lastPathComponent.lowercaseString;
+  NSString *ext = name.pathExtension;
+  if ([ext isEqualToString:@"wad"] || [ext isEqualToString:@"iwad"]) {
+    return [name isEqualToString:@"prboom.wad"] ? nil : @"prboom";
+  }
+  if ([ext isEqualToString:@"ecwolf"]) return @"ecwolf";
+  if ([name hasPrefix:@"vswap."] &&
+      [@[ @"wl6", @"wl1", @"sod", @"sdm", @"sd2", @"sd3", @"n3d" ] containsObject:ext]) {
+    return @"ecwolf";
+  }
+  if ([name isEqualToString:@"pak0.pak"]) {
+    NSString *parent = path.stringByDeletingLastPathComponent.lastPathComponent.lowercaseString;
+    return [parent isEqualToString:@"baseq2"] ? @"vitaquake2" : @"tyrquake";
+  }
+  if ([name isEqualToString:@"doukutsu.exe"]) return @"nxengine";
+  if ([ext isEqualToString:@"game"]) return @"cannonball";
+  if ([name isEqualToString:@"level1.map"]) return @"reminiscence";
+  if ([name isEqualToString:@"rpg_rt.ldb"] || [ext isEqualToString:@"easyrpg"]) return @"easyrpg";
+  if ([ext isEqualToString:@"scummvm"]) return @"scummvm";
+  return nil;
+}
+
+// Extensiones sueltas que pertenecen a ports (el organizador las lleva a ports/)
+static BOOL isPortDataName(NSString *name) {
+  NSString *lower = name.lowercaseString;
+  NSString *ext = lower.pathExtension;
+  return portCoreFor(name) != nil ||
+         [@[ @"wad", @"iwad", @"pwad", @"deh", @"ecwolf", @"wl6", @"wl1", @"sod", @"pak", @"scummvm", @"ldb", @"lmt",
+             @"game", @"easyrpg" ] containsObject:ext] ||
+         [lower isEqualToString:@"doukutsu.exe"];
+}
+
+// .zip con un port dentro (Doukutsu.exe, .wad, pak0.pak, VSWAP, RPG_RT.ldb…)
+static BOOL zipHasPort(NSString *zip) {
+  for (const std::string &entry : unpack::listZipEntries(zip.UTF8String)) {
+    NSString *e = [NSString stringWithUTF8String:entry.c_str()];
+    if (e && isPortDataName(e.lastPathComponent)) return YES;
+  }
+  return NO;
+}
+
+// Cave Story (freeware, datos oficiales de libretro) viene dentro del núcleo NXEngine: se instala
+// una vez en ports/Cave Story/ para que aparezca listo para jugar
+static void installBundledPorts(NSString *docs) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *src = [NSBundle.mainBundle.privateFrameworksPath
+      stringByAppendingPathComponent:@"nxengine_libretro.framework/CaveStory"];
+  NSString *marker = [docs stringByAppendingPathComponent:@"system/.cavestory-installed"];
+  if (![fm fileExistsAtPath:src] || [fm fileExistsAtPath:marker]) return;
+  NSString *dest = [docs stringByAppendingPathComponent:@"ports/Cave Story"];
+  [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:@"ports"] withIntermediateDirectories:YES attributes:nil error:nil];
+  if (![fm fileExistsAtPath:dest]) [fm copyItemAtPath:src toPath:dest error:nil];
+  [fm createDirectoryAtPath:marker.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+  [[NSData data] writeToFile:marker atomically:YES];
 }
 
 static BOOL isNeoGeoBios(NSString *path) {
@@ -494,7 +554,7 @@ static NSString *folderForExtension(NSString *ext) {
     map = @{
       @"gba" : @"gba", @"agb" : @"gba", @"n64" : @"n64", @"z64" : @"n64", @"v64" : @"n64", @"nds" : @"nds",
       @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"sms" : @"sega", @"gg" : @"sega", @"sg" : @"sega",
-      @"cso" : @"psp", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
+      @"cso" : @"psp", @"wad" : @"ports", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
       @"fds" : @"nes", @"unf" : @"nes", @"unif" : @"nes", @"gb" : @"gb", @"dmg" : @"gb", @"sgb" : @"gb", @"gbc" : @"gbc",
     };
   });
@@ -504,8 +564,10 @@ static NSString *folderForExtension(NSString *ext) {
 static NSString *classifyFile(NSString *full, NSString *currentFolder) {
   NSString *name = full.lastPathComponent;
   NSString *ext = name.pathExtension.lowercaseString;
+  if (isPortDataName(name)) return @"ports";
   if ([ext isEqualToString:@"zip"]) {
     if (isNeoGeoBios(full)) return @"arcade";
+    if (zipHasPort(full)) return @"ports";
     // Contenido del zip (solo el índice): ROM de consola -> su carpeta (allí se descomprime sola)
     BOOL disc = NO, cueBin = NO;
     for (const std::string &entry : unpack::listZipEntries(full.UTF8String)) {
@@ -545,7 +607,7 @@ static NSString *folderLabel(NSString *folder) {
       @"psp" : @"PSP", @"ps1" : @"PlayStation", @"n64" : @"Nintendo 64", @"gba" : @"Game Boy Advance",
       @"nds" : @"Nintendo DS", @"sega" : @"Sega", @"saturn" : @"Saturn", @"arcade" : @"Arcade",
       @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy",
-      @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo",
+      @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo", @"ports" : @"Ports",
     };
   });
   return labels[folder] ?: folder;
@@ -648,7 +710,15 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
     if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
     NSString *ext = name.pathExtension.lowercaseString;
 
+    if (isPortDataName(name)) {
+      moveIfFree(full, [[docs stringByAppendingPathComponent:@"ports"] stringByAppendingPathComponent:name]);
+      continue;
+    }
     if ([ext isEqualToString:@"zip"]) {
+      if (zipHasPort(full)) {
+        moveIfFree(full, [[docs stringByAppendingPathComponent:@"ports"] stringByAppendingPathComponent:name]);
+        continue;
+      }
       if (isNeoGeoBios(full) || isKnownArcadeSet(name)) {
         moveIfFree(full, [arcade stringByAppendingPathComponent:name]);
         continue;
@@ -830,12 +900,37 @@ RCT_EXPORT_MODULE(Libretro)
     @"snes9x" : @"snes9x_libretro",
     @"fceumm" : @"fceumm_libretro",
     @"gambatte" : @"gambatte_libretro",
+    @"prboom" : @"prboom_libretro",
+    @"ecwolf" : @"ecwolf_libretro",
+    @"tyrquake" : @"tyrquake_libretro",
+    @"vitaquake2" : @"vitaquake2_libretro",
+    @"nxengine" : @"nxengine_libretro",
+    @"cannonball" : @"cannonball_libretro",
+    @"reminiscence" : @"reminiscence_libretro",
+    @"easyrpg" : @"easyrpg_libretro",
+    @"scummvm" : @"scummvm_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
   _coreId = coreId;
   NSString *path = [NSString stringWithFormat:@"%@/%@.framework/%@",
                                               NSBundle.mainBundle.privateFrameworksPath, name, name];
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  if (![fileManager fileExistsAtPath:path]) {
+    _romError = [NSString stringWithFormat:@"El núcleo %@ no está incluido en esta compilación (no estaba disponible "
+                                           @"en el servidor de libretro al generar el IPA).",
+                                           name];
+    return @NO;
+  }
+  // Archivos de sistema que viajan dentro del framework (prboom.wad, ecwolf.pk3, recursos de
+  // Cannonball): se copian a Documents/system la primera vez
+  NSString *bundledSystem = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"system"];
+  for (NSString *item in [fileManager contentsOfDirectoryAtPath:bundledSystem error:nil]) {
+    NSString *to = [_systemDir stringByAppendingPathComponent:item];
+    if (![fileManager fileExistsAtPath:to]) {
+      [fileManager copyItemAtPath:[bundledSystem stringByAppendingPathComponent:item] toPath:to error:nil];
+    }
+  }
   if ([coreId isEqualToString:@"ppsspp"]) {
     // PPSSPP necesita sus archivos de sistema (fuentes de la PSP, atlas de la interfaz) en
     // system/PPSSPP. Vienen dentro del framework; se copian la primera vez.
@@ -989,11 +1084,17 @@ RCT_EXPORT_MODULE(Libretro)
       NSString *folder = rel.pathComponents.firstObject;
       const BOOL inbox = [folder isEqualToString:kInbox];
       NSString *destDir = inbox ? docs : full.stringByDeletingLastPathComponent;
-      unpack::Result r = unpack::extractAll(full.UTF8String, destDir.UTF8String);
+      const BOOL ports = [folder isEqualToString:@"ports"];
+      if (ports) {
+        destDir = [destDir stringByAppendingPathComponent:rel.lastPathComponent.stringByDeletingPathExtension];
+        [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
+      }
+      unpack::Result r = ports ? unpack::extractTree(full.UTF8String, destDir.UTF8String)
+                               : unpack::extractAll(full.UTF8String, destDir.UTF8String);
       NSMutableArray<NSString *> *files = [NSMutableArray array];
       for (const std::string &f : r.files) [files addObject:[NSString stringWithUTF8String:f.c_str()]];
       // Un juego de otra consola dentro de una carpeta de consola: a su carpeta (salvo pistas de .cue)
-      if (!inbox) {
+      if (!inbox && !ports) {
         for (NSString *f in files) {
           NSString *ext = f.pathExtension.lowercaseString;
           if ([ext isEqualToString:@"cue"] || [ext isEqualToString:@"bin"]) continue;
@@ -1273,6 +1374,10 @@ RCT_EXPORT_MODULE(Libretro)
   host::setButtons((uint16_t)mask);
 }
 
+- (void)setLook:(double)x y:(double)y {
+  host::setLook(x, y);
+}
+
 - (void)setAnalog:(double)x y:(double)y {
   host::setAnalog(x, y);
 }
@@ -1292,6 +1397,7 @@ RCT_EXPORT_MODULE(Libretro)
   NSString *docs = documentsDirectory();
   createConsoleFolders(docs);  // por si no existían al arrancar
   romzip::Folders folders = romFolders(docs);
+  installBundledPorts(docs);
   organizeDocumentsRoot(docs, folders);
   relocatePspFromPs1(docs);
   relocateFromArcade(docs);
@@ -1324,6 +1430,11 @@ RCT_EXPORT_MODULE(Libretro)
     if (([ext isEqualToString:@"zip"] || [ext isEqualToString:@"7z"]) &&
         [unpackFolders() containsObject:top] && rel.pathComponents.count == 2) {
       continue;  // se descomprime en segundo plano (unpackArchives)
+    }
+    if ([top isEqualToString:@"ports"]) {
+      // ports/: solo el archivo de arranque de cada juego (el resto son sus datos)
+      if (portCoreFor(full)) [roms addObject:full];
+      continue;
     }
     if ([ext isEqualToString:@"zip"]) {
       if (isNeoGeoBios(full)) continue;  // BIOS de Neo-Geo, no es un juego
@@ -1476,6 +1587,7 @@ RCT_EXPORT_MODULE(Libretro)
 // 'psp' | '' (no verificada)
 - (NSString *)consoleOf:(NSString *)romPath {
   NSString *path = normalizeRomPath(romPath);
+  if (portCoreFor(path)) return @"ports";
   NSString *ext = path.pathExtension.lowercaseString;
   if ([ext isEqualToString:@"zip"]) {
     // Solo los .zip de arcade/ (MAME) y fbneo/ (FBNeo) son romsets; fuera, '' (la UI avisa)

@@ -15,7 +15,8 @@ export type IconKind =
   | 'snes'
   | 'nes'
   | 'gb'
-  | 'gbc';
+  | 'gbc'
+  | 'ports';
 
 // Siluetas vectoriales minimalistas (trazo fino, viewBox 24x24)
 export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?: number; color: string }) {
@@ -146,6 +147,16 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Circle cx={14.4} cy={16.6} r={0.85} fill={color} />
           <Circle cx={16.4} cy={15.2} r={0.85} fill={color} />
           {kind === 'gbc' ? <Path d="M9 8.3h6" {...stroke} /> : null}
+        </>
+      ) : null}
+      {kind === 'ports' ? (
+        // PC clásico: monitor CRT con mira de shooter y teclado
+        <>
+          <Rect x={3} y={3} width={18} height={12.5} rx={1.8} {...stroke} />
+          <Circle cx={12} cy={9.2} r={2.6} {...stroke} />
+          <Path d="M12 5.4v1.6M12 11.4v1.6M8.2 9.2h1.6M14.2 9.2h1.6" {...stroke} />
+          <Path d="M9 15.5l-.8 2.5h7.6l-.8-2.5" {...stroke} />
+          <Rect x={4} y={19} width={16} height={2.4} rx={0.8} {...stroke} />
         </>
       ) : null}
       {kind === 'ps1' ? (

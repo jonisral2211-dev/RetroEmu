@@ -29,7 +29,8 @@ export type ArtKind =
   | 'snes'
   | 'nes'
   | 'gb'
-  | 'gbc';
+  | 'gbc'
+  | 'ports';
 
 export const ART_GLOW: Record<ArtKind, string> = {
   ps1: '#3B82F6',
@@ -45,6 +46,7 @@ export const ART_GLOW: Record<ArtKind, string> = {
   nes: '#DC2626',
   gb: '#84CC16',
   gbc: '#EAB308',
+  ports: '#F59E0B',
 };
 
 /** Halo de neón y sombra de contacto comunes. */
@@ -606,6 +608,38 @@ function GameBoy({ color }: { color: boolean }) {
   );
 }
 
+// ---- Ports: PC clásico (monitor CRT con un pasillo 3D y mira) y teclado -------------------
+function Ports() {
+  return (
+    <>
+      <Stage id="ports" color={ART_GLOW.ports} />
+      <Defs>
+        <LinearGradient id="ports-case" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#E7E2D3" />
+          <Stop offset="1" stopColor="#B5AE98" />
+        </LinearGradient>
+        <LinearGradient id="ports-scr" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#7C2D12" />
+          <Stop offset="0.55" stopColor="#B45309" />
+          <Stop offset="1" stopColor="#1C1917" />
+        </LinearGradient>
+      </Defs>
+      <Rect x="42" y="12" width="76" height="62" rx="6" fill="url(#ports-case)" />
+      <Rect x="49" y="18" width="62" height="46" rx="4" fill="#0C0A09" />
+      <Rect x="52" y="21" width="56" height="40" rx="2" fill="url(#ports-scr)" />
+      {/* Pasillo en perspectiva */}
+      <Path d="M52 21 L70 35 L90 35 L108 21 M52 61 L70 47 L90 47 L108 61 M70 35 L70 47 M90 35 L90 47" stroke="#FDBA74" strokeOpacity="0.55" strokeWidth="0.8" fill="none" />
+      <Circle cx="80" cy="41" r="4" stroke="#FEF3C7" strokeWidth="0.9" fill="none" />
+      <Path d="M80 34.5 L80 37 M80 45 L80 47.5 M73.5 41 L76 41 M84 41 L86.5 41" stroke="#FEF3C7" strokeWidth="0.9" />
+      <Path d="M52 21 L66 21 L56 61 L52 61 Z" fill="#FFF" fillOpacity="0.08" />
+      <Circle cx="110" cy="69" r="1.4" fill="#22C55E" />
+      <Path d="M70 74 L66 82 L94 82 L90 74 Z" fill="#A8A08A" />
+      <Path d="M28 86 L132 86 L138 96 L22 96 Z" fill="url(#ports-case)" />
+      <Path d="M32 89 L128 89 M30 92 L130 92" stroke="#8A8371" strokeWidth="1.2" strokeDasharray="3 1.4" />
+    </>
+  );
+}
+
 export function ConsoleArt({ kind, width, height }: { kind: ArtKind; width: number; height: number }) {
   return (
     <Svg width={width} height={height} viewBox="0 0 160 110">
@@ -622,6 +656,7 @@ export function ConsoleArt({ kind, width, height }: { kind: ArtKind; width: numb
       {kind === 'nes' ? <Nes /> : null}
       {kind === 'gb' ? <GameBoy color={false} /> : null}
       {kind === 'gbc' ? <GameBoy color /> : null}
+      {kind === 'ports' ? <Ports /> : null}
     </Svg>
   );
 }

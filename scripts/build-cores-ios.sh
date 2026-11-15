@@ -101,6 +101,25 @@ prebuilt_core() {
     cp -R "$tmp/assets/PPSSPP" "$fw/PPSSPP"
     echo "    assets PPSSPP: $(du -sh "$fw/PPSSPP" | cut -f1)"
   fi
+  # Archivos de sistema / datos libres que acompañan a algunos ports (la app los copia a
+  # Documents/system o, Cave Story, a Documents/ports/ la primera vez). Si fallan, el core sigue.
+  local asset=""
+  case "$name" in
+    prboom_libretro) asset="PrBoom" ;;
+    ecwolf_libretro) asset="ECWolf" ;;
+    cannonball_libretro) asset="Cannonball%20%28ROMs%20Required%29" ;;
+    nxengine_libretro) asset="NXEngine%20%28Cave%20Story%29" ;;
+  esac
+  if [[ -n "$asset" ]] && curl -fsSL --retry 3 "https://buildbot.libretro.com/assets/system/$asset.zip" -o "$tmp/sys.zip"; then
+    rm -rf "$tmp/sys" && unzip -q -o "$tmp/sys.zip" -d "$tmp/sys"
+    if [[ "$name" == "nxengine_libretro" && -d "$tmp/sys/nxengine" ]]; then
+      rm -rf "$tmp/sys/nxengine/Manual" "$tmp/sys/nxengine/Manual.html" "$tmp/sys/nxengine/DoConfig.exe"
+      cp -R "$tmp/sys/nxengine" "$fw/CaveStory"
+    else
+      mkdir -p "$fw/system" && cp -R "$tmp/sys/." "$fw/system/"
+    fi
+    echo "    datos de sistema: $asset ($(du -sh "$tmp/sys" | cut -f1))"
+  fi
   codesign --force --sign - "$fw/$name"
   codesign --verify --verbose=1 "$fw/$name"
   echo "    framework: $fw ($(du -h "$fw/$name" | cut -f1), $archs, firmado ad-hoc)"
@@ -190,6 +209,14 @@ rm -rf "$OUT_DIR"/*.framework
 exec 3< "$LOCK"
 while IFS='|' read -r -u 3 name repo ref build target args enabled; do
   [[ -z "${name// /}" || "$name" == \#* ]] && continue
+  if [[ "$enabled" == "optional" ]]; then
+    # Opcional: si el buildbot no lo tiene hoy, se omite sin romper el IPA
+    if ! ( build_core "$name" "$repo" "$ref" "$build" "$target" "$args" ); then
+      rm -rf "$OUT_DIR/$name.framework"
+      echo "AVISO: $name no disponible ahora mismo; el IPA se genera sin él"
+    fi
+    continue
+  fi
   if [[ "$enabled" != "true" ]]; then
     echo "==> $name desactivado en cores.lock"
     continue
