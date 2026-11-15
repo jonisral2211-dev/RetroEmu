@@ -13,12 +13,15 @@ export type TouchMode = 'auto' | 'show' | 'hide';
 export type FilterMode = 'sharp' | 'smooth';
 export type NetState = { phase: string; message: string; code: string; ping: number };
 /** Mando web del Jugador 2: fase 0 apagado, 1 conectando, 2 esperando, 3 conectado. */
-export type WebPadState = { phase: number; code: string; message: string };
+export type WebPadState = { phase: number; code: string; message: string; seats: number };
 
+// "fase|código|mensaje|asientos" (asientos: bit p = puerto p con mando web)
 export function parseWebPadStatus(raw: string): WebPadState {
-  const [phase = '0', code = '', ...rest] = raw.split('|');
-  return { phase: Number(phase) || 0, code, message: rest.join('|') };
+  const [phase = '0', code = '', message = '', seats = '0'] = raw.split('|');
+  return { phase: Number(phase) || 0, code, message, seats: Number(seats) || 0 };
 }
+
+const SEAT_COLOR = ['#D4AF37', '#3b82f6', '#22c55e', '#f97316'];
 type Option<T extends string> = { id: T; label: string };
 
 // "fase|mensaje|código|ping"
@@ -347,14 +350,43 @@ export function GameMenu(p: GameMenuProps) {
             </Text>
           </Section>
 
-          <Section title="Invitar Jugador 2 sin app (Mando Web)">
+          <Section title="Jugadores (4 puertos)">
+            {[0, 1, 2, 3].map((port) => {
+              const web = (p.webPad.seats >> port) & 1;
+              const physical = p.pad.players?.[port];
+              const who =
+                port === 0
+                  ? `Host (este iPhone${physical ? ` + ${physical.kind}` : ''})`
+                  : web
+                    ? 'Mando Web'
+                    : physical
+                      ? `${physical.kind === 'PS5' ? 'DualSense' : physical.kind} Bluetooth`
+                      : 'Libre';
+              return (
+                <View key={port} style={styles.seatRow}>
+                  <View style={[styles.seatBadge, { backgroundColor: SEAT_COLOR[port] }]}>
+                    <Text style={styles.seatBadgeText}>J{port + 1}</Text>
+                  </View>
+                  <Text style={[styles.seatWho, who === 'Libre' && styles.seatFree]}>{who}</Text>
+                  {web ? (
+                    <Pressable onPress={() => Libretro.webPadKick(port)} hitSlop={8}>
+                      <Text style={styles.seatKick}>Liberar</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })}
+          </Section>
+
+          <Section title="Invitar jugadores J2, J3 y J4 sin app (Mando Web)">
             <Text style={styles.note}>
-              Tu amigo abre un enlace en Safari o Chrome de su móvil y usa la pantalla como mando del Jugador 2,
-              sin instalar nada y sin tener el juego. Ideal para jugar a dobles mirando la TV o la misma pantalla.
+              Hasta 3 amigos abren el mismo enlace en Safari o Chrome y su móvil se convierte en el mando de J2, J3
+              y J4 (el primer asiento libre; pueden cambiarse de asiento), sin instalar nada ni tener el juego. Se
+              puede mezclar con mandos Bluetooth: cada mando físico ocupa su puerto y el navegador toma otro.
             </Text>
             {p.webPad.phase === 0 ? (
               <Action
-                label="Crear mando web para el Jugador 2"
+                label="Crear sala de mandos web (J2-J4)"
                 primary
                 disabled={!relay || online}
                 onPress={() => relay && Libretro.webPadStart(relay.host, relay.port)}
@@ -380,7 +412,7 @@ export function GameMenu(p: GameMenuProps) {
                           Share.share({
                             message:
                               `¡Juega conmigo ${p.title} en JL Emulator! Abre este enlace en tu móvil y serás el ` +
-                              `Jugador 2 (no hace falta instalar nada): ${webPadLink(relay.host, p.webPad.code)} ` +
+                              `Jugador 2, 3 o 4 (no hace falta instalar nada): ${webPadLink(relay.host, p.webPad.code)} ` +
                               `(código ${p.webPad.code})`,
                           }).catch(() => {})
                         }
@@ -584,6 +616,12 @@ const styles = StyleSheet.create({
   code: { color: theme.text, fontSize: 34, fontWeight: '900', letterSpacing: 8 },
   warnText: { color: theme.amber, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   link: { color: theme.titaniumHi, fontSize: 13, textAlign: 'center' },
+  seatRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
+  seatBadge: { minWidth: 34, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, alignItems: 'center' },
+  seatBadgeText: { color: '#fff', fontWeight: '900', fontSize: 12 },
+  seatWho: { flex: 1, color: theme.text, fontSize: 14, fontWeight: '600' },
+  seatFree: { color: theme.textDim, fontWeight: '400' },
+  seatKick: { color: theme.danger, fontWeight: '800', fontSize: 13 },
   playerRow: { color: theme.titaniumHi, fontSize: 13, fontWeight: '600' },
   input: {
     flex: 1,

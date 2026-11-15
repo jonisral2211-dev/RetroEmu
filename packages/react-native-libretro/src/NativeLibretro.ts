@@ -53,7 +53,11 @@ export interface Spec extends TurboModule {
   /** Mando web del Jugador 2 (sin app): abre una sala en el relay; el navegador manda al puerto 1. */
   webPadStart(relayHost: string, port: number): boolean;
   webPadStop(): void;
-  /** "fase|código|mensaje" (0 apagado, 1 conectando, 2 esperando, 3 jugador conectado). */
+  /** Expulsa al mando web del puerto 1-3 (libera el asiento). */
+  webPadKick(port: number): void;
+  /** Puertos (bits) ocupados por mandos físicos: no se asignan a mandos web. */
+  webPadReserve(mask: number): void;
+  /** "fase|código|mensaje|asientos" (0 apagado, 1 conectando, 2 esperando, 3 alguien conectado; bit p = puerto p). */
   webPadStatus(): string;
   /** Copia texto al portapapeles del iPhone. */
   copyToClipboard(text: string): void;

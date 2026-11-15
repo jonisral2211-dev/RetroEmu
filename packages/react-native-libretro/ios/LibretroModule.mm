@@ -481,10 +481,25 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
 // La plantilla de React Native no implementa application:supportedInterfaceOrientationsForWindow:,
 // así que se añade en tiempo de ejecución a la clase del AppDelegate y devuelve esta máscara.
 static UIInterfaceOrientationMask g_orientationMask = UIInterfaceOrientationMaskAllButUpsideDown;
+static BOOL g_orientationLocked = NO;  // hay un bloqueo activo (modo control de TV)
+static NSString *g_orientationError = @"";
 
 static UIInterfaceOrientationMask jlSupportedOrientations(id, SEL, UIApplication *, UIWindow *) {
   return g_orientationMask;
 }
+
+// Los view controllers (el de React Native y los que presente) también deben aceptar la máscara:
+// iOS usa la intersección de la del AppDelegate y la del controlador visible.
+@implementation UIViewController (JLOrientation)
+- (UIInterfaceOrientationMask)jl_supportedInterfaceOrientations {
+  if (g_orientationLocked) return g_orientationMask;
+  return [self jl_supportedInterfaceOrientations];  // implementación original (intercambiada)
+}
+- (BOOL)jl_shouldAutorotate {
+  if (g_orientationLocked) return YES;
+  return [self jl_shouldAutorotate];
+}
+@end
 
 static void installOrientationHook(void) {
   static dispatch_once_t once;
@@ -498,21 +513,36 @@ static void installOrientationHook(void) {
     } else {
       class_addMethod(cls, sel, (IMP)jlSupportedOrientations, "Q@:@@");
     }
+    Class vc = UIViewController.class;
+    method_exchangeImplementations(class_getInstanceMethod(vc, @selector(supportedInterfaceOrientations)),
+                                   class_getInstanceMethod(vc, @selector(jl_supportedInterfaceOrientations)));
+    method_exchangeImplementations(class_getInstanceMethod(vc, @selector(shouldAutorotate)),
+                                   class_getInstanceMethod(vc, @selector(jl_shouldAutorotate)));
   });
 }
 
 static void applyOrientationMask(UIInterfaceOrientationMask mask) {
   installOrientationHook();
   g_orientationMask = mask;
+  g_orientationLocked = mask != UIInterfaceOrientationMaskAllButUpsideDown;
   if (@available(iOS 16.0, *)) {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
       if (![scene isKindOfClass:UIWindowScene.class]) continue;
       UIWindowScene *ws = (UIWindowScene *)scene;
       if (ws.screen != UIScreen.mainScreen) continue;  // la ventana de la TV no gira
-      for (UIWindow *w in ws.windows) [w.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+      for (UIWindow *w in ws.windows) {
+        // El controlador raíz y cualquiera presentado encima
+        for (UIViewController *vc = w.rootViewController; vc; vc = vc.presentedViewController) {
+          [vc setNeedsUpdateOfSupportedInterfaceOrientations];
+        }
+      }
       UIWindowSceneGeometryPreferencesIOS *prefs =
           [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
-      [ws requestGeometryUpdateWithPreferences:prefs errorHandler:nil];
+      [ws requestGeometryUpdateWithPreferences:prefs
+                                  errorHandler:^(NSError *error) {
+                                    g_orientationError = error.localizedDescription ?: @"";
+                                    NSLog(@"[RetroEmu] requestGeometryUpdate: %@", error);
+                                  }];
     }
   } else {
     if (mask == UIInterfaceOrientationMaskPortrait) {
@@ -821,6 +851,14 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (void)webPadStop {
   host::webPadStop();
+}
+
+- (void)webPadKick:(double)port {
+  host::webPadKick((int)port);
+}
+
+- (void)webPadReserve:(double)mask {
+  host::webPadReserve((int)mask);
 }
 
 - (NSString *)webPadStatus {

@@ -36,6 +36,15 @@ pb LSSupportsOpeningDocumentsInPlace bool true
 /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'JL Emulator usa la red local para jugar en línea con otro iPhone (Netplay).'" "$PLIST"
 
+# Orientaciones permitidas (el modo control de TV las restringe en tiempo de ejecución)
+/usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
+for o in UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight; do
+  /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations: string $o" "$PLIST"
+done
+/usr/libexec/PlistBuddy -c "Delete :UIRequiresFullScreen" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :UIRequiresFullScreen bool true" "$PLIST"
+
 # Nombre visible en el iPhone
 for key in CFBundleDisplayName CFBundleName; do
   /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" >/dev/null 2>&1 || true

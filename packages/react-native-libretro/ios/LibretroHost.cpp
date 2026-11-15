@@ -34,7 +34,7 @@
 
 namespace host {
 // Reenvío de la vibración del Jugador 2 al móvil del mando web (definida más abajo)
-void webPadRumble(float strong, float weak);
+void webPadRumble(unsigned port, float strong, float weak);
 namespace {
 
 // Punteros a la API de Libretro resueltos con dlsym.
@@ -88,16 +88,15 @@ std::atomic<int16_t> g_padRY{0};
 std::atomic<int16_t> g_padL2{0};
 std::atomic<int16_t> g_padR2{0};
 // Segundo mando físico (Jugador 2, puerto 1)
-std::atomic<uint16_t> g_pad2Buttons{0};
-std::atomic<int16_t> g_pad2X{0};
-std::atomic<int16_t> g_pad2Y{0};
-std::atomic<int16_t> g_pad2RX{0};
-std::atomic<int16_t> g_pad2RY{0};
-std::atomic<int16_t> g_pad2L2{0};
-std::atomic<int16_t> g_pad2R2{0};
+// Jugadores 2, 3 y 4 (puertos 1-3): mando físico, mando web o ambos
+struct ExtraPad {
+  std::atomic<uint16_t> buttons{0};
+  std::atomic<int16_t> x{0}, y{0}, rx{0}, ry{0}, l2{0}, r2{0};
+};
+ExtraPad g_extra[3];
 // Vibración: intensidad pedida por el core (0..0xffff) por puerto, motor fuerte y débil
-std::atomic<uint16_t> g_rumbleStrong[2] = {{0}, {0}};
-std::atomic<uint16_t> g_rumbleWeak[2] = {{0}, {0}};
+std::atomic<uint16_t> g_rumbleStrong[4] = {{0}, {0}, {0}, {0}};
+std::atomic<uint16_t> g_rumbleWeak[4] = {{0}, {0}, {0}, {0}};
 void (*g_rumbleHandler)(unsigned port, float strong, float weak) = nullptr;
 // Ruta de la ROM cargada y núcleo (para el saludo de netplay)
 std::string g_romPath;
@@ -327,31 +326,32 @@ bool hasPs1Bios() {
 }
 
 static bool onRumble(unsigned port, enum retro_rumble_effect effect, uint16_t strength) {
-  if (port > 1 || g_replaying.load(std::memory_order_relaxed)) return true;
+  if (port > 3 || g_replaying.load(std::memory_order_relaxed)) return true;
   auto &slot = effect == RETRO_RUMBLE_STRONG ? g_rumbleStrong[port] : g_rumbleWeak[port];
   if (slot.exchange(strength) == strength) return true;  // sin cambios: no molestar al mando
   if (g_rumbleHandler) {
     g_rumbleHandler(port, g_rumbleStrong[port].load() / 65535.0f, g_rumbleWeak[port].load() / 65535.0f);
   }
-  if (port == 1) webPadRumble(g_rumbleStrong[1].load() / 65535.0f, g_rumbleWeak[1].load() / 65535.0f);
+  if (port >= 1) webPadRumble(port, g_rumbleStrong[port].load() / 65535.0f, g_rumbleWeak[port].load() / 65535.0f);
   return true;
 }
 
-// Jugador 2 en local: solo el segundo mando físico
-static int16_t port2InputState(unsigned device, unsigned index, unsigned id) {
+// Jugadores 2-4 en local: mando físico o mando web de ese puerto
+static int16_t extraInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+  const ExtraPad &p = g_extra[port - 1];
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
-    return id == RETRO_DEVICE_ID_ANALOG_X ? g_pad2X.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? g_pad2Y.load() : 0;
+    return id == RETRO_DEVICE_ID_ANALOG_X ? p.x.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? p.y.load() : 0;
   }
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
-    return id == RETRO_DEVICE_ID_ANALOG_X ? g_pad2RX.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? g_pad2RY.load() : 0;
+    return id == RETRO_DEVICE_ID_ANALOG_X ? p.rx.load() : id == RETRO_DEVICE_ID_ANALOG_Y ? p.ry.load() : 0;
   }
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_BUTTON && id < 16) {
-    if (id == RETRO_DEVICE_ID_JOYPAD_L2 && g_pad2L2.load()) return g_pad2L2.load();
-    if (id == RETRO_DEVICE_ID_JOYPAD_R2 && g_pad2R2.load()) return g_pad2R2.load();
-    return ((g_pad2Buttons.load() >> id) & 1) ? 0x7fff : 0;
+    if (id == RETRO_DEVICE_ID_JOYPAD_L2 && p.l2.load()) return p.l2.load();
+    if (id == RETRO_DEVICE_ID_JOYPAD_R2 && p.r2.load()) return p.r2.load();
+    return ((p.buttons.load() >> id) & 1) ? 0x7fff : 0;
   }
   if (device != RETRO_DEVICE_JOYPAD || index != 0 || id > 15) return 0;
-  return static_cast<int16_t>((g_pad2Buttons.load() >> id) & 1);
+  return static_cast<int16_t>((p.buttons.load() >> id) & 1);
 }
 
 static bool onEnvironment(unsigned cmd, void *data) {
@@ -565,7 +565,7 @@ static int16_t netInputState(unsigned port, unsigned device, unsigned index, uns
 static int16_t onInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
   g_dbgReads.fetch_add(1, std::memory_order_relaxed);
   if (g_netActive.load(std::memory_order_relaxed)) return netInputState(port, device, index, id);
-  if (port == 1) return port2InputState(device, index, id);
+  if (port >= 1 && port <= 3) return extraInputState(port, device, index, id);
   if (port != 0) return 0;
   if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
     if (id == RETRO_DEVICE_ID_ANALOG_X) return g_padRX.load();
@@ -1315,18 +1315,19 @@ void setGamepadPort(int port, uint16_t buttons, double x, double y, double rx, d
     setGamepadExtra(rx, ry, l2, r2);
     return;
   }
-  if (port != 1) return;
+  if (port < 1 || port > 3) return;
   auto toAxis = [](double v) {
     v = std::max(-1.0, std::min(1.0, v));
     return static_cast<int16_t>(v * 32767.0);
   };
-  g_pad2Buttons = buttons;
-  g_pad2X = toAxis(x);
-  g_pad2Y = toAxis(y);
-  g_pad2RX = toAxis(rx);
-  g_pad2RY = toAxis(ry);
-  g_pad2L2 = toAxis(l2);
-  g_pad2R2 = toAxis(r2);
+  ExtraPad &p = g_extra[port - 1];
+  p.buttons = buttons;
+  p.x = toAxis(x);
+  p.y = toAxis(y);
+  p.rx = toAxis(rx);
+  p.ry = toAxis(ry);
+  p.l2 = toAxis(l2);
+  p.r2 = toAxis(r2);
 }
 
 std::string localAddress() {
@@ -1466,7 +1467,8 @@ bool netJoin(const char *address, int port) {
 // La app abre "JLRL1 PADHOST" en el relay y recibe líneas "P botones lx ly" del navegador del
 // Jugador 2, que se inyectan en el puerto 1 de Libretro como si fuera un segundo mando.
 std::atomic<int> g_webPadFd{-1};
-std::atomic<int> g_webPadPhase{0};  // 0 = apagado, 1 = conectando, 2 = esperando jugador, 3 = jugador conectado
+std::atomic<int> g_webPadPhase{0};  // 0 = apagado, 1 = conectando, 2 = esperando jugadores, 3 = alguno conectado
+std::atomic<int> g_webPadSeats{0};  // bit p = el puerto p (1-3) tiene un mando web conectado
 std::string g_webPadCode;           // protegido por g_netMutex
 std::string g_webPadMessage;
 
@@ -1477,10 +1479,27 @@ void webPadSet(int phase, const std::string &message) {
   if (phase == 0) g_webPadCode.clear();
 }
 
+void clearWebSeats() {
+  for (int port = 1; port <= 3; ++port) {
+    if (g_webPadSeats.load() & (1 << port)) setGamepadPort(port, 0, 0, 0, 0, 0, 0, 0);
+  }
+  g_webPadSeats = 0;
+}
+
 void webPadStop() {
   closeFd(g_webPadFd);
-  setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
+  clearWebSeats();
   webPadSet(0, "Mando web cerrado");
+}
+
+static std::string seatsMessage() {
+  const int seats = g_webPadSeats.load();
+  if (!seats) return "Esperando jugadores en el navegador…";
+  std::string m = "Conectados por navegador:";
+  for (int port = 1; port <= 3; ++port) {
+    if (seats & (1 << port)) m += " J" + std::to_string(port + 1);
+  }
+  return m;
 }
 
 bool webPadStart(const char *relayHost, int relayPort) {
@@ -1506,43 +1525,65 @@ bool webPadStart(const char *relayHost, int relayPort) {
       g_webPadCode = line.substr(5);
     }
     g_webPadFd = fd;
-    webPadSet(2, "Esperando al Jugador 2 en el navegador…");
+    g_webPadSeats = 0;
+    webPadSet(2, seatsMessage());
+    // Líneas del relay: "J puerto" (entra), "L puerto" (sale), "P puerto botones lx ly", "PING"
     while (g_webPadFd.load() == fd) {
       if (!recvLine(fd, line, 45000)) break;  // el relay manda PING cada 20 s
-      if (line == "J") {
-        webPadSet(3, "Jugador 2 conectado desde el navegador");
-      } else if (line == "L") {
-        setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
-        webPadSet(2, "El Jugador 2 salió · esperando…");
+      int port = 0;
+      if (line.rfind("J ", 0) == 0 && std::sscanf(line.c_str() + 2, "%d", &port) == 1 && port >= 1 && port <= 3) {
+        g_webPadSeats |= 1 << port;
+        webPadSet(3, seatsMessage());
+      } else if (line.rfind("L ", 0) == 0 && std::sscanf(line.c_str() + 2, "%d", &port) == 1 && port >= 1 && port <= 3) {
+        g_webPadSeats &= ~(1 << port);
+        setGamepadPort(port, 0, 0, 0, 0, 0, 0, 0);
+        webPadSet(g_webPadSeats.load() ? 3 : 2, seatsMessage());
       } else if (line.rfind("P ", 0) == 0) {
         unsigned b = 0;
         int lx = 0, ly = 0;
-        if (std::sscanf(line.c_str() + 2, "%u %d %d", &b, &lx, &ly) == 3) {
-          setGamepadPort(1, uint16_t(b), lx / 32767.0, ly / 32767.0, 0, 0, 0, 0);
+        if (std::sscanf(line.c_str() + 2, "%d %u %d %d", &port, &b, &lx, &ly) == 4 && port >= 1 && port <= 3) {
+          setGamepadPort(port, uint16_t(b), lx / 32767.0, ly / 32767.0, 0, 0, 0, 0);
         }
       }
     }
     if (g_webPadFd.load() == fd) {
       closeFd(g_webPadFd);
-      setGamepadPort(1, 0, 0, 0, 0, 0, 0, 0);
+      clearWebSeats();
       webPadSet(0, "Se cortó la conexión del mando web");
     }
   }).detach();
   return true;
 }
 
-// "R fuerte débil" (0-100) hacia el relay, que lo reenvía al navegador del Jugador 2
-void webPadRumble(float strong, float weak) {
+// "R puerto fuerte débil" (0-100) hacia el relay, que lo reenvía al navegador de ese jugador
+void webPadRumble(unsigned port, float strong, float weak) {
   const int fd = g_webPadFd.load();
-  if (fd < 0 || g_webPadPhase.load() != 3) return;
-  char line[32];
-  const int n = std::snprintf(line, sizeof line, "R %d %d\n", int(strong * 100), int(weak * 100));
+  if (fd < 0 || !(g_webPadSeats.load() & (1 << port))) return;
+  char line[40];
+  const int n = std::snprintf(line, sizeof line, "R %u %d %d\n", port, int(strong * 100), int(weak * 100));
   if (n > 0) ::send(fd, line, size_t(n), MSG_DONTWAIT);
 }
 
+static void webPadCommand(const std::string &cmd) {
+  const int fd = g_webPadFd.load();
+  if (fd < 0) return;
+  const std::string line = cmd + "\n";
+  ::send(fd, line.data(), line.size(), MSG_DONTWAIT);
+}
+
+// Expulsa al mando web del puerto (1-3) y libera el asiento
+void webPadKick(int port) {
+  if (port < 1 || port > 3) return;
+  webPadCommand("K " + std::to_string(port));
+}
+
+// Puertos ocupados por mandos físicos (bit p): el relay no los asigna a mandos web
+void webPadReserve(int mask) { webPadCommand("T " + std::to_string(mask)); }
+
 std::string webPadStatus() {
   std::lock_guard<std::mutex> lock(g_netMutex);
-  return std::to_string(g_webPadPhase.load()) + "|" + g_webPadCode + "|" + g_webPadMessage;
+  return std::to_string(g_webPadPhase.load()) + "|" + g_webPadCode + "|" + g_webPadMessage + "|" +
+         std::to_string(g_webPadSeats.load());
 }
 
 bool netJoinCode(const char *code, const char *relayHost, int relayPort) {

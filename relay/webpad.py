@@ -1,16 +1,19 @@
-"""Mando web para el Jugador 2 (sin instalar la app).
+"""Mando web para los Jugadores 2, 3 y 4 (sin instalar la app).
 
 - La app (iPhone del Jugador 1) abre una conexión TCP al relay: "JLRL1 PADHOST\\n" -> "CODE ABC123\\n".
-  Después recibe líneas "J" (se unió alguien), "L" (se fue) y "P <botones> <lx> <ly>" con el
-  estado del mando web, y las inyecta en el puerto 1 de Libretro.
-- El navegador del Jugador 2 abre http://<relay>:8080/play?code=ABC123 y se conecta por WebSocket
-  a /ws?code=ABC123; cada cambio de botones se envía como texto "botones,lx,ly".
+  Recibe "J <puerto>" (entra alguien), "L <puerto>" (sale), "P <puerto> <botones> <lx> <ly>" y PING.
+  Envía "R <puerto> <fuerte> <débil>" (vibración del juego), "K <puerto>" (expulsar) y
+  "T <máscara>" (puertos ocupados por mandos físicos, que no se asignan a navegadores).
+- Cada navegador abre http://<relay>:8080/play?code=ABC123 y se conecta por WebSocket a
+  /ws?code=ABC123[&seat=2..4]. Recibe "ok:<jugador>" con su asiento (2, 3 o 4) y "seats:<lista>";
+  envía "botones,lx,ly" y puede pedir "seat:<jugador>" para cambiarse a uno libre.
 
 Solo biblioteca estándar: WebSocket mínimo (RFC 6455, mensajes de texto cortos).
 """
 import asyncio
 import base64
 import hashlib
+import json
 import secrets
 import struct
 from pathlib import Path
@@ -19,11 +22,31 @@ from urllib.parse import parse_qs, urlparse
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 PAGE = (Path(__file__).with_name("webpad.html")).read_bytes()
+MANIFEST = json.dumps({
+    "name": "JL Emulator · Mando",
+    "short_name": "JL Mando",
+    "start_url": "/play",
+    "scope": "/",
+    "display": "fullscreen",
+    "orientation": "any",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+}).encode()
+PORTS = (1, 2, 3)  # puertos de Libretro de los Jugadores 2, 3 y 4
 
-# código -> (writer de la app, asyncio.Lock para escribir líneas sin mezclarlas)
-pads: dict[str, tuple[asyncio.StreamWriter, asyncio.Lock]] = {}
-# código -> navegadores conectados (para reenviarles la vibración del juego)
-viewers: dict[str, set] = {}
+
+class PadRoom:
+    def __init__(self, writer):
+        self.writer = writer
+        self.lock = asyncio.Lock()
+        self.seats: dict[int, asyncio.StreamWriter] = {}  # puerto -> navegador
+        self.reserved = 0  # bits: puertos con mando físico en el iPhone
+
+    def free_ports(self):
+        return [p for p in PORTS if p not in self.seats and not (self.reserved >> p) & 1]
+
+
+pads: dict[str, PadRoom] = {}
 
 
 def new_code(taken) -> str:
@@ -33,24 +56,42 @@ def new_code(taken) -> str:
             return code
 
 
-async def send_line(code: str, line: str) -> bool:
-    entry = pads.get(code)
-    if not entry:
-        return False
-    writer, lock = entry
+async def send_line(room: PadRoom, line: str) -> bool:
     try:
-        async with lock:
-            writer.write((line + "\n").encode())
-            await writer.drain()
+        async with room.lock:
+            room.writer.write((line + "\n").encode())
+            await room.writer.drain()
         return True
     except Exception:
         return False
 
 
+def ws_frame(opcode: int, payload: bytes) -> bytes:
+    n = len(payload)
+    if n < 126:
+        return bytes([0x80 | opcode, n]) + payload
+    return bytes([0x80 | opcode, 126]) + struct.pack(">H", n) + payload
+
+
+def ws_text(writer, text: str):
+    try:
+        writer.write(ws_frame(1, text.encode()))
+    except Exception:
+        pass
+
+
+def broadcast_seats(room: PadRoom):
+    """Avisa a todos los navegadores de qué asientos están ocupados (para el cambio de asiento)."""
+    taken = sorted({p + 1 for p in room.seats} | {p + 1 for p in PORTS if (room.reserved >> p) & 1})
+    for w in list(room.seats.values()):
+        ws_text(w, "seats:" + ",".join(map(str, taken)))
+
+
 async def pad_host(reader, writer, taken):
-    """Conexión TCP de la app que recibe el mando web."""
+    """Conexión TCP de la app que recibe los mandos web."""
     code = new_code(taken)
-    pads[code] = (writer, asyncio.Lock())
+    room = PadRoom(writer)
+    pads[code] = room
     writer.write(f"CODE {code}\n".encode())
     await writer.drain()
     print(f"mando web {code} abierto", flush=True)
@@ -61,23 +102,37 @@ async def pad_host(reader, writer, taken):
                 if not raw:
                     break
             except asyncio.TimeoutError:
-                if not await send_line(code, "PING"):
+                if not await send_line(room, "PING"):
                     break
                 continue
-            # "R fuerte débil" (0-100): vibración del Jugador 2 que manda el juego
             parts = raw.decode("ascii", "ignore").split()
-            if len(parts) == 3 and parts[0] == "R":
-                frame = ws_frame(1, f"rumble:{parts[1]},{parts[2]}".encode())
-                for w in list(viewers.get(code, ())):
+            if len(parts) == 4 and parts[0] == "R":
+                # Vibración del juego para el jugador de ese puerto
+                w = room.seats.get(int(parts[1]) if parts[1].isdigit() else -1)
+                if w:
+                    ws_text(w, f"rumble:{parts[2]},{parts[3]}")
+            elif len(parts) == 2 and parts[0] == "K" and parts[1].isdigit():
+                w = room.seats.get(int(parts[1]))
+                if w:
+                    ws_text(w, "err:El Jugador 1 te ha sacado de la partida")
                     try:
-                        w.write(frame)
+                        w.write(ws_frame(8, b""))
+                        w.close()
                     except Exception:
-                        viewers.get(code, set()).discard(w)
+                        pass
+            elif len(parts) == 2 and parts[0] == "T" and parts[1].isdigit():
+                room.reserved = int(parts[1])
+                broadcast_seats(room)
     except Exception:
         pass
     finally:
         pads.pop(code, None)
-        viewers.pop(code, None)
+        for w in list(room.seats.values()):
+            ws_text(w, "err:El Jugador 1 cerró la sala")
+            try:
+                w.close()
+            except Exception:
+                pass
         writer.close()
         print(f"mando web {code} cerrado", flush=True)
 
@@ -103,24 +158,26 @@ async def ws_read(reader):
     return opcode, bytes(payload)
 
 
-def ws_frame(opcode: int, payload: bytes) -> bytes:
-    n = len(payload)
-    if n < 126:
-        return bytes([0x80 | opcode, n]) + payload
-    return bytes([0x80 | opcode, 126]) + struct.pack(">H", n) + payload
-
-
-async def websocket(reader, writer, code: str):
-    if code not in pads:
-        writer.write(ws_frame(1, "err:Código no encontrado o sala cerrada".encode()))
+async def websocket(reader, writer, code: str, wanted: int):
+    room = pads.get(code)
+    if room is None:
+        ws_text(writer, "err:Código no encontrado o sala cerrada")
         writer.write(ws_frame(8, b""))
         await writer.drain()
         return
-    await send_line(code, "J")
-    viewers.setdefault(code, set()).add(writer)
-    writer.write(ws_frame(1, b"ok"))
+    free = room.free_ports()
+    port = wanted - 1 if wanted - 1 in free else (free[0] if free else None)
+    if port is None:
+        ws_text(writer, "err:La sala está completa (J2, J3 y J4 ocupados)")
+        writer.write(ws_frame(8, b""))
+        await writer.drain()
+        return
+    room.seats[port] = writer
+    await send_line(room, f"J {port}")
+    ws_text(writer, f"ok:{port + 1}")
+    broadcast_seats(room)
     await writer.drain()
-    print(f"mando web {code}: jugador conectado", flush=True)
+    print(f"mando web {code}: J{port + 1} conectado", flush=True)
     try:
         while True:
             msg = await ws_read(reader)
@@ -135,7 +192,27 @@ async def websocket(reader, writer, code: str):
                 continue
             if opcode != 1:
                 continue
-            parts = payload.decode("ascii", "ignore").split(",")
+            text = payload.decode("ascii", "ignore")
+            if text.startswith("seat:"):
+                # Cambio de asiento a uno libre
+                try:
+                    target = int(text[5:]) - 1
+                except ValueError:
+                    continue
+                if target in room.free_ports():
+                    await send_line(room, f"P {port} 0 0 0")
+                    await send_line(room, f"L {port}")
+                    del room.seats[port]
+                    port = target
+                    room.seats[port] = writer
+                    await send_line(room, f"J {port}")
+                    ws_text(writer, f"ok:{port + 1}")
+                    broadcast_seats(room)
+                else:
+                    ws_text(writer, "seatbusy")
+                await writer.drain()
+                continue
+            parts = text.split(",")
             if len(parts) != 3:
                 continue
             try:
@@ -145,17 +222,19 @@ async def websocket(reader, writer, code: str):
             b &= 0xFFFF
             lx = max(-32767, min(32767, lx))
             ly = max(-32767, min(32767, ly))
-            if not await send_line(code, f"P {b} {lx} {ly}"):
-                writer.write(ws_frame(1, "err:El Jugador 1 cerró la sala".encode()))
+            if not await send_line(room, f"P {port} {b} {lx} {ly}"):
+                ws_text(writer, "err:El Jugador 1 cerró la sala")
                 await writer.drain()
                 break
     except (asyncio.IncompleteReadError, ConnectionError):
         pass
     finally:
-        viewers.get(code, set()).discard(writer)
-        await send_line(code, "P 0 0 0")
-        await send_line(code, "L")
-        print(f"mando web {code}: jugador desconectado", flush=True)
+        if room.seats.get(port) is writer:
+            del room.seats[port]
+            await send_line(room, f"P {port} 0 0 0")
+            await send_line(room, f"L {port}")
+            broadcast_seats(room)
+        print(f"mando web {code}: J{port + 1} desconectado", flush=True)
 
 
 async def http_handle(reader, writer):
@@ -192,13 +271,25 @@ async def http_handle(reader, writer):
                     sock.setsockopt(_s.IPPROTO_TCP, _s.TCP_NODELAY, 1)
                 except OSError:
                     pass
-            code = parse_qs(url.query).get("code", [""])[0].strip().upper()
-            await websocket(reader, writer, code)
+            q = parse_qs(url.query)
+            code = q.get("code", [""])[0].strip().upper()
+            try:
+                wanted = int(q.get("seat", ["0"])[0])
+            except ValueError:
+                wanted = 0
+            await websocket(reader, writer, code, wanted)
         elif method == "GET" and url.path in ("/", "/play"):
             writer.write(
                 b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-cache\r\n"
                 + f"Content-Length: {len(PAGE)}\r\nConnection: close\r\n\r\n".encode()
                 + PAGE
+            )
+            await writer.drain()
+        elif method == "GET" and url.path == "/manifest.json":
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/manifest+json\r\n"
+                + f"Content-Length: {len(MANIFEST)}\r\nConnection: close\r\n\r\n".encode()
+                + MANIFEST
             )
             await writer.drain()
         else:

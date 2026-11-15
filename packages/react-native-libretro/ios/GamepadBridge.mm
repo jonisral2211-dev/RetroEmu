@@ -10,7 +10,7 @@
 
 #define PAD_BIT(id) (uint16_t)(1u << (id))
 
-static const NSUInteger kMaxPlayers = 2;
+static const NSUInteger kMaxPlayers = 4;
 
 // Controles físicos (orden fijo, el mismo que usa la pantalla de mapeo en JS)
 enum Phys : int {
@@ -31,7 +31,7 @@ static uint32_t g_physMask[2] = {0, 0};  // controles físicos pulsados ahora (p
 static float g_physAxes[2][2] = {{0, 0}, {0, 0}};
 
 @interface GamepadBridge ()
-// Mandos por jugador: [0] = Jugador 1 (puerto 0), [1] = Jugador 2 (puerto 1)
+// Mandos por jugador: [0] = Jugador 1 (puerto 0) … [3] = Jugador 4 (puerto 3)
 @property (nonatomic, strong) NSMutableArray<GCController *> *players;
 @property (nonatomic, copy, nullable) void (^statusHandler)(NSDictionary *status);
 // Vibración por jugador: motor háptico continuo con intensidad variable
@@ -201,11 +201,13 @@ static uint32_t stickAsDpad(float x, float y) {
   for (int port = 0; port < (int)kMaxPlayers; ++port) {
     if (port < (int)self.players.count) {
       GCController *c = self.players[port];
-      c.playerIndex = port == 0 ? GCControllerPlayerIndex1 : GCControllerPlayerIndex2;
+      static const GCControllerPlayerIndex kIndex[4] = {GCControllerPlayerIndex1, GCControllerPlayerIndex2,
+                                                         GCControllerPlayerIndex3, GCControllerPlayerIndex4};
+      c.playerIndex = kIndex[port];
       if (@available(iOS 14.0, *)) {
-        // J1 azul, J2 rojo (barra de luz de DualSense / DualShock 4)
-        c.light.color = port == 0 ? [[GCColor alloc] initWithRed:0.1 green:0.35 blue:1.0]
-                                  : [[GCColor alloc] initWithRed:1.0 green:0.15 blue:0.15];
+        // Barra de luz: J1 azul, J2 rojo, J3 verde, J4 naranja (DualSense / DualShock 4)
+        static const float kRGB[4][3] = {{0.1f, 0.35f, 1.0f}, {1.0f, 0.15f, 0.15f}, {0.1f, 0.85f, 0.3f}, {1.0f, 0.55f, 0.0f}};
+        c.light.color = [[GCColor alloc] initWithRed:kRGB[port][0] green:kRGB[port][1] blue:kRGB[port][2]];
       }
       [self sampleController:c port:port];
     } else {

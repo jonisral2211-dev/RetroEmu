@@ -228,7 +228,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Netplay: estado consultado al nativo (barato y síncrono)
   const [net, setNet] = useState<NetState>({ phase: 'idle', message: '', code: '', ping: -1 });
-  const [webPad, setWebPad] = useState<WebPadState>({ phase: 0, code: '', message: '' });
+  const [webPad, setWebPad] = useState<WebPadState>({ phase: 0, code: '', message: '', seats: 0 });
   useEffect(() => {
     if (!ready) return;
     const poll = () =>
@@ -241,7 +241,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     const pollPad = () =>
       setWebPad((prev) => {
         const next = parseWebPadStatus(Libretro.webPadStatus());
-        return next.phase === prev.phase && next.code === prev.code && next.message === prev.message ? prev : next;
+        return next.phase === prev.phase && next.code === prev.code && next.message === prev.message && next.seats === prev.seats
+          ? prev
+          : next;
       });
     poll();
     pollPad();
@@ -253,6 +255,19 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   }, [ready]);
   // Al salir del juego se cierra el mando web
   useEffect(() => () => Libretro.webPadStop(), []);
+  // Puertos ocupados por mandos Bluetooth: el relay no los da a los navegadores
+  const physicalCount = pad.count ?? (pad.connected ? 1 : 0);
+  useEffect(() => {
+    if (webPad.phase === 0) return;
+    let mask = 0;
+    for (let port = 1; port < Math.min(4, physicalCount); port++) mask |= 1 << port;
+    Libretro.webPadReserve(mask);
+  }, [webPad.phase, physicalCount]);
+  // PS1 a 4 jugadores: multitap en el puerto 1 solo cuando hay J3 o J4 (algunos juegos fallan con él)
+  const fourPlayers = (webPad.seats & 0b1100) !== 0 || physicalCount > 2;
+  useEffect(() => {
+    if (core === 'pcsx' && ready) Libretro.setCoreOption('pcsx_rearmed_multitap', fourPlayers ? 'port 1' : 'disabled');
+  }, [core, ready, fourPlayers]);
   const online = net.phase !== 'idle';
 
   // Modo TV: pantalla externa (HDMI / AirPlay). El juego sale solo por la TV y el iPhone hace de
@@ -526,7 +541,11 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {online && !menuOpen ? <Text style={styles.netNotice}>{net.message}</Text> : null}
-      {webPad.phase === 3 && !menuOpen ? <Text style={styles.netNotice}>J2 conectado (mando web)</Text> : null}
+      {webPad.seats && !menuOpen ? (
+        <Text style={styles.netNotice}>
+          Mando web: {[1, 2, 3].filter((p) => (webPad.seats >> p) & 1).map((p) => `J${p + 1}`).join(', ')}
+        </Text>
+      ) : null}
       {airplayAudioOnly && !airplayNoticeHidden && !menuOpen ? (
         <Pressable onPress={() => setAirplayNoticeHidden(true)} style={styles.airplayNotice}>
           <Text style={styles.airplayText}>
@@ -1037,6 +1056,12 @@ function ArcadeErrorCard({
     causes.push('Es una versión modificada (clon): necesita también el romset original en la misma carpeta.');
   }
   if (/pesa solo/.test(e)) causes.push('El archivo está incompleto (descarga cortada): vuelve a descargarlo.');
+  if (/^superdbz\.zip$/i.test(name)) {
+    causes.unshift(
+      'superdbz.zip (Super Dragon Ball Z) es de la placa Namco System 246, basada en PlayStation 2: ni MAME ' +
+        '2003-Plus ni FBNeo la emulan. No es un fallo del archivo; ese juego no puede funcionar en estos núcleos.',
+    );
+  }
   if (!causes.length) causes.push('El núcleo no aceptó el romset.');
   causes.push(
     `Prueba con el otro núcleo (${other}): mantén pulsado el juego en la biblioteca → Cambiar núcleo, o usa el botón de abajo.`,

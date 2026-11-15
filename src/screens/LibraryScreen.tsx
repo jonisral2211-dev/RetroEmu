@@ -238,7 +238,21 @@ function looksLikeConsoleName(file: string): boolean {
 function validateArcade(entry: Entry, onRemoved: () => void): Promise<boolean> {
   const file = entry.path.split('/').pop() ?? entry.path;
   const base = file.replace(/\.zip$/i, '').toLowerCase();
+  // Juegos de placas que ningún núcleo arcade de la app emula
+  const UNSUPPORTED: Record<string, string> = {
+    superdbz:
+      'Super Dragon Ball Z (superdbz.zip) es de la placa Namco System 246, basada en PlayStation 2. ' +
+      'MAME 2003-Plus y FBNeo no emulan esa placa, así que no puede arrancar en JL Emulator. Busca la versión ' +
+      'de PlayStation 2 o elige otro juego.',
+  };
   return new Promise((resolve) => {
+    if (UNSUPPORTED[base]) {
+      Alert.alert('Placa arcade no soportada', UNSUPPORTED[base], [
+        { text: 'Mover a otra consola', onPress: () => { chooseMoveTarget(entry, onRemoved); resolve(false); } },
+        { text: 'Entendido', style: 'cancel', onPress: () => resolve(false) },
+      ]);
+      return;
+    }
     const checkBios = async () => {
       if (isNeoGeoRomset(base) && !(await hasNeoGeoBios())) {
         Alert.alert(

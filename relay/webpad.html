@@ -7,14 +7,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="JL Mando">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0D0E12">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="/manifest.json">
 <title>JL Emulator · Mando</title>
 <style>
   :root { --bg:#0D0E12; --surface:#15171D; --border:#2A2E37; --text:#ECEDEF; --dim:#7D828C; --gold:#D4AF37;
-    --pad-top:calc(18px + env(safe-area-inset-top)); --pad-right:calc(18px + env(safe-area-inset-right));
-    --pad-bottom:calc(18px + env(safe-area-inset-bottom)); --pad-left:calc(18px + env(safe-area-inset-left)); }
+    --pad-top:max(22px, env(safe-area-inset-top)); --pad-right:max(24px, env(safe-area-inset-right));
+    --pad-bottom:max(22px, env(safe-area-inset-bottom)); --pad-left:max(24px, env(safe-area-inset-left)); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
-  html, body { margin:0; position:fixed; inset:0; width:100vw; height:100dvh; overflow:hidden; background:var(--bg); color:var(--text);
+  html, body { margin:0; position:fixed; inset:0; width:100vw; height:100dvh; overflow:hidden; background:#000; color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; touch-action:none; overscroll-behavior:none; }
   #join { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
     padding:var(--pad-top) var(--pad-right) var(--pad-bottom) var(--pad-left); }
@@ -29,13 +30,24 @@
   .go { padding:14px 34px; border-radius:24px; border:none; background:var(--gold); color:var(--bg); font-size:17px; font-weight:900; }
   #msg { min-height:20px; color:#F87171; font-size:14px; text-align:center; }
   .hint { max-width:340px; font-size:12px; color:var(--dim); text-align:center; line-height:1.45; border:1px dashed var(--border); border-radius:12px; padding:8px 10px; display:none; }
-  #pad { position:fixed; inset:0; display:none; }
-  #bar { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(6px + env(safe-area-inset-top)); height:30px;
+  #pad { position:fixed; inset:0; width:100vw; height:100dvh; display:none; background:#000; }
+  #safari { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(var(--pad-top) + 34px); z-index:3; display:none;
+    background:rgba(21,23,29,.96); border:1px solid var(--gold); border-radius:12px; padding:10px 12px; font-size:13px; line-height:1.4; }
+  #safari b { color:var(--gold); }
+  #safari button { margin-top:6px; }
+  .seat { font-size:12px; font-weight:900; padding:5px 10px; border-radius:12px; color:#fff; border:none; }
+  .seat2 { background:#3b82f6; } .seat3 { background:#22c55e; } .seat4 { background:#f97316; }
+  .seats { display:flex; gap:8px; justify-content:center; }
+  .seatpick { padding:8px 12px; border-radius:16px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-weight:800; font-size:13px; }
+  .seatpick.on { border-color:var(--gold); color:var(--gold); }
+  .seatpick:disabled { opacity:.3; }
+  .hl { position:absolute; inset:0; opacity:0.01; z-index:2; cursor:pointer; pointer-events:auto; border-radius:inherit; }
+  #bar { position:absolute; left:var(--pad-left); right:var(--pad-right); top:max(8px, env(safe-area-inset-top)); height:30px;
     display:flex; align-items:center; justify-content:space-between; gap:8px; z-index:2; }
   #status { flex:1; text-align:center; font-size:12px; color:#4ADE80; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .small { font-size:11px; padding:5px 9px; border-radius:12px; border:1px solid var(--gold); color:var(--gold); background:transparent; font-weight:700; }
   /* Zona de controles: margen de 18 px + zonas seguras, bajo la barra superior */
-  #area { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(var(--pad-top) + 26px); bottom:var(--pad-bottom); }
+  #area { position:absolute; left:var(--pad-left); right:var(--pad-right); top:calc(var(--pad-top) + 30px); bottom:var(--pad-bottom); }
   .ctl { position:absolute; display:flex; align-items:center; justify-content:center; border-radius:50%;
     border:2px solid rgba(255,255,255,.28); background:rgba(255,255,255,.08); color:rgba(255,255,255,.9);
     font-weight:800; transform:translate(-50%,-50%); pointer-events:none; text-shadow:0 1px 3px #000; }
@@ -43,7 +55,7 @@
   .ctl.on { background:rgba(255,255,255,.42); transform:translate(-50%,-50%) scale(.93); }
   .base { border-color:rgba(212,175,55,.6); background:rgba(0,0,0,.35); }
   .knob { position:absolute; width:46%; height:46%; border-radius:50%; background:rgba(255,255,255,.35); border:2px solid rgba(255,255,255,.7); left:27%; top:27%; }
-  #haptic { position:fixed; left:-200px; top:-200px; opacity:0; pointer-events:none; }
+  #haptic-switch { position:fixed; opacity:0; pointer-events:none; left:0; top:0; width:1px; height:1px; }
 </style>
 </head>
 <body>
@@ -52,20 +64,24 @@
   <div class="sub">Mando del Jugador 2. Escribe el código que te ha enviado el Jugador 1 y elige el tipo de mando.</div>
   <input id="code" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="CÓDIGO" inputmode="text">
   <div class="types" id="types"></div>
+  <div class="seats" id="seatPick"></div>
   <button class="go" id="go">Conectar</button>
+  <label class="chip" for="haptic-switch" id="testVib">Probar vibración</label>
   <div id="msg"></div>
-  <div class="hint" id="iosHint">En iPhone, para ocultar del todo la barra de Safari: toca Compartir ⎋ → <b>Añadir a pantalla de inicio</b> y abre el mando desde ese icono.</div>
+  <div class="hint" id="iosHint">Para quitar la barra de Safari y jugar sin bordes: toca Compartir (□↑) → <b>Añadir a pantalla de inicio</b> y abre el mando desde ese icono.</div>
 </div>
 <div id="pad">
   <div id="bar">
+    <button class="seat seat2" id="seatBadge">J2</button>
     <button class="small" id="vib">Vibración: ON</button>
     <div id="status"></div>
     <button class="small" id="fs">Pantalla completa</button>
     <button class="small" id="leave">Salir</button>
   </div>
+  <div id="safari">Para quitar la barra de Safari y jugar sin bordes: toca Compartir (□↑) → <b>Añadir a pantalla de inicio</b>.<br><button class="small" id="safariClose">Entendido</button></div>
   <div id="area"></div>
 </div>
-<label id="haptic"><input type="checkbox" switch id="hapticSwitch"></label>
+<input type="checkbox" id="haptic-switch" switch>
 <script>
 'use strict';
 // Bits RETRO_DEVICE_ID_JOYPAD_*
@@ -144,12 +160,31 @@ const LAYOUTS = {
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches ||
+  matchMedia('(display-mode: fullscreen)').matches;
+let seat = 0, preferred = Number(params.get('seat')) || 0, takenSeats = [];
 let type = params.get('type') || localStorage.getItem('jl.type') || 'arcade';
 if (!LAYOUTS[type]) type = 'arcade';
 let vibOn = localStorage.getItem('jl.vib') !== 'off';
 $('code').value = (params.get('code') || '').toUpperCase();
 if (isIOS && !standalone) $('iosHint').style.display = 'block';
+const SEAT_CLASS = { 2: 'seat2', 3: 'seat3', 4: 'seat4' };
+function renderSeatPick() {
+  $('seatPick').innerHTML = '';
+  for (const s of [0, 2, 3, 4]) {
+    const b = document.createElement('button');
+    b.className = 'seatpick' + (s === preferred ? ' on' : '');
+    b.textContent = s ? `J${s}` : 'Asiento: auto';
+    b.onclick = () => { preferred = s; renderSeatPick(); };
+    $('seatPick').appendChild(b);
+  }
+}
+renderSeatPick();
+function paintSeat() {
+  const badge = $('seatBadge');
+  badge.className = 'seat ' + (SEAT_CLASS[seat] || 'seat2');
+  badge.textContent = `J${seat}`;
+}
 if (!document.documentElement.requestFullscreen && !document.documentElement.webkitRequestFullscreen) $('fs').style.display = 'none';
 
 function renderTypes() {
@@ -167,18 +202,29 @@ renderTypes();
 // ---- Vibración ---------------------------------------------------------------------------
 // Android/Chrome: navigator.vibrate. iPhone/Safari (sin vibrate): pulsar un <input type=checkbox
 // switch> oculto hace sonar el Taptic Engine (iOS 17.4+), siempre dentro de un gesto del usuario.
-function haptic(ms) {
+function haptic(ms, programmatic) {
   if (!vibOn) return;
   if (navigator.vibrate) { navigator.vibrate(ms); return; }
-  if (isIOS) $('haptic').click();
+  // iPhone: los toques sobre botones ya activan el switch (etiqueta encima de cada botón); para
+  // el stick y la vibración del juego se intenta activarlo por código
+  if (isIOS && programmatic) $('haptic-switch').click();
 }
+$('testVib').addEventListener('click', () => { if (navigator.vibrate) navigator.vibrate([60, 60, 60]); });
 function paintVib() { $('vib').textContent = vibOn ? 'Vibración: ON' : 'Vibración: OFF'; }
 paintVib();
 function tap(el, fn) {
   el.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false });
   el.addEventListener('click', fn);
 }
-tap($('vib'), () => { vibOn = !vibOn; localStorage.setItem('jl.vib', vibOn ? 'on' : 'off'); paintVib(); haptic(18); });
+tap($('vib'), () => { vibOn = !vibOn; localStorage.setItem('jl.vib', vibOn ? 'on' : 'off'); paintVib(); haptic(20); });
+tap($('safariClose'), () => { $('safari').style.display = 'none'; localStorage.setItem('jl.safariHint', 'off'); });
+// Cambio de asiento: pasa al siguiente libre (J2 -> J3 -> J4)
+tap($('seatBadge'), () => {
+  const order = [2, 3, 4].filter((s) => s !== seat && !takenSeats.includes(s));
+  if (!order.length) { $('status').textContent = 'No hay otro asiento libre'; return; }
+  const next = order.find((s) => s > seat) || order[0];
+  if (ws && ws.readyState === 1) ws.send(`seat:${next}`);
+});
 tap($('fs'), () => {
   const d = document.documentElement;
   (d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : d.webkitRequestFullscreen && d.webkitRequestFullscreen());
@@ -195,7 +241,7 @@ function rumble(strong, weak) {
   clearInterval(rumbleTimer); rumbleTimer = null;
   const level = Math.max(strong, weak * 0.6) / 100;
   if (!vibOn || level < 0.05) { if (navigator.vibrate) navigator.vibrate(0); return; }
-  const pulse = () => (navigator.vibrate ? navigator.vibrate(Math.round(40 + 90 * level)) : isIOS && $('haptic').click());
+  const pulse = () => (navigator.vibrate ? navigator.vibrate(Math.round(40 + 90 * level)) : isIOS && $('haptic-switch').click());
   pulse();
   rumbleTimer = setInterval(pulse, 130);
   setTimeout(() => { clearInterval(rumbleTimer); rumbleTimer = null; }, 1500); // por si no llega el "parar"
@@ -204,10 +250,17 @@ function connect() {
   const code = $('code').value.trim().toUpperCase();
   if (!/^[A-Z0-9]{6}$/.test(code)) { $('msg').textContent = 'El código tiene 6 caracteres'; return; }
   $('msg').style.color = '#7D828C'; $('msg').textContent = 'Conectando…';
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?code=${code}`);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?code=${code}&seat=${preferred}`);
   ws.onmessage = (e) => {
     const d = String(e.data);
-    if (d === 'ok') { showPad(code); return; }
+    if (d.startsWith('ok:')) {
+      seat = Number(d.slice(3)) || 2;
+      paintSeat();
+      if (!document.body.classList.contains('playing')) showPad(code); else buildPad();
+      return;
+    }
+    if (d.startsWith('seats:')) { takenSeats = d.slice(6).split(',').filter(Boolean).map(Number); return; }
+    if (d === 'seatbusy') { $('status').textContent = 'Ese asiento ya está ocupado'; return; }
     if (d.startsWith('err:')) { fail(d.slice(4)); return; }
     if (d.startsWith('rumble:')) { const [s, w] = d.slice(7).split(',').map(Number); rumble(s || 0, w || 0); }
   };
@@ -232,13 +285,14 @@ function showPad(c) {
   $('join').style.display = 'none'; $('pad').style.display = 'block';
   buildPad();
   window.scrollTo(0, 1);
+  if (isIOS && !standalone && localStorage.getItem('jl.safariHint') !== 'off') $('safari').style.display = 'block';
 }
 function buildPad() {
   const area = $('area');
   area.innerHTML = '';
   const r = area.getBoundingClientRect(), W = r.width, H = r.height, m = Math.min(W, H);
   const portrait = H > W;
-  $('status').textContent = `J2 · ${code} · ${LAYOUTS[type].name}`;
+  $('status').textContent = `${code} · ${LAYOUTS[type].name}`;
   controls = LAYOUTS[type][portrait ? 'portrait' : 'landscape'].map((c) => {
     const el = document.createElement('div');
     el.className = 'ctl' + (c.k === 'rect' ? ' rect' : '') + (c.k === 'stick' || c.k === 'dpad' ? ' base' : '');
@@ -249,7 +303,13 @@ function buildPad() {
     const cy = Math.min(H - h / 2, Math.max(h / 2, (c.y / 100) * H));
     Object.assign(el.style, { left: cx + 'px', top: cy + 'px', width: w + 'px', height: h + 'px', fontSize: Math.max(12, Math.min(w, h) * 0.32) + 'px' });
     if (c.c) el.style.borderColor = c.c;
-    if (c.k === 'btn' || c.k === 'rect') el.textContent = c.t;
+    if (c.k === 'btn' || c.k === 'rect') {
+      el.textContent = c.t;
+      const hl = document.createElement('label');
+      hl.className = 'hl';
+      hl.htmlFor = 'haptic-switch';
+      el.appendChild(hl);
+    }
     if (c.k === 'dpad') el.textContent = '✚';
     let knob = null;
     if (c.k === 'stick') { knob = document.createElement('div'); knob.className = 'knob'; el.appendChild(knob); }
@@ -268,7 +328,9 @@ function dirBits(dx, dy, dead) {
   return [B.RIGHT, B.RIGHT | B.DOWN, B.DOWN, B.LEFT | B.DOWN, B.LEFT, B.LEFT | B.UP, B.UP, B.RIGHT | B.UP][i];
 }
 function onTouches(e) {
-  e.preventDefault();
+  // Sobre las etiquetas hápticas no se cancela el toque: así iOS lo convierte en "click" y vibra
+  const onLabel = e.target && e.target.classList && e.target.classList.contains('hl');
+  if (!(onLabel && (e.type === 'touchstart' || e.type === 'touchend'))) e.preventDefault();
   if (e.type === 'touchstart') window.scrollTo(0, 1);
   const live = new Set();
   let bits = 0, lx = 0, ly = 0;
@@ -300,8 +362,8 @@ function onTouches(e) {
   // Vibración: botón nuevo (18 ms) o nueva dirección de stick/cruceta (10 ms)
   const newButtons = bits & ~DIRS & ~state.b;
   const dir = (bits & DIRS) || (Math.abs(lx) > 16000 || Math.abs(ly) > 16000 ? dirBits(lx, ly, 0) : 0);
-  if (newButtons) haptic(18);
-  else if (dir && dir !== lastDir) haptic(10);
+  if (newButtons) haptic(20, false);
+  else if (dir && dir !== lastDir) haptic(10, true);
   lastDir = dir;
   controls.forEach((c, i) => {
     if (c.k === 'btn' || c.k === 'rect') c.el.classList.toggle('on', (bits & c.b) !== 0);
@@ -319,7 +381,15 @@ for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
 }
 // Sin zoom, desplazamiento ni gestos del navegador
 for (const ev of ['gesturestart', 'gesturechange', 'dblclick', 'contextmenu']) document.addEventListener(ev, (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => { if (document.body.classList.contains('playing')) e.preventDefault(); }, { passive: false });
+for (const ev of ['touchstart', 'touchmove']) {
+  document.addEventListener(ev, (e) => {
+    if (!document.body.classList.contains('playing')) return;
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('hl') && ev === 'touchstart') return;
+    if (t && t.closest && t.closest('#bar, #safari')) return;
+    e.preventDefault();
+  }, { passive: false });
+}
 // Latido: reenvía el estado cada segundo (si un mensaje se perdiera, los botones no se quedan pegados)
 setInterval(() => { sent = ''; send(); }, 1000);
 if ($('code').value.length === 6 && params.get('code')) $('msg').textContent = 'Elige el tipo de mando y pulsa Conectar';

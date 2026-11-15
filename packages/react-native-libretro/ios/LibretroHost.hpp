@@ -49,8 +49,12 @@ std::string netStatus();
 /** Mando web del Jugador 2: abre una sala en el relay; las pulsaciones llegan al puerto 1. */
 bool webPadStart(const char *relayHost, int relayPort);
 void webPadStop();
-/** "fase|código|mensaje" (fase 0 apagado, 1 conectando, 2 esperando, 3 jugador conectado). */
+/** "fase|código|mensaje|asientos" (asientos: bit p = puerto p con mando web conectado). */
 std::string webPadStatus();
+/** Expulsa al mando web del puerto 1-3. */
+void webPadKick(int port);
+/** Puertos (bits) ocupados por mandos físicos: el relay no los asigna a mandos web. */
+void webPadReserve(int mask);
 /** IPv4 de la Wi-Fi (o de la primera interfaz activa). */
 std::string localAddress();
 void reset();
