@@ -41,6 +41,8 @@ import { ART_GLOW, ArtKind, ConsoleArt } from '../ui/ConsoleArt';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
 import { JLBadge } from '../ui/JLBadge';
 import OrganizerScreen from './OrganizerScreen';
+import { ContinueRow, DynamicBackdrop } from './ContinueRow';
+import { subscribePlaytime } from '../library/playtime';
 
 type Props = { onPlay: (romPath: string, core?: CoreId) => void };
 type Entry = { path: string; console: string };
@@ -399,6 +401,10 @@ export default function LibraryScreen({ onPlay }: Props) {
   // Una descarga terminada se añade a la biblioteca sin reiniciar la app
   useEffect(() => onRomImported(() => refresh()), [refresh]);
   useEffect(() => subscribeRecents(setRecents), []);
+  const [playtime, setPlaytime] = useState<Record<string, number>>({});
+  useEffect(() => subscribePlaytime(setPlaytime), []);
+  // Juego enfocado en "Seguir jugando" (fondo dinámico); por defecto el último jugado
+  const [focusPath, setFocusPath] = useState<string | null>(null);
 
   const counts = useMemo(() => {
     const c = Object.fromEntries(ALL_CONSOLES.map((k) => [k, 0])) as Record<Console, number>;
@@ -508,13 +514,27 @@ export default function LibraryScreen({ onPlay }: Props) {
         ))}
       </View>
 
-      <SectionTitle title="Juegos recientes" />
+      <SectionTitle title="Seguir jugando" />
       {recentEntries.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
-          {recentEntries.map((e) => (
-            <GameCard key={e.path} entry={e} width={112} compact onPlay={onPlay} onRemoved={() => refresh()} />
-          ))}
-        </ScrollView>
+        <ContinueRow
+          entries={recentEntries}
+          titleOf={displayTitle}
+          playtime={playtime}
+          onFocus={(e) => setFocusPath(e.path)}
+          onPlay={(e) => {
+            const core = coreForConsole(e.console, e.path);
+            if (!core || !ENABLED_CORES.has(core)) {
+              explainUnavailable(e);
+              return;
+            }
+            // Arcade: el núcleo elegido para ese juego (o se pregunta)
+            if (isArcadeConsole(e.console)) {
+              getArcadeChoices().then((c) => (c[e.path] ? onPlay(e.path, c[e.path]) : chooseArcadeCore(e, onPlay)));
+              return;
+            }
+            onPlay(e.path);
+          }}
+        />
       ) : (
         <Text style={styles.recentEmpty}>Los juegos que abras aparecerán aquí.</Text>
       )}
@@ -525,6 +545,7 @@ export default function LibraryScreen({ onPlay }: Props) {
   if (!view) {
     return (
       <View style={styles.root}>
+        <DynamicBackdrop entry={recentEntries.find((e) => e.path === focusPath) ?? recentEntries[0]} />
         <ScrollView contentContainerStyle={styles.home}>{header}</ScrollView>
         {organizerOpen ? (
           <View style={StyleSheet.absoluteFill}>

@@ -160,6 +160,11 @@ export type GameMenuProps = {
   webPad: WebPadState;
   tvOrient: 'portrait' | 'landscape' | 'auto';
   onTvOrient: (v: 'portrait' | 'landscape' | 'auto') => void;
+  /** Paneles: 5 ranuras con captura, rebobinado, trucos y ajuste fino de imagen. */
+  slotsPanel?: React.ReactNode;
+  rewindPanel?: React.ReactNode;
+  cheatsPanel?: React.ReactNode;
+  imagePanel?: React.ReactNode;
   /** Ajustes propios de la consola (pantallas de DS, paleta de Game Boy…). */
   /** Diseño del mando web (/play?type=) para esta consola: arcade, ps, n64, gba, snes, nes. */
   webPadType?: string;
@@ -212,6 +217,9 @@ export function GameMenu(p: GameMenuProps) {
               <Action label="Salir del juego" onPress={p.onExit} danger />
             </View>
           </Section>
+
+          {p.slotsPanel ? <Section title="Ranuras de guardado">{p.slotsPanel}</Section> : null}
+          {p.rewindPanel ? <Section title="⏪ Rebobinar">{p.rewindPanel}</Section> : null}
 
           <Section title="Controles">
             <Action
@@ -272,6 +280,7 @@ export function GameMenu(p: GameMenuProps) {
                 { id: 'smooth', label: 'Suavizado ligero' },
               ]}
             />
+            {p.imagePanel}
             {(p.extras ?? []).map((x) => (
               <View key={x.label}>
                 <Segmented label={x.label} value={x.value} onChange={x.onChange} options={x.options} />
@@ -279,6 +288,8 @@ export function GameMenu(p: GameMenuProps) {
               </View>
             ))}
           </Section>
+
+          {p.cheatsPanel ? <Section title="Trucos / Parches">{p.cheatsPanel}</Section> : null}
 
           <Section title="Jugar en línea (Netplay)">
             <View style={styles.netHead}>

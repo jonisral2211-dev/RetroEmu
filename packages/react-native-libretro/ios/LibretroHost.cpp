@@ -62,6 +62,9 @@ struct CoreApi {
   bool (*unserialize)(const void *, size_t) = nullptr;
   void *(*getMemoryData)(unsigned) = nullptr;
   size_t (*getMemorySize)(unsigned) = nullptr;
+  // Opcionales: trucos (Game Genie, Action Replay, GameShark, CWCheat… según el núcleo)
+  void (*cheatReset)() = nullptr;
+  void (*cheatSet)(unsigned, bool, const char *) = nullptr;
 
   bool complete() const {
     return init && deinit && setEnvironment && setVideoRefresh && setAudioSampleBatch &&
@@ -88,6 +91,16 @@ std::atomic<bool> g_hwAllowed{false};
 bool g_hwRequired = false;   // Flycast / vitaQuake II: sin GPU no arrancan
 unsigned g_hwWidth = 0, g_hwHeight = 0;
 std::atomic<bool> g_hwResize{false};
+
+// Rebobinado (ver rewindCaptureLocked)
+constexpr size_t kRewindMaxStates = 24;
+constexpr size_t kRewindMaxBytes = 128u << 20;
+constexpr size_t kRewindMaxStateBytes = 24u << 20;
+constexpr int kRewindInterval = 30;
+std::vector<std::vector<uint8_t>> g_rewind;  // más antiguo primero
+size_t g_rewindCap = 0;                       // 0 = desactivado para este juego
+int g_rewindTick = 0;
+int g_rewindHold = 0;  // SELECT+L mantenido en el mando: retrocede de forma continua
 
 uintptr_t hwCurrentFramebuffer() { return hwgl::framebuffer(); }
 retro_proc_address_t hwProcAddress(const char *sym) {
@@ -744,6 +757,8 @@ void persistSram() {
 }
 
 void unloadGameLocked() {
+  g_rewind.clear();
+  g_rewindCap = 0;
   if (g_hwReady) hwgl::makeCurrent();  // el núcleo libera sus recursos GL con el contexto activo
   if (g_gameLoaded) {
     g_core.unloadGame();
@@ -1176,6 +1191,42 @@ void netStepLocked() {
 constexpr double kAudioMaxSeconds = 0.11;  // ~65 ms en el ring + ~43 ms ya en AudioQueue
 std::atomic<unsigned> g_audioWaits{0};
 
+// ---- Rebobinado -----------------------------------------------------------------------------
+// Un estado cada 30 frames (~0,5 s) en un anillo de hasta 24 (~12 s), con un tope de memoria
+// total (los estados de PSP o Dreamcast pesan decenas de MB: con ellos el rebobinado se apaga).
+
+void rewindResetLocked() {
+  g_rewind.clear();
+  g_rewindTick = 0;
+  const size_t size = g_gameLoaded ? g_core.serializeSize() : 0;
+  g_rewindCap = size && size <= kRewindMaxStateBytes ? std::min(kRewindMaxStates, kRewindMaxBytes / size) : 0;
+}
+
+void rewindCaptureLocked() {
+  if (!g_rewindCap || g_netActive || ++g_rewindTick < kRewindInterval) return;
+  g_rewindTick = 0;
+  const size_t size = g_core.serializeSize();
+  if (!size || size > kRewindMaxStateBytes) return;
+  std::vector<uint8_t> buf;
+  if (g_rewind.size() >= g_rewindCap) {
+    buf = std::move(g_rewind.front());  // reutiliza la memoria del más antiguo
+    g_rewind.erase(g_rewind.begin());
+  }
+  buf.resize(size);
+  if (g_core.serialize(buf.data(), size)) g_rewind.push_back(std::move(buf));
+}
+
+// Retrocede `steps` capturas (0,5 s cada una). Devuelve los segundos retrocedidos.
+double rewindLocked(int steps) {
+  if (g_rewind.empty() || g_netActive) return 0.0;
+  const int n = std::min<int>(steps, int(g_rewind.size()));
+  const std::vector<uint8_t> &target = g_rewind[g_rewind.size() - size_t(n)];
+  if (!g_core.unserialize(target.data(), target.size())) return 0.0;
+  g_rewind.resize(g_rewind.size() - size_t(n) + 1);  // el restaurado queda como el más reciente
+  g_rewindTick = 0;
+  return n * kRewindInterval / std::max(1.0, g_fps.load());
+}
+
 // Hilo de emulación: crea el contexto GPU la primera vez (context_reset) o lo hace actual
 bool prepareHwRender() {
   if (!g_hwRequested) return true;
@@ -1223,7 +1274,16 @@ void runLoop() {
         if (g_netActive) netStepLocked();
         if (g_audioStatus) g_audioStatus(true, g_audio.occupancy(), g_audio.underrunLikely());
         if (g_hwReady && g_hwResize.exchange(false)) hwgl::resize(g_hwWidth, g_hwHeight);
+        // SELECT + L mantenidos en el mando físico: rebobinado continuo (medio segundo cada 8 frames)
+        const uint16_t pad = g_padButtons.load();
+        const uint16_t combo = (1u << RETRO_DEVICE_ID_JOYPAD_SELECT) | (1u << RETRO_DEVICE_ID_JOYPAD_L);
+        if ((pad & combo) == combo && !g_netActive) {
+          if (++g_rewindHold % 8 == 1) rewindLocked(1);
+        } else {
+          g_rewindHold = 0;
+        }
         g_core.run();
+        rewindCaptureLocked();
       }
     }
     // Reloj maestro de audio: con más de ~60 ms pendientes de sonar, se espera a que el
@@ -1304,6 +1364,8 @@ bool loadCore(const char *frameworkBinaryPath) {
   LOAD_SYM(setInputPoll, "retro_set_input_poll");
   LOAD_SYM(setInputState, "retro_set_input_state");
   LOAD_SYM(setControllerPortDevice, "retro_set_controller_port_device");
+  LOAD_SYM(cheatReset, "retro_cheat_reset");
+  LOAD_SYM(cheatSet, "retro_cheat_set");
   LOAD_SYM(getSystemInfo, "retro_get_system_info");
   LOAD_SYM(getSystemAvInfo, "retro_get_system_av_info");
   LOAD_SYM(loadGame, "retro_load_game");
@@ -1406,6 +1468,7 @@ bool loadGame(const char *romPath) {
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
   g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
   if (g_modernDevice) g_core.setControllerPortDevice(0, g_modernDevice);
+  rewindResetLocked();
   restoreSram();
   return true;
 }
@@ -1828,6 +1891,29 @@ bool loadState(int slot) {
 }
 
 FrameBuffer &frame() { return g_frame; }
+
+std::string statePathFor(int slot) { return statePath(slot); }
+
+double rewind(double seconds) {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (!g_gameLoaded) return 0.0;
+  const int steps = std::max(1, int(std::lround(seconds * std::max(1.0, g_fps.load()) / kRewindInterval)));
+  return rewindLocked(steps);
+}
+
+double rewindAvailable() {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (!g_rewindCap) return -1.0;  // desactivado (estado demasiado grande o netplay)
+  return g_rewind.size() * kRewindInterval / std::max(1.0, g_fps.load());
+}
+
+bool setCheats(const std::vector<std::string> &codes) {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (!g_gameLoaded || !g_core.cheatSet) return false;
+  if (g_core.cheatReset) g_core.cheatReset();
+  for (size_t i = 0; i < codes.size(); ++i) g_core.cheatSet(unsigned(i), true, codes[i].c_str());
+  return true;
+}
 
 float aspectRatio() { return g_aspect.load(std::memory_order_relaxed); }
 

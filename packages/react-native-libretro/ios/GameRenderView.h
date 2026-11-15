@@ -12,4 +12,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setRendering:(BOOL)rendering;
 @end
 
+@interface GameRenderView (ProShader)
+/** Para todas las vistas: shader (0 según filtro, 3 CRT, 4 LCD), suavizado de bordes y nitidez CAS
+ *  (0..1) y color (0 Normal, 1 Vívido, 2 Cine). En vivo. */
++ (void)setProShader:(uint32_t)mode smooth:(float)smooth cas:(float)cas color:(uint32_t)color;
+@end
+
 NS_ASSUME_NONNULL_END

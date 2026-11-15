@@ -4,6 +4,7 @@
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
+#import "GameRenderView.h"
 #import "GamepadBridge.h"
 #import "TVOutput.h"
 #import <ReactCommon/RCTTurboModule.h>
@@ -78,6 +79,45 @@ static UIViewController *topViewController(void) {
   }
   while (top.presentedViewController) top = top.presentedViewController;
   return top;
+}
+
+// Captura del frame actual (BGRA del núcleo) como PNG: miniatura de las ranuras de guardado y de
+// "Seguir jugando". Como mucho 480 px de alto.
+static BOOL writeFramePNG(NSString *path) {
+  FrameBuffer &frame = host::frame();
+  std::vector<uint8_t> pixels;
+  uint32_t w = 0, h = 0;
+  size_t stride = 0;
+  {
+    std::lock_guard<std::mutex> lock(frame.mutex);
+    if (!frame.width || !frame.height || frame.pixels.size() < frame.stride * frame.height) return NO;
+    pixels = frame.pixels;
+    w = frame.width;
+    h = frame.height;
+    stride = frame.stride;
+  }
+  CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+  CGContextRef ctx = CGBitmapContextCreate(pixels.data(), w, h, 8, stride, cs,
+                                           kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+  CGColorSpaceRelease(cs);
+  if (!ctx) return NO;
+  CGImageRef full = CGBitmapContextCreateImage(ctx);
+  CGContextRelease(ctx);
+  if (!full) return NO;
+  // Relación de aspecto que declara el núcleo (PS1: píxeles no cuadrados)
+  double aspect = host::aspectRatio();
+  if (!(aspect > 0.0)) aspect = double(w) / double(h);
+  const CGFloat outH = MIN(480.0, MAX(120.0, CGFloat(h)));
+  const CGSize size = CGSizeMake(round(outH * aspect), outH);
+  UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+  format.scale = 1;
+  UIImage *shot = [[[UIGraphicsImageRenderer alloc] initWithSize:size format:format]
+      imageWithActions:^(UIGraphicsImageRendererContext *c) {
+        CGContextSetInterpolationQuality(c.CGContext, kCGInterpolationNone);
+        [[UIImage imageWithCGImage:full] drawInRect:CGRectMake(0, 0, size.width, size.height)];
+      }];
+  CGImageRelease(full);
+  return [UIImagePNGRepresentation(shot) writeToFile:path atomically:YES];
 }
 
 static NSString *documentsDirectory(void) {
@@ -1440,7 +1480,47 @@ RCT_EXPORT_MODULE(Libretro)
 }
 
 - (NSNumber *)saveState:(double)slot {
-  return @(host::saveState((int)slot));
+  const bool ok = host::saveState((int)slot);
+  // Miniatura junto al estado (<estado>.png): ranuras visuales y "Seguir jugando"
+  if (ok) writeFramePNG([[NSString stringWithUTF8String:host::statePathFor((int)slot).c_str()] stringByAppendingString:@".png"]);
+  return @(ok);
+}
+
+// "existe|fecha (ms)|ruta de la miniatura" de una ranura del juego cargado
+- (NSString *)stateInfo:(double)slot {
+  NSString *path = [NSString stringWithUTF8String:host::statePathFor((int)slot).c_str()];
+  NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+  if (!attrs) return @"0|0|";
+  NSString *png = [path stringByAppendingString:@".png"];
+  const BOOL hasPng = [NSFileManager.defaultManager fileExistsAtPath:png];
+  return [NSString stringWithFormat:@"1|%.0f|%@", [attrs.fileModificationDate timeIntervalSince1970] * 1000.0,
+                                    hasPng ? png : @""];
+}
+
+- (NSNumber *)rewind:(double)seconds {
+  return @(host::rewind(seconds));
+}
+
+- (NSNumber *)rewindAvailable {
+  return @(host::rewindAvailable());
+}
+
+// JSON ["código", …] de trucos activos (sustituye a los anteriores). false = el núcleo no los admite
+- (NSNumber *)setCheats:(NSString *)codesJson {
+  NSArray *list = [NSJSONSerialization JSONObjectWithData:[codesJson dataUsingEncoding:NSUTF8StringEncoding]
+                                                  options:0
+                                                    error:nil];
+  std::vector<std::string> codes;
+  for (id c in [list isKindOfClass:NSArray.class] ? list : @[]) {
+    if ([c isKindOfClass:NSString.class] && [(NSString *)c length]) codes.push_back([(NSString *)c UTF8String]);
+  }
+  return @(host::setCheats(codes));
+}
+
+// Ajustes de imagen en vivo (iPhone y TV): shader 0 según filtro / 3 CRT / 4 LCD, suavizado y
+// nitidez 0..1, color 0 Normal / 1 Vívido / 2 Cine
+- (void)setImageOptions:(double)shader smooth:(double)smooth sharpen:(double)sharpen color:(double)color {
+  [GameRenderView setProShader:(uint32_t)shader smooth:(float)smooth cas:(float)sharpen color:(uint32_t)color];
 }
 
 - (NSNumber *)loadState:(double)slot {

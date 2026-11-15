@@ -19,6 +19,16 @@ export interface Spec extends TurboModule {
   setLook(x: number, y: number): void;
   saveState(slot: number): boolean;
   loadState(slot: number): boolean;
+  /** "existe|fecha ms|ruta png" de una ranura del juego cargado. */
+  stateInfo(slot: number): string;
+  /** Rebobina ~seconds; devuelve los segundos retrocedidos (0 = nada disponible). */
+  rewind(seconds: number): number;
+  /** Segundos de rebobinado disponibles; -1 = desactivado para este juego. */
+  rewindAvailable(): number;
+  /** JSON con los códigos de truco activos. false si el núcleo no admite trucos. */
+  setCheats(codesJson: string): boolean;
+  /** Shader (0 según filtro, 3 CRT, 4 LCD), suavizado 0..1, nitidez CAS 0..1, color 0/1/2. */
+  setImageOptions(shader: number, smooth: number, sharpen: number, color: number): void;
   /** Rutas absolutas de ROMs encontradas en Documents. */
   listRoms(): string[];
   /** Consola verificada por contenido: 'gba' | 'n64' | 'sega' | 'ps1' | 'mame' (solo .zip en arcade/), o ''. */

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "FrameBuffer.hpp"
 
@@ -27,6 +28,14 @@ void setButtons(uint16_t mask);
 void setAnalog(double x, double y);
 /** Zona táctil de mirar de los shooters: stick derecho (-1..1). */
 void setLook(double x, double y);
+/** Ruta del archivo de estado de una ranura del juego cargado. */
+std::string statePathFor(int slot);
+/** Rebobina ~seconds (capturas cada 0,5 s). Devuelve los segundos retrocedidos (0 = nada). */
+double rewind(double seconds);
+/** Segundos de rebobinado disponibles; -1 si está desactivado para este juego. */
+double rewindAvailable();
+/** Activa estos códigos de truco (reemplaza los anteriores). false si el núcleo no admite trucos. */
+bool setCheats(const std::vector<std::string> &codes);
 /** Puntero táctil (stylus NDS): x/y en [-1, 1] sobre el frame completo del core. */
 void setPointer(double x, double y, bool pressed);
 /** Estado del mando físico: máscara de botones libretro y stick izquierdo en [-1, 1]. */

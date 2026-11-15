@@ -11,6 +11,17 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getGfxPreset, gfxOptions, GFX_CORES, GfxPreset, saveGfxPreset } from '../emulator/graphics';
+import {
+  defaultImagePrefs,
+  ImagePrefs,
+  loadImagePrefs,
+  nativeImageArgs,
+  REMASTER_2D,
+  REMASTER_3D,
+  saveImagePrefs,
+} from '../input/imagePrefs';
+import { addPlaytime } from '../library/playtime';
+import { applySavedCheats, CheatsPanel, ImagePanel, RewindPanel, SaveSlots } from './MenuPanels';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import {
   CoreId,
@@ -493,6 +504,44 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     );
   };
 
+  // Ajustes de imagen por consola (shader, nitidez CAS, suavizado, color): en vivo por GPU
+  const consoleId = useMemo(() => Libretro.consoleOf(romPath), [romPath]);
+  const [imagePrefs, setImagePrefs] = useState<ImagePrefs>(() => defaultImagePrefs(consoleId));
+  useEffect(() => {
+    loadImagePrefs(consoleId).then(setImagePrefs);
+  }, [consoleId]);
+  useEffect(() => {
+    Libretro.setImageOptions(...nativeImageArgs(imagePrefs));
+  }, [imagePrefs]);
+  useEffect(() => () => Libretro.setImageOptions(0, 0, 0, 0), []);
+  const changeImage = (p: ImagePrefs) => {
+    setImagePrefs(p);
+    saveImagePrefs(consoleId, p);
+  };
+  const remaster = () => {
+    if (core && GFX_CORES.has(core)) {
+      changeImage(REMASTER_3D);
+      chooseGfx('remaster');
+    } else {
+      changeImage(REMASTER_2D);
+      flash('✨ Ultra HD Remaster activado');
+    }
+  };
+
+  // Trucos guardados para este juego y tiempo jugado (no cuenta con el menú abierto o en pausa)
+  const pausedRef = useRef(false);
+  pausedRef.current = paused || menuOpen;
+  useEffect(() => {
+    if (ready) applySavedCheats(romPath);
+  }, [ready, romPath]);
+  useEffect(() => {
+    if (!ready) return;
+    const id = setInterval(() => {
+      if (!pausedRef.current) addPlaytime(romPath, 15);
+    }, 15000);
+    return () => clearInterval(id);
+  }, [ready, romPath]);
+
   // Game Boy: paleta clásica elegida (recordada en el dispositivo)
   const [gbPalette, setGbPalette] = useState<GbPalette>('auto');
   useEffect(() => {
@@ -816,6 +865,28 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       tvOrient={tvOrient}
       onTvOrient={setTvOrient}
       webPadType={WEB_PAD_TYPE[core ?? 'mame']}
+      slotsPanel={
+        <SaveSlots
+          base={10 + slotsFor(core).save * 10}
+          canLoad={net.phase === 'idle'}
+          onMessage={flash}
+          onLoaded={closeMenu}
+        />
+      }
+      rewindPanel={<RewindPanel onMessage={flash} onDone={closeMenu} />}
+      cheatsPanel={<CheatsPanel romPath={romPath} />}
+      imagePanel={
+        <ImagePanel
+          prefs={imagePrefs}
+          onChange={changeImage}
+          onRemaster={remaster}
+          remasterNote={
+            GFX_CORES.has(core)
+              ? 'Consola 3D: resolución interna 4x con antialiasing, PGXP en PS1, panorámico 16:9 con recorte del overscan y nitidez adaptativa (reinicia el juego).'
+              : 'Consola 2D / arcade: suavizado de bordes de sprites (tipo xBRZ / ScaleFX) + nitidez adaptativa CAS + color vívido, en vivo.'
+          }
+        />
+      }
       extras={[
         ...(GFX_CORES.has(core)
           ? [
@@ -827,6 +898,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
                   { id: 'std', label: 'Estándar 1x' },
                   { id: 'hd', label: 'Alta 2x HD' },
                   { id: 'ultra', label: 'Ultra Full HD' },
+                  { id: 'remaster', label: '✨ Remaster' },
                 ],
                 note:
                   'Estándar: render por software (máxima batería y compatibilidad). Alta y Ultra usan la GPU: ' +

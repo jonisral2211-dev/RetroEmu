@@ -4,7 +4,7 @@ import type { CoreId } from './cores';
 // Calidad gráfica (resolución interna 3D). Estándar = render por software de siempre (probado,
 // máxima batería). HD y Ultra activan el render por GPU (OpenGL ES) en los núcleos que lo admiten
 // y suben su resolución interna; Ultra añade PGXP, panorámico 16:9 y filtrado anisotrópico.
-export type GfxPreset = 'std' | 'hd' | 'ultra';
+export type GfxPreset = 'std' | 'hd' | 'ultra' | 'remaster';
 
 const KEY = 'jl.gfx.v1';
 let current: GfxPreset = 'std';
@@ -14,7 +14,7 @@ export async function loadGfxPreset(): Promise<GfxPreset> {
   if (loaded) return current;
   try {
     const v = await AsyncStorage.getItem(KEY);
-    if (v === 'std' || v === 'hd' || v === 'ultra') current = v;
+    if (v === 'std' || v === 'hd' || v === 'ultra' || v === 'remaster') current = v;
   } catch {
     // sin preferencia guardada
   }
@@ -45,7 +45,9 @@ export function ps1CoreFor(p: GfxPreset): CoreId {
  */
 export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
   const hd = p !== 'std';
-  const ultra = p === 'ultra';
+  // ✨ Ultra HD Remaster = Ultra + antialiasing (MSAA) y recorte del overscan
+  const remaster = p === 'remaster';
+  const ultra = p === 'ultra' || remaster;
   switch (core) {
     case 'ppsspp':
       return hd
@@ -54,7 +56,7 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
             ['ppsspp_backend', 'opengl'],
             ['ppsspp_internal_resolution', ultra ? '1920x1088' : '960x544'],
             ['ppsspp_texture_replacement', 'enabled'],
-            ['ppsspp_texture_anisotropic_filtering', ultra ? '8x' : '4x'],
+            ['ppsspp_texture_anisotropic_filtering', remaster ? '16x' : ultra ? '8x' : '4x'],
           ]
         : [
             ['ppsspp_software_rendering', 'enabled'],
@@ -70,6 +72,8 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
         ['swanstation_GPU_WidescreenHack', ultra ? 'true' : 'false'],
         ['swanstation_Display_AspectRatio', ultra ? '16:9' : 'Auto'],
         ['swanstation_GPU_TrueColor', 'true'],
+        ['swanstation_GPU_MSAA', remaster ? '4' : '1'],
+        ['swanstation_Display_CropMode', remaster ? 'Overscan' : 'None'],
       ];
     case 'pcsx':
       // Respaldo de SwanStation (sin BIOS real): su mejora 2x por NEON
@@ -84,7 +88,7 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
             ['mupen64plus-txHiresEnable', 'True'],
             ['mupen64plus-EnableHiResTextures', 'True'],
             ['mupen64plus-txFilterMode', 'None'],
-            ['mupen64plus-MultiSampling', '0'],
+            ['mupen64plus-MultiSampling', remaster ? '4' : '0'],
           ]
         : [
             ['mupen64plus-rdp-plugin', 'angrylion'],
@@ -95,7 +99,7 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
       return [
         ['flycast_internal_resolution', ultra ? '1920x1440' : hd ? '1280x960' : '640x480'],
         ['flycast_widescreen_hack', ultra ? 'enabled' : 'disabled'],
-        ['flycast_anisotropic_filtering', ultra ? '8' : hd ? '4' : 'off'],
+        ['flycast_anisotropic_filtering', remaster ? '16' : ultra ? '8' : hd ? '4' : 'off'],
         ['flycast_custom_textures', hd ? 'enabled' : 'disabled'],
       ];
     default:

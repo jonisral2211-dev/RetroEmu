@@ -1,5 +1,6 @@
 #import "GameRenderView.h"
 
+#include <algorithm>
 #include <mutex>
 #include <simd/simd.h>
 
@@ -23,27 +24,125 @@ static NSString *const kShaderSource =
     //   franja de 1 píxel de pantalla entre texels: bordes nítidos sin dientes desiguales a
     //   escala no entera en pantallas Retina.
     // mode 1 (3D): bilineal + realce de nitidez suave (unsharp mask de 5 muestras).
-    @"struct Params { float2 texSize; float2 outSize; uint mode; float sharpen; };\n"
+    @"struct Params { float2 texSize; float2 outSize; uint mode; float sharpen; float smooth; uint color; float cas; };\n"
+    @"float lumaOf(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }\n"
+    @"// \"Sharp bilinear\": nearest dentro del texel y mezcla solo en la franja de 1 píxel de pantalla\n"
+    @"float3 sharpSample(texture2d<float> tex, sampler s, float2 uv, constant Params &P) {\n"
+    @"  float2 texel = uv * P.texSize;\n"
+    @"  float2 scale = max(P.outSize / P.texSize, float2(1.0));\n"
+    @"  float2 base = floor(texel);\n"
+    @"  float2 d = fract(texel) - 0.5;\n"
+    @"  float2 range = 0.5 - 0.5 / scale;\n"
+    @"  float2 f = (d - clamp(d, -range, range)) * scale + 0.5;\n"
+    @"  return tex.sample(s, (base + f) / P.texSize).rgb;\n"
+    @"}\n"
+    @"// Suavizado de bordes tipo xBR/ScaleFX ligero: en un bloque de 2x2 texels busca la diagonal\n"
+    @"// más parecida y redondea los escalones solo allí; las zonas planas y los detalles internos\n"
+    @"// (ojos, texto) quedan con transición corta\n"
+    @"float3 edgeSmooth(texture2d<float> tex, sampler s, float2 uv, constant Params &P) {\n"
+    @"  float2 t = uv * P.texSize - 0.5;\n"
+    @"  float2 b = floor(t);\n"
+    @"  float2 f = fract(t);\n"
+    @"  float2 px = 1.0 / P.texSize;\n"
+    @"  float3 tl = tex.sample(s, (b + float2(0.5, 0.5)) * px).rgb;\n"
+    @"  float3 tr = tex.sample(s, (b + float2(1.5, 0.5)) * px).rgb;\n"
+    @"  float3 bl = tex.sample(s, (b + float2(0.5, 1.5)) * px).rgb;\n"
+    @"  float3 br = tex.sample(s, (b + float2(1.5, 1.5)) * px).rgb;\n"
+    @"  float2 g = smoothstep(float2(0.25), float2(0.75), f);\n"
+    @"  float3 soft = mix(mix(tl, tr, g.x), mix(bl, br, g.x), g.y);\n"
+    @"  float dMain = abs(lumaOf(tl) - lumaOf(br));\n"
+    @"  float dAnti = abs(lumaOf(tr) - lumaOf(bl));\n"
+    @"  if (abs(dMain - dAnti) < 0.05) return soft;\n"
+    @"  float3 diag;\n"
+    @"  if (dMain < dAnti) {\n"
+    @"    // tl-br forman la línea: el lado del corte sigue a tr o bl\n"
+    @"    float side = f.x - f.y;\n"
+    @"    float3 corner = side > 0.0 ? tr : bl;\n"
+    @"    diag = mix(0.5 * (tl + br), corner, smoothstep(0.15, 0.6, abs(side)));\n"
+    @"  } else {\n"
+    @"    float side = f.x + f.y - 1.0;\n"
+    @"    float3 corner = side > 0.0 ? br : tl;\n"
+    @"    diag = mix(0.5 * (tr + bl), corner, smoothstep(0.15, 0.6, abs(side)));\n"
+    @"  }\n"
+    @"  return diag;\n"
+    @"}\n"
+    @"// TV CRT Trinitron: líneas de escaneo, rejilla de apertura RGB, brillo de fósforo y viñeta\n"
+    @"float3 crt(texture2d<float> tex, sampler s, float2 uv, float2 frag, constant Params &P) {\n"
+    @"  float2 texel = uv * P.texSize;\n"
+    @"  float3 c = tex.sample(s, (floor(texel) + float2(fract(texel.x), 0.5)) / P.texSize).rgb;\n"
+    @"  c = pow(c, float3(2.2));\n"
+    @"  float scan = sin(3.14159 * fract(texel.y));\n"
+    @"  float beam = mix(0.55, 1.0, pow(scan, mix(2.2, 0.8, lumaOf(c))));\n"
+    @"  int col = int(fmod(frag.x, 3.0));\n"
+    @"  float3 mask = col == 0 ? float3(1.0, 0.78, 0.78) : col == 1 ? float3(0.78, 1.0, 0.78) : float3(0.78, 0.78, 1.0);\n"
+    @"  c *= beam * mask * 1.38;\n"
+    @"  float2 v = uv - 0.5;\n"
+    @"  c *= 1.0 - dot(v, v) * 0.55;\n"
+    @"  return pow(clamp(c, 0.0, 1.0), float3(1.0 / 2.2));\n"
+    @"}\n"
+    @"// Pantalla portátil LCD: rejilla entre píxeles y subpíxeles RGB (solo si hay sitio: >= 3 px)\n"
+    @"float3 lcd(texture2d<float> tex, sampler s, float2 uv, constant Params &P) {\n"
+    @"  float2 texel = uv * P.texSize;\n"
+    @"  float3 c = tex.sample(s, (floor(texel) + 0.5) / P.texSize).rgb;\n"
+    @"  float2 cell = fract(texel);\n"
+    @"  float2 scale = P.outSize / P.texSize;\n"
+    @"  bool room = min(scale.x, scale.y) >= 3.0;\n"
+    @"  float gw = room ? 1.0 / min(scale.x, scale.y) : 0.0;\n"
+    @"  float grid = (cell.x < gw || cell.y < gw) ? 0.72 : 1.0;\n"
+    @"  int sub = int(cell.x * 3.0);\n"
+    @"  float3 tint = sub == 0 ? float3(1.0, 0.86, 0.86) : sub == 1 ? float3(0.86, 1.0, 0.86) : float3(0.86, 0.86, 1.0);\n"
+    @"  return clamp(c * grid * (room ? tint : float3(1.0)) * 1.08, 0.0, 1.0);\n"
+    @"}\n"
+    @"// Color: 1 = Vívido (HDR simulado: más saturación y curva S), 2 = Cine clásico (cálido y suave)\n"
+    @"float3 grade(float3 c, uint mode) {\n"
+    @"  if (mode == 1u) {\n"
+    @"    float l = lumaOf(c);\n"
+    @"    c = mix(float3(l), c, 1.28);\n"
+    @"    c = c * c * (3.0 - 2.0 * c) * 0.35 + c * 0.65;\n"
+    @"    return clamp(c * 1.04, 0.0, 1.0);\n"
+    @"  }\n"
+    @"  if (mode == 2u) {\n"
+    @"    float l = lumaOf(c);\n"
+    @"    c = mix(float3(l), c, 0.85);\n"
+    @"    c = c * float3(1.06, 1.0, 0.9) * 0.94 + 0.03;\n"
+    @"    return clamp(c, 0.0, 1.0);\n"
+    @"  }\n"
+    @"  return c;\n"
+    @"}\n"
     @"fragment float4 libretro_fs(VOut v [[stage_in]],\n"
     @"                            texture2d<float> tex [[texture(0)]],\n"
     @"                            sampler s [[sampler(0)]],\n"
     @"                            constant Params &P [[buffer(0)]]) {\n"
-    @"  if (P.mode == 0u) {\n"
-    @"    float2 texel = v.uv * P.texSize;\n"
-    @"    float2 scale = max(P.outSize / P.texSize, float2(1.0));\n"
-    @"    float2 base = floor(texel);\n"
-    @"    float2 d = fract(texel) - 0.5;\n"
-    @"    float2 range = 0.5 - 0.5 / scale;\n"
-    @"    float2 f = (d - clamp(d, -range, range)) * scale + 0.5;\n"
-    @"    return float4(tex.sample(s, (base + f) / P.texSize).rgb, 1.0);\n"
-    @"  }\n"
+    @"  float3 c;\n"
     @"  float2 px = 1.0 / P.texSize;\n"
-    @"  float3 c = tex.sample(s, v.uv).rgb;\n"
-    @"  float3 blur = 0.25 * (tex.sample(s, v.uv + float2(px.x, 0.0)).rgb +\n"
-    @"                        tex.sample(s, v.uv - float2(px.x, 0.0)).rgb +\n"
-    @"                        tex.sample(s, v.uv + float2(0.0, px.y)).rgb +\n"
-    @"                        tex.sample(s, v.uv - float2(0.0, px.y)).rgb);\n"
-    @"  return float4(clamp(c + (c - blur) * P.sharpen, 0.0, 1.0), 1.0);\n"
+    @"  if (P.mode == 3u) {\n"
+    @"    c = crt(tex, s, v.uv, v.position.xy, P);\n"
+    @"  } else if (P.mode == 4u) {\n"
+    @"    c = lcd(tex, s, v.uv, P);\n"
+    @"  } else if (P.mode == 1u) {\n"
+    @"    // 3D: bilineal + realce suave\n"
+    @"    c = tex.sample(s, v.uv).rgb;\n"
+    @"    float3 blur = 0.25 * (tex.sample(s, v.uv + float2(px.x, 0.0)).rgb + tex.sample(s, v.uv - float2(px.x, 0.0)).rgb +\n"
+    @"                          tex.sample(s, v.uv + float2(0.0, px.y)).rgb + tex.sample(s, v.uv - float2(0.0, px.y)).rgb);\n"
+    @"    c = clamp(c + (c - blur) * P.sharpen, 0.0, 1.0);\n"
+    @"  } else {\n"
+    @"    // 2D: píxel perfecto mezclado con el suavizado de bordes según el deslizador (0..1)\n"
+    @"    c = sharpSample(tex, s, v.uv, P);\n"
+    @"    if (P.smooth > 0.001) c = mix(c, edgeSmooth(tex, s, v.uv, P), P.smooth);\n"
+    @"  }\n"
+    @"  if (P.cas > 0.001 && P.mode != 3u && P.mode != 4u) {\n"
+    @"    // Nitidez adaptativa (tipo CAS): fuerte en zonas de poco contraste, suave en bordes duros\n"
+    @"    float3 n = tex.sample(s, v.uv + float2(0.0, -px.y)).rgb;\n"
+    @"    float3 so = tex.sample(s, v.uv + float2(0.0, px.y)).rgb;\n"
+    @"    float3 e = tex.sample(s, v.uv + float2(px.x, 0.0)).rgb;\n"
+    @"    float3 w = tex.sample(s, v.uv + float2(-px.x, 0.0)).rgb;\n"
+    @"    float3 mn = min(min(min(n, so), min(e, w)), c);\n"
+    @"    float3 mx = max(max(max(n, so), max(e, w)), c);\n"
+    @"    float3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, float3(0.0001)), 0.0, 1.0));\n"
+    @"    float3 wgt = -amp * mix(0.125, 0.2, P.cas);\n"
+    @"    c = clamp((c + (n + so + e + w) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);\n"
+    @"  }\n"
+    @"  return float4(grade(c, P.color), 1.0);\n"
     @"}\n";
 
 // Respaldo si el shader principal no compila en algún dispositivo: muestreo directo
@@ -69,9 +168,29 @@ struct ShaderParams {
   simd_float2 outSize;
   uint32_t mode;
   float sharpen;
+  float smooth;
+  uint32_t color;
+  float cas;
 };
 
 static const NSUInteger kTextureRing = 3;
+
+// Ajustes de imagen del menú (comunes al iPhone y a la TV, se aplican en vivo cada frame):
+// shader 0 = según el filtro (Nítido / Suavizado), 3 = CRT, 4 = LCD; suavizado de bordes y
+// nitidez CAS 0..1; color 0 Normal, 1 Vívido, 2 Cine
+static uint32_t g_proShader = 0;
+static float g_smooth = 0.0f;
+static float g_cas = 0.0f;
+static uint32_t g_color = 0;
+
+@implementation GameRenderView (ProShader)
++ (void)setProShader:(uint32_t)mode smooth:(float)smooth cas:(float)cas color:(uint32_t)color {
+  g_proShader = mode;
+  g_smooth = std::min(1.0f, std::max(0.0f, smooth));
+  g_cas = std::min(1.0f, std::max(0.0f, cas));
+  g_color = color;
+}
+@end
 
 @interface GameRenderView () <MTKViewDelegate>
 @end
@@ -229,7 +348,8 @@ static const NSUInteger kTextureRing = 3;
   MTLViewport viewport = { floor((drawSize.width - vw) / 2.0), floor((drawSize.height - vh) / 2.0),
                            vw, vh, 0.0, 1.0 };
   ShaderParams params = { simd_make_float2(float(tw), float(th)), simd_make_float2(float(vw), float(vh)),
-                          self.linearFilter ? 1u : 0u, 0.35f };
+                          g_proShader ? g_proShader : (self.linearFilter ? 1u : 0u), 0.35f,
+                          g_smooth, g_color, g_cas };
 
   id<MTLCommandBuffer> cmd = [_commandQueue commandBuffer];
   id<MTLRenderCommandEncoder> enc = [cmd renderCommandEncoderWithDescriptor:pass];
