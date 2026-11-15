@@ -1,4 +1,5 @@
 #include "LibretroHost.hpp"
+#include "HWRender.hpp"
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -76,6 +77,23 @@ std::mutex g_coreMutex;  // serializa retro_run() frente a save/load/reset/unloa
 std::thread g_thread;
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_paused{false};
+// ---- Render por GPU (OpenGL ES) ------------------------------------------------------------
+// Solo para núcleos que lo necesitan (Flycast, vitaQuake II) o cuando el usuario elige calidad
+// HD/Ultra (PPSSPP, SwanStation, Mupen64 con GLideN64). En Estándar se sigue usando el render
+// por software de siempre: el núcleo no recibe contexto y no cambia de camino.
+retro_hw_render_callback g_hw{};
+bool g_hwRequested = false;  // el núcleo pidió contexto en retro_load_game
+bool g_hwReady = false;      // contexto creado y context_reset() llamado
+std::atomic<bool> g_hwAllowed{false};
+bool g_hwRequired = false;   // Flycast / vitaQuake II: sin GPU no arrancan
+unsigned g_hwWidth = 0, g_hwHeight = 0;
+std::atomic<bool> g_hwResize{false};
+
+uintptr_t hwCurrentFramebuffer() { return hwgl::framebuffer(); }
+retro_proc_address_t hwProcAddress(const char *sym) {
+  return reinterpret_cast<retro_proc_address_t>(hwgl::procAddress(sym));
+}
+
 // Tipo de mando "Modern" del core (0 = ninguno) y zona táctil de mirar (stick derecho)
 unsigned g_modernDevice = 0;
 std::atomic<int16_t> g_lookX{0};
@@ -414,12 +432,37 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
       if (data) updateAspect(*static_cast<const struct retro_game_geometry *>(data));
       return true;
+    case RETRO_ENVIRONMENT_SET_HW_RENDER: {
+      auto *cb = static_cast<struct retro_hw_render_callback *>(data);
+      if (!cb || !(g_hwAllowed.load() || g_hwRequired)) return false;
+      const bool gles = cb->context_type == RETRO_HW_CONTEXT_OPENGLES2 ||
+                        cb->context_type == RETRO_HW_CONTEXT_OPENGLES3 ||
+                        (cb->context_type == RETRO_HW_CONTEXT_OPENGLES_VERSION && cb->version_major <= 3);
+      if (!gles) {
+        std::fprintf(stderr, "[RetroEmu] contexto GPU %d no soportado en iOS\n", int(cb->context_type));
+        return false;  // OpenGL de escritorio / Vulkan: el núcleo prueba otro o usa software
+      }
+      cb->get_current_framebuffer = hwCurrentFramebuffer;
+      cb->get_proc_address = hwProcAddress;
+      g_hw = *cb;
+      g_hwRequested = true;
+      return true;
+    }
+    case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+      if (!(g_hwAllowed.load() || g_hwRequired)) return false;
+      *static_cast<unsigned *>(data) = RETRO_HW_CONTEXT_OPENGLES3;
+      return true;
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
       if (data) {
         // El núcleo puede cambiar de ritmo tras cargar (región PAL/NTSC, modo de vídeo): si no se
         // sigue, el juego y el audio van más rápidos o más lentos de lo real
         const auto *av = static_cast<const struct retro_system_av_info *>(data);
         updateAspect(av->geometry);
+        if (g_hwRequested && (av->geometry.max_width > g_hwWidth || av->geometry.max_height > g_hwHeight)) {
+          g_hwWidth = std::max(g_hwWidth, av->geometry.max_width);
+          g_hwHeight = std::max(g_hwHeight, av->geometry.max_height);
+          g_hwResize = true;
+        }
         if (av->timing.fps >= 10.0 && av->timing.fps <= 250.0) g_fps = av->timing.fps;
         if (av->timing.sample_rate >= 8000.0 && av->timing.sample_rate <= 192000.0) g_sampleRate = av->timing.sample_rate;
       }
@@ -494,6 +537,16 @@ size_t bytesPerPixel(enum retro_pixel_format fmt) {
 
 static void onVideo(const void *data, unsigned width, unsigned height, size_t pitch) {
   if (g_replaying.load(std::memory_order_relaxed)) return;
+  if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+    // Frame dibujado por la GPU en nuestro FBO: se lee al búfer BGRA de siempre
+    if (!g_hwReady || !width || !height) return;
+    g_frame.write(width, height, [&](uint8_t *dst, size_t stride) {
+      hwgl::readFrame(width, height, dst, stride, g_hw.bottom_left_origin);
+    });
+    g_dbgFrameW = width;
+    g_dbgFrameH = height;
+    return;
+  }
   if (!data || !width || !height) return;  // NULL = frame duplicado, nada nuevo
   const auto fmt = g_pixelFormat;
   const size_t bpp = bytesPerPixel(fmt);
@@ -691,10 +744,16 @@ void persistSram() {
 }
 
 void unloadGameLocked() {
+  if (g_hwReady) hwgl::makeCurrent();  // el núcleo libera sus recursos GL con el contexto activo
   if (g_gameLoaded) {
     g_core.unloadGame();
     g_gameLoaded = false;
   }
+  if (g_hwReady && g_hw.context_destroy) g_hw.context_destroy();
+  if (hwgl::active()) hwgl::destroy();
+  g_hwReady = false;
+  g_hwRequested = false;
+  g_hw = retro_hw_render_callback{};
   g_romData.clear();
   g_romData.shrink_to_fit();
   g_aspect.store(0.0f, std::memory_order_relaxed);
@@ -1117,8 +1176,30 @@ void netStepLocked() {
 constexpr double kAudioMaxSeconds = 0.11;  // ~65 ms en el ring + ~43 ms ya en AudioQueue
 std::atomic<unsigned> g_audioWaits{0};
 
+// Hilo de emulación: crea el contexto GPU la primera vez (context_reset) o lo hace actual
+bool prepareHwRender() {
+  if (!g_hwRequested) return true;
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (g_hwReady) {
+    hwgl::makeCurrent();
+    return true;
+  }
+  std::string error;
+  if (!hwgl::create(g_hwWidth, g_hwHeight, g_hw.depth, g_hw.stencil, error)) {
+    g_lastError = "GPU: " + error;
+    return false;
+  }
+  if (g_hw.context_reset) g_hw.context_reset();
+  g_hwReady = true;
+  return true;
+}
+
 void runLoop() {
   using clock = std::chrono::steady_clock;
+  if (!prepareHwRender()) {
+    g_running = false;
+    return;
+  }
   auto next = clock::now();
   auto statsStart = next;
   int statsFrames = 0;
@@ -1141,6 +1222,7 @@ void runLoop() {
         if (g_netPending) netBeginLocked();
         if (g_netActive) netStepLocked();
         if (g_audioStatus) g_audioStatus(true, g_audio.occupancy(), g_audio.underrunLikely());
+        if (g_hwReady && g_hwResize.exchange(false)) hwgl::resize(g_hwWidth, g_hwHeight);
         g_core.run();
       }
     }
@@ -1190,6 +1272,8 @@ bool loadCore(const char *frameworkBinaryPath) {
   }
 
   g_isN64 = std::strstr(frameworkBinaryPath, "mupen64") != nullptr;
+  g_hwRequired = std::strstr(frameworkBinaryPath, "flycast") != nullptr ||
+                 std::strstr(frameworkBinaryPath, "vitaquake") != nullptr;
   g_arcadeCore = std::strstr(frameworkBinaryPath, "mame2003") != nullptr ||
                  std::strstr(frameworkBinaryPath, "fbneo") != nullptr;
   // Formato por defecto de Libretro: un core que no llame a SET_PIXEL_FORMAT no debe heredar
@@ -1314,6 +1398,10 @@ bool loadGame(const char *romPath) {
   // Ritmo nativo del núcleo (59.94 / 60 / 50 Hz…); valores absurdos -> 60
   g_fps = av.timing.fps >= 10.0 && av.timing.fps <= 250.0 ? av.timing.fps : 60.0;
   updateAspect(av.geometry);
+  if (g_hwRequested) {
+    g_hwWidth = std::max(av.geometry.max_width, av.geometry.base_width);
+    g_hwHeight = std::max(av.geometry.max_height, av.geometry.base_height);
+  }
 
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
   g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
@@ -1756,6 +1844,11 @@ void setOption(const char *key, const char *value) {
   if (!key || !value) return;
   // Pseudo-opción del frontend: dispositivo del puerto 2 (SNES multitap = subclase 0 de JOYPAD,
   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0) = 0x101). Con él, J2-J4 se leen de los puertos 1-3.
+  // Pseudo-opción: permitir render por GPU (calidad HD/Ultra). Se fija antes de loadGame.
+  if (std::strcmp(key, "jl_hw_render") == 0) {
+    g_hwAllowed = std::strcmp(value, "enabled") == 0;
+    return;
+  }
   if (std::strcmp(key, "jl_port1_device") == 0) {
     const unsigned device = unsigned(std::strtoul(value, nullptr, 0));
     std::lock_guard<std::mutex> lock(g_coreMutex);

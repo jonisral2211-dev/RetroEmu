@@ -8,7 +8,7 @@
 // Necesario porque .bin puede ser GBA o Mega Drive.
 namespace romcheck {
 
-enum class Kind { Unknown, GBA, N64, Sega, PS1, NDS, Saturn, PSP, SNES, NES, GB, GBC };
+enum class Kind { Unknown, GBA, N64, Sega, PS1, NDS, Saturn, PSP, SNES, NES, GB, GBC, Dreamcast };
 
 /** Bytes de cabecera necesarios para inspeccionar PS1 (sector 16 de un .bin crudo + margen). */
 constexpr size_t kHeadSize = 0x9400;

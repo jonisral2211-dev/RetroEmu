@@ -30,3 +30,6 @@ cannonball_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest
 reminiscence_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/reminiscence_libretro_ios.dylib.zip|latest|prebuilt|||optional
 easyrpg_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/easyrpg_libretro.dylib.zip|latest|prebuilt|||optional
 scummvm_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/scummvm_libretro_ios.dylib.zip|latest|prebuilt|||optional
+# Alta gama 3D (render por GPU OpenGL ES): Dreamcast y PS1 HD (SwanStation, necesita BIOS de PS1)
+flycast_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/flycast_libretro.dylib.zip|latest|prebuilt|||optional
+swanstation_libretro|https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/swanstation_libretro.dylib.zip|latest|prebuilt|||optional

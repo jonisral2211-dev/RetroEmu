@@ -610,6 +610,41 @@ function stickPad(name: string, buttons: [string, number, string?][], menu: [str
   };
 }
 
+// ---- Sega Dreamcast (Flycast) ------------------------------------------------
+// Flycast: A(DC)=B, B(DC)=A, X(DC)=Y, Y(DC)=X (posición en el rombo), gatillos L/R = L2/R2.
+const dcFace = (d: number): Zone[] => [
+  circle('Y', 0.5, 0.2, d, Btn.X, '#22c55e'),
+  circle('X', 0.2, 0.5, d, Btn.Y, '#facc15'),
+  circle('B', 0.8, 0.5, d, Btn.A, '#3b82f6'),
+  circle('A', 0.5, 0.8, d, Btn.B, '#ef4444'),
+];
+export const DREAMCAST_LAYOUT: PadLayout = {
+  name: 'Dreamcast',
+  clusters: [
+    {
+      id: 'shoulders', x: 0, y: 0, w: 1, h: 0.14,
+      zones: [rect('L', 0.02, 0.1, 0.3, 0.8, Btn.L2, GRAY), rect('R', 0.68, 0.1, 0.3, 0.8, Btn.R2, GRAY)],
+    },
+    { id: 'stick', x: 0, y: 0.17, w: 0.4, h: 0.45, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+    { id: 'dpad', x: 0.02, y: 0.62, w: 0.36, h: 0.38, zones: [{ kind: 'dpad', cx: 0.5, cy: 0.5, r: 0.46, eightWay: false }] },
+    { id: 'center', x: 0.4, y: 0.7, w: 0.2, h: 0.3, zones: [rect('START', 0, 0.3, 1, 0.4, Btn.START)] },
+    { id: 'face', x: 0.6, y: 0.2, w: 0.4, h: 0.62, zones: dcFace(0.32) },
+  ],
+};
+export const DREAMCAST_LANDSCAPE_LAYOUT: PadLayout = {
+  name: 'Dreamcast (horizontal)',
+  clusters: [
+    ...sideClusters({
+      leftTriggers: [trig('L', 0.06, 0.88, Btn.L2, GRAY)],
+      rightTriggers: [trig('R', 0.06, 0.88, Btn.R2, GRAY)],
+      face: dcFace(0.34),
+      start: footBtn('START', Btn.START),
+      eightWay: false,
+    }),
+    { id: 'stick', x: 0, y: BODY_Y, w: SIDE_W, h: BODY_H, zones: [{ kind: 'stick', cx: 0.5, cy: 0.5, r: 0.46 }] },
+  ],
+};
+
 /** Mando táctil de un port (null si el núcleo no es un port). */
 export function portLayout(core: CoreId, landscape: boolean): PadLayout | null {
   if (isShooterCore(core)) return shooterLayout(core, landscape);
@@ -771,6 +806,7 @@ export function defaultDirMode(core: CoreId): DirMode {
   if (core === 'fbneo') return 'stick'; // stick arcade
   if (core === 'ppsspp') return 'both'; // cruceta + nub analógico
   if (isShooterCore(core) || core === 'cannonball' || core === 'scummvm') return 'stick';
+  if (core === 'flycast') return 'both';
   return 'dpad';
 }
 
@@ -813,6 +849,8 @@ export function withDirMode(layout: PadLayout, mode: DirMode): PadLayout {
 export function layoutFor(core: CoreId, genesisSixButton: boolean, landscape = false): PadLayout {
   const port = portLayout(core, landscape);
   if (port) return port;
+  if (core === 'flycast') return landscape ? DREAMCAST_LANDSCAPE_LAYOUT : DREAMCAST_LAYOUT;
+  if (core === 'swanstation') return landscape ? PS1_LANDSCAPE_LAYOUT : PS1_LAYOUT;
   if (landscape) {
     switch (core) {
       case 'mupen64':

@@ -1,3 +1,5 @@
+import { getGfxPreset, ps1CoreFor } from './graphics';
+
 export type CoreId =
   | 'mgba'
   | 'genesis'
@@ -20,7 +22,9 @@ export type CoreId =
   | 'cannonball'
   | 'reminiscence'
   | 'easyrpg'
-  | 'scummvm';
+  | 'scummvm'
+  | 'flycast'
+  | 'swanstation';
 
 // Consolas de la biblioteca (carpetas en Documents y pestañas de la UI)
 export type Console =
@@ -37,11 +41,12 @@ export type Console =
   | 'nes'
   | 'gb'
   | 'gbc'
-  | 'ports';
+  | 'ports'
+  | 'dreamcast';
 
 /** Todas las consolas de la biblioteca (para contadores y filtros). */
 export const ALL_CONSOLES: Console[] = [
-  'ps1', 'psp', 'n64', 'nds', 'gba', 'snes', 'nes', 'gb', 'gbc', 'saturn', 'sega', 'fbneo', 'mame', 'ports',
+  'ps1', 'psp', 'n64', 'nds', 'gba', 'snes', 'nes', 'gb', 'gbc', 'saturn', 'sega', 'fbneo', 'mame', 'ports', 'dreamcast',
 ];
 
 // Debe coincidir con los cores que scripts/cores.lock marca como enabled=true.
@@ -69,6 +74,8 @@ export const ENABLED_CORES: ReadonlySet<CoreId> = new Set<CoreId>([
   'reminiscence',
   'easyrpg',
   'scummvm',
+  'flycast',
+  'swanstation',
 ]);
 
 export const SYSTEM_NAME: Record<CoreId, string> = {
@@ -94,6 +101,8 @@ export const SYSTEM_NAME: Record<CoreId, string> = {
   reminiscence: 'Flashback (REminiscence)',
   easyrpg: 'RPG Maker 2000/2003 (EasyRPG)',
   scummvm: 'Aventuras gráficas (ScummVM)',
+  flycast: 'Sega Dreamcast (Flycast)',
+  swanstation: 'PlayStation HD (SwanStation)',
 };
 
 export const CONSOLE_LABEL: Record<Console, string> = {
@@ -111,6 +120,7 @@ export const CONSOLE_LABEL: Record<Console, string> = {
   gb: 'GB',
   gbc: 'GBC',
   ports: 'Ports',
+  dreamcast: 'DC',
 };
 
 // PSP: PPSSPP precompilado para iOS, con render por software (sin JIT: intérprete IR)
@@ -128,10 +138,11 @@ const CORE_OF_CONSOLE: Partial<Record<Console, CoreId>> = {
   nes: 'fceumm',
   gb: 'gambatte',
   gbc: 'gambatte',
+  dreamcast: 'flycast',
 };
 
 /** Núcleo alternativo si el principal no arranca el juego (NDS: melonDS -> DeSmuME). */
-export const FALLBACK_CORE: Partial<Record<CoreId, CoreId>> = { melonds: 'desmume' };
+export const FALLBACK_CORE: Partial<Record<CoreId, CoreId>> = { melonds: 'desmume', swanstation: 'pcsx' };
 
 /** Núcleos que pueden abrir un romset arcade (de arcade/ o fbneo/). */
 export const ARCADE_CORES: CoreId[] = ['fbneo', 'mame'];
@@ -144,6 +155,8 @@ export function isArcadeConsole(consoleId: string): boolean {
 // no de la extensión: un .bin puede ser GBA, Mega Drive, PS1 o Saturn.
 export function coreForConsole(consoleId: string, romPath?: string): CoreId | null {
   if (consoleId === 'ports') return romPath ? portCoreFor(romPath) : null;
+  // PS1: SwanStation (GPU) en calidad HD/Ultra, PCSX ReARMed en Estándar
+  if (consoleId === 'ps1') return ps1CoreFor(getGfxPreset());
   return CORE_OF_CONSOLE[consoleId as Console] ?? null;
 }
 
@@ -184,7 +197,7 @@ export function portTitle(path: string): string | null {
 
 // Carpeta de Documents donde debe ir cada tipo de juego
 export const FOLDER_GUIDE =
-  'Ports (Doom, Quake, Cave Story…) → ports/ · SNES → snes/ · NES → nes/ · Game Boy → gb/ · GB Color → gbc/ · GBA → gba/ · N64 → n64/ · Mega Drive → sega/ · PS1 → ps1/ · Saturn → saturn/ · NDS → nds/ · ' +
+  'Dreamcast → dreamcast/ · Ports (Doom, Quake, Cave Story…) → ports/ · SNES → snes/ · NES → nes/ · Game Boy → gb/ · GB Color → gbc/ · GBA → gba/ · N64 → n64/ · Mega Drive → sega/ · PS1 → ps1/ · Saturn → saturn/ · NDS → nds/ · ' +
   'PSP → psp/ · Arcade y Neo-Geo (.zip) → arcade/ o fbneo/';
 
 /** true si es un .zip fuera de arcade/ y fbneo/ (solo esos son romsets arcade). */
@@ -204,6 +217,7 @@ export const MOVE_TARGETS: { folder: string; label: string }[] = [
   { folder: 'gbc', label: 'Game Boy Color' },
   { folder: 'nds', label: 'Nintendo DS' },
   { folder: 'ports', label: 'Ports (Doom, Quake…)' },
+  { folder: 'dreamcast', label: 'Dreamcast' },
   { folder: 'sega', label: 'Mega Drive' },
   { folder: 'saturn', label: 'Saturn' },
   { folder: 'arcade', label: 'Arcade (MAME)' },

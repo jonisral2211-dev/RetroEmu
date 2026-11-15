@@ -56,6 +56,7 @@ const CONSOLE_CARDS: { id: Console; name: string }[] = [
   { id: 'gbc', name: 'Game Boy Color' },
   { id: 'gb', name: 'Game Boy' },
   { id: 'nes', name: 'NES' },
+  { id: 'dreamcast', name: 'Dreamcast' },
   { id: 'ports', name: 'Ports PC' },
   { id: 'saturn', name: 'Sega Saturn' },
   { id: 'sega', name: 'Mega Drive' },

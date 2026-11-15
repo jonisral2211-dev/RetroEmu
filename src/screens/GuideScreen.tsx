@@ -63,6 +63,7 @@ const CARDS: Card[] = [
       { t: 'Saturn → saturn/   ·   Mega Drive → sega/', code: '.chd  ·  .cue + .bin  ·  .md  ·  .gen' },
       { t: 'Super Nintendo → snes/   ·   NES → nes/', code: '.sfc  ·  .smc  ·  .fig  ·  .nes  ·  .fds  ·  .unf' },
       { t: 'Game Boy → gb/   ·   Game Boy Color → gbc/', code: '.gb  ·  .gbc  ·  .zip' },
+      { t: 'Dreamcast → dreamcast/ (BIOS opcional en system/dc/)', code: '.gdi + pistas  ·  .cdi  ·  .chd' },
       { t: 'Ports PC → ports/ (Cave Story ya viene incluido)', code: '.wad (Doom)  ·  id1/pak0.pak (Quake)  ·  VSWAP.WL6  ·  .zip con el juego' },
       { t: 'Arcade → arcade/ (MAME) o fbneo/ (FBNeo)', code: '.zip (romset sin descomprimir)' },
       'Un .zip o .7z en cualquier carpeta de consola (no arcade) se descomprime solo y desaparece al terminar.',

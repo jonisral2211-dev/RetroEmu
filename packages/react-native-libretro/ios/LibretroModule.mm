@@ -88,7 +88,7 @@ static NSString *documentsDirectory(void) {
 static NSArray<NSString *> *consoleFolders(void) {
   return @[
     @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"snes", @"nes", @"gb", @"gbc",
-    @"ports", @"states"
+    @"ports", @"dreamcast", @"states"
   ];
 }
 
@@ -101,7 +101,7 @@ static NSDictionary<NSString *, NSString *> *unsupportedFolders(void) {
 // Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
 // fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
 static NSArray<NSString *> *unpackFolders(void) {
-  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc", @"ports" ];
+  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc", @"ports", @"dreamcast" ];
 }
 // Descargas comprimidas grandes (o .7z): se descomprimen en segundo plano a la raíz de Documents
 // y desde ahí la auto-organización reparte cada juego en su carpeta
@@ -143,6 +143,20 @@ static void createConsoleFolders(NSString *docs) {
                               error:nil];
   }
   migrateLegacyArcadeFolder(docs);
+  // Packs de texturas HD (calidad HD/Ultra) y BIOS opcional de Dreamcast: rutas que leen los núcleos
+  for (NSString *dir in @[ @"system/dc/textures", @"system/Mupen64plus/hires_texture", @"saves/PSP/TEXTURES", @"system/textures" ]) {
+    [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:dir] withIntermediateDirectories:YES attributes:nil error:nil];
+  }
+  NSString *readme = [docs stringByAppendingPathComponent:@"system/textures/LEEME.txt"];
+  if (![fm fileExistsAtPath:readme]) {
+    NSString *text =
+        @"Packs de texturas HD (activa Calidad grafica HD o Ultra en el menu del juego):\n\n"
+        @"PSP (PPSSPP):        saves/PSP/TEXTURES/<ID del juego, p. ej. UCUS98737>/\n"
+        @"Nintendo 64:         system/Mupen64plus/hires_texture/<nombre interno de la ROM>/\n"
+        @"Dreamcast (Flycast): system/dc/textures/<ID del juego>/\n\n"
+        @"BIOS de Dreamcast (opcional; sin ella se usa la BIOS HLE): system/dc/dc_boot.bin y dc_flash.bin\n";
+    [text writeToFile:readme atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  }
 }
 
 static BOOL isInDocsFolder(NSString *path, NSString *folder) {
@@ -303,6 +317,7 @@ static NSString *consoleForKind(romcheck::Kind kind) {
     case romcheck::Kind::NES: return @"nes";
     case romcheck::Kind::GB: return @"gb";
     case romcheck::Kind::GBC: return @"gbc";
+    case romcheck::Kind::Dreamcast: return @"dreamcast";
     default: return nil;
   }
 }
@@ -339,6 +354,10 @@ static romcheck::Kind chdKind(NSString *path) {
     const uint8_t *e = static_cast<const uint8_t *>(entry.bytes);
     if (memcmp(e, "DVD ", 4) == 0) {
       kind = romcheck::Kind::PSP;
+      break;
+    }
+    if (memcmp(e, "CHGD", 4) == 0 || memcmp(e, "CHGT", 4) == 0) {
+      kind = romcheck::Kind::Dreamcast;
       break;
     }
     if (memcmp(e, "CHT2", 4) == 0 || memcmp(e, "CHTR", 4) == 0 || memcmp(e, "CHCD", 4) == 0) break;
@@ -394,6 +413,39 @@ static NSString *cueReferencedBin(NSString *cuePath) {
 }
 
 // Todos los archivos que referencia un .cue (una línea FILE por pista), como rutas absolutas
+static NSArray<NSString *> *cueReferencedFiles(NSString *cuePath);
+
+// Pistas de una hoja .gdi de Dreamcast: "n lba tipo tamaño archivo offset" (archivo con o sin comillas)
+static NSArray<NSString *> *gdiReferencedFiles(NSString *gdiPath) {
+  NSString *text = [NSString stringWithContentsOfFile:gdiPath encoding:NSUTF8StringEncoding error:nil]
+                       ?: [NSString stringWithContentsOfFile:gdiPath encoding:NSISOLatin1StringEncoding error:nil];
+  NSMutableArray<NSString *> *out = [NSMutableArray array];
+  NSString *dir = gdiPath.stringByDeletingLastPathComponent;
+  for (NSString *raw in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+    NSString *line = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSString *file = nil;
+    const NSRange q = [line rangeOfString:@"\""];
+    if (q.location != NSNotFound) {
+      const NSRange q2 = [line rangeOfString:@"\"" options:0 range:NSMakeRange(q.location + 1, line.length - q.location - 1)];
+      if (q2.location != NSNotFound) file = [line substringWithRange:NSMakeRange(q.location + 1, q2.location - q.location - 1)];
+    } else {
+      NSArray<NSString *> *parts = [line componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      parts = [parts filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+      if (parts.count >= 6) file = parts[4];
+    }
+    if (file.length) [out addObject:[dir stringByAppendingPathComponent:file.lastPathComponent]];
+  }
+  return out;
+}
+
+// Pistas de una hoja (.cue o .gdi)
+static NSArray<NSString *> *sheetTracks(NSString *path) {
+  NSString *ext = path.pathExtension.lowercaseString;
+  if ([ext isEqualToString:@"cue"]) return cueReferencedFiles(path);
+  if ([ext isEqualToString:@"gdi"]) return gdiReferencedFiles(path);
+  return @[];
+}
+
 static NSArray<NSString *> *cueReferencedFiles(NSString *cuePath) {
   NSString *text = [NSString stringWithContentsOfFile:cuePath encoding:NSUTF8StringEncoding error:nil];
   if (!text) text = [NSString stringWithContentsOfFile:cuePath encoding:NSISOLatin1StringEncoding error:nil];
@@ -554,7 +606,7 @@ static NSString *folderForExtension(NSString *ext) {
     map = @{
       @"gba" : @"gba", @"agb" : @"gba", @"n64" : @"n64", @"z64" : @"n64", @"v64" : @"n64", @"nds" : @"nds",
       @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"sms" : @"sega", @"gg" : @"sega", @"sg" : @"sega",
-      @"cso" : @"psp", @"wad" : @"ports", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
+      @"cso" : @"psp", @"wad" : @"ports", @"gdi" : @"dreamcast", @"cdi" : @"dreamcast", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
       @"fds" : @"nes", @"unf" : @"nes", @"unif" : @"nes", @"gb" : @"gb", @"dmg" : @"gb", @"sgb" : @"gb", @"gbc" : @"gbc",
     };
   });
@@ -590,6 +642,7 @@ static NSString *classifyFile(NSString *full, NSString *currentFolder) {
   }
   if ([ext isEqualToString:@"chd"]) {
     if (chdKind(full) == romcheck::Kind::PSP) return @"psp";
+    if (chdKind(full) == romcheck::Kind::Dreamcast) return @"dreamcast";
     // CD: PS1, Saturn o Mega-CD; se respeta la carpeta si ya es una de ellas
     return [@[ @"ps1", @"saturn", @"sega" ] containsObject:currentFolder] ? currentFolder : @"ps1";
   }
@@ -607,7 +660,7 @@ static NSString *folderLabel(NSString *folder) {
       @"psp" : @"PSP", @"ps1" : @"PlayStation", @"n64" : @"Nintendo 64", @"gba" : @"Game Boy Advance",
       @"nds" : @"Nintendo DS", @"sega" : @"Sega", @"saturn" : @"Saturn", @"arcade" : @"Arcade",
       @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy",
-      @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo", @"ports" : @"Ports",
+      @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo", @"ports" : @"Ports", @"dreamcast" : @"Dreamcast",
     };
   });
   return labels[folder] ?: folder;
@@ -630,9 +683,7 @@ static NSArray<NSDictionary *> *scanMisplaced(NSString *docs) {
       NSString *full = [dir stringByAppendingPathComponent:name];
       BOOL isDir = NO;
       if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
-      if ([name.pathExtension.lowercaseString isEqualToString:@"cue"]) {
-        for (NSString *t in cueReferencedFiles(full)) [tracks addObject:t];
-      }
+      for (NSString *t in sheetTracks(full)) [tracks addObject:t];
     }
   }
   for (NSString *dirName in scan) {
@@ -732,7 +783,10 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
       continue;
     }
     if ([ext isEqualToString:@"chd"]) {
-      NSString *dir = sniffFile(full) == romcheck::Kind::PSP ? [docs stringByAppendingPathComponent:@"psp"] : ps1;
+      const romcheck::Kind chd = sniffFile(full);
+      NSString *dir = chd == romcheck::Kind::PSP         ? [docs stringByAppendingPathComponent:@"psp"]
+                      : chd == romcheck::Kind::Dreamcast ? [docs stringByAppendingPathComponent:@"dreamcast"]
+                                                         : ps1;
       moveIfFree(full, [dir stringByAppendingPathComponent:name]);
       continue;
     }
@@ -909,6 +963,8 @@ RCT_EXPORT_MODULE(Libretro)
     @"reminiscence" : @"reminiscence_libretro",
     @"easyrpg" : @"easyrpg_libretro",
     @"scummvm" : @"scummvm_libretro",
+    @"flycast" : @"flycast_libretro",
+    @"swanstation" : @"swanstation_libretro",
   };
   NSString *name = frameworks[coreId];
   if (!name) return @NO;
@@ -963,7 +1019,8 @@ RCT_EXPORT_MODULE(Libretro)
     _romError = [NSString stringWithFormat:@"Sin permiso de lectura para: %@", path];
     return @NO;
   }
-  if (([_coreId isEqualToString:@"pcsx"] || [_coreId isEqualToString:@"yabause"]) &&
+  if (([_coreId isEqualToString:@"pcsx"] || [_coreId isEqualToString:@"swanstation"] ||
+       [_coreId isEqualToString:@"yabause"]) &&
       sniffFile(path) == romcheck::Kind::PSP) {
     _romError = [NSString stringWithFormat:@"\"%@\" es un juego de PSP, no de PlayStation 1. Se ha movido "
                                            @"a la carpeta psp/ (pulsa Actualizar en la biblioteca).",
@@ -1188,7 +1245,7 @@ RCT_EXPORT_MODULE(Libretro)
     }
     NSString *destDir = [docs stringByAppendingPathComponent:to];
     [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSArray<NSString *> *tracks = [path.pathExtension.lowercaseString isEqualToString:@"cue"] ? cueReferencedFiles(path) : @[];
+    NSArray<NSString *> *tracks = sheetTracks(path);
     if (moveIfFree(path, [destDir stringByAppendingPathComponent:path.lastPathComponent])) {
       ++moved;
       for (NSString *t in tracks) moveIfFree(t, [destDir stringByAppendingPathComponent:t.lastPathComponent]);
@@ -1604,6 +1661,7 @@ RCT_EXPORT_MODULE(Libretro)
   if ([ext isEqualToString:@"chd"]) {
     const romcheck::Kind kind = sniffFile(path);
     if (kind == romcheck::Kind::PSP) return @"psp";
+    if (kind == romcheck::Kind::Dreamcast) return @"dreamcast";
     if (kind != romcheck::Kind::PS1) return @"";
     if (isInDocsFolder(path, @"sega")) return @"sega";  // Mega-CD
     return isInDocsFolder(path, @"saturn") ? @"saturn" : @"ps1";

@@ -29,6 +29,7 @@ const SYSTEM_DIR: Record<string, string> = {
   nes: 'Nintendo - Nintendo Entertainment System',
   gb: 'Nintendo - Game Boy',
   gbc: 'Nintendo - Game Boy Color',
+  dreamcast: 'Sega - Dreamcast',
   // Ports: un "sistema" de libretro-thumbnails por motor (ver portThumbConsole)
   'ports-prboom': 'DOOM',
   'ports-tyrquake': 'Quake',

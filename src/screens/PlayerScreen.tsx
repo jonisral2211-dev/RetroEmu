@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   LayoutChangeEvent,
   Pressable,
   ScrollView,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getGfxPreset, gfxOptions, GFX_CORES, GfxPreset, saveGfxPreset } from '../emulator/graphics';
 import { Libretro, LibretroView } from 'react-native-libretro';
 import {
   CoreId,
@@ -71,11 +73,15 @@ type Props = {
   onExit: () => void;
   /** Volver a abrir el juego con otro núcleo (arcade: FBNeo <-> MAME). */
   onRetryWithCore?: (core: CoreId) => void;
+  /** Vuelve a abrir el juego (p. ej. tras cambiar la calidad gráfica). */
+  onRestart?: () => void;
 };
 
 // Ranuras de guardado. Un mismo juego abierto con otro núcleo (FBNeo vs MAME, DeSmuME vs
 // melonDS) usa ranuras propias: sus estados no son compatibles entre núcleos.
 function slotsFor(core: CoreId | null): { save: number; auto: number } {
+  // SwanStation y PCSX abren los mismos juegos pero sus estados no son compatibles
+  if (core === 'swanstation') return { save: 2, auto: 97 };
   const alt = core === 'fbneo' || core === 'desmume';
   return alt ? { save: 1, auto: 98 } : { save: 0, auto: 99 };
 }
@@ -90,7 +96,7 @@ const WEB_PAD_TYPE: Record<CoreId, string> = {
   mgba: 'gba', genesis: 'arcade', mupen64: 'n64', mame: 'arcade', pcsx: 'ps', melonds: 'snes', desmume: 'snes',
   yabause: 'arcade', fbneo: 'arcade', ppsspp: 'ps', snes9x: 'snes', fceumm: 'nes', gambatte: 'nes',
   prboom: 'fps', ecwolf: 'fps', tyrquake: 'fps', vitaquake2: 'fps', nxengine: 'snes', cannonball: 'arcade',
-  reminiscence: 'snes', easyrpg: 'nes', scummvm: 'nes',
+  reminiscence: 'snes', easyrpg: 'nes', scummvm: 'nes', flycast: 'ps', swanstation: 'ps',
 };
 
 export type NdsScreen = 'both' | 'swap' | 'top' | 'bottom';
@@ -164,7 +170,7 @@ function gameTitle(path: string): string {
   return base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || base;
 }
 
-export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore }: Props) {
+export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore, onRestart }: Props) {
   // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
   const baseCore = useMemo(
     () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath), romPath),
@@ -428,8 +434,12 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     const errors: string[] = [];
     // Arcade: la carpeta del romset (arcade/ o fbneo/) es el system directory de MAME y FBNeo
     Libretro.prepareContent(romPath);
+    // Calidad gráfica: GPU (HD/Ultra) o software (Estándar) y opciones del núcleo, antes de cargar
+    const preset = getGfxPreset();
+    Libretro.setCoreOption('jl_hw_render', preset === 'std' ? 'disabled' : 'enabled');
     for (const candidate of [baseCore, FALLBACK_CORE[baseCore]]) {
       if (!candidate) continue;
+      gfxOptions(candidate, preset).forEach(([k, v]) => Libretro.setCoreOption(k, v));
       if (!Libretro.loadCore(candidate)) {
         errors.push(Libretro.lastError() || `No se pudo cargar el núcleo "${candidate}"`);
         continue;
@@ -466,6 +476,22 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     // En la TV las dos pantallas van apiladas (como la consola)
     if (ready && isNdsCore(core)) setNdsLayout(landscape && !tvConnected, ndsScreen);
   }, [ready, core, landscape, tvConnected, ndsScreen]);
+
+  // Calidad gráfica: cambia de renderizador (software/GPU) y a veces de núcleo -> reabrir el juego
+  const [gfxPreset, setGfxPreset] = useState<GfxPreset>(getGfxPreset());
+  const chooseGfx = (p: GfxPreset) => {
+    if (p === gfxPreset) return;
+    setGfxPreset(p);
+    saveGfxPreset(p);
+    Alert.alert(
+      'Calidad gráfica',
+      'Se aplica al volver a abrir el juego (cambia el renderizador). La partida se guarda automáticamente antes.',
+      [
+        { text: 'Más tarde', style: 'cancel' },
+        { text: 'Reiniciar ahora', onPress: () => onRestart?.() },
+      ],
+    );
+  };
 
   // Game Boy: paleta clásica elegida (recordada en el dispositivo)
   const [gbPalette, setGbPalette] = useState<GbPalette>('auto');
@@ -791,6 +817,25 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       onTvOrient={setTvOrient}
       webPadType={WEB_PAD_TYPE[core ?? 'mame']}
       extras={[
+        ...(GFX_CORES.has(core)
+          ? [
+              {
+                label: 'Calidad gráfica (resolución interna 3D)',
+                value: gfxPreset,
+                onChange: (v: string) => chooseGfx(v as GfxPreset),
+                options: [
+                  { id: 'std', label: 'Estándar 1x' },
+                  { id: 'hd', label: 'Alta 2x HD' },
+                  { id: 'ultra', label: 'Ultra Full HD' },
+                ],
+                note:
+                  'Estándar: render por software (máxima batería y compatibilidad). Alta y Ultra usan la GPU: ' +
+                  'PSP 960×544 / 1920×1088, PS1 con SwanStation 3x / 4x (necesita BIOS de PS1; si no, PCSX 2x), ' +
+                  'N64 con GLideN64 1280×960 / 1920×1440 y Dreamcast 1280×960 / 1920×1440. Ultra añade PGXP, ' +
+                  'panorámico 16:9 y filtrado anisotrópico. Packs de texturas HD: ver system/textures/LEEME.txt.',
+              },
+            ]
+          : []),
         ...(isNdsCore(core)
           ? [
               {

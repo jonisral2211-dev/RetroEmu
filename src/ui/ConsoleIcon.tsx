@@ -16,7 +16,8 @@ export type IconKind =
   | 'nes'
   | 'gb'
   | 'gbc'
-  | 'ports';
+  | 'ports'
+  | 'dreamcast';
 
 // Siluetas vectoriales minimalistas (trazo fino, viewBox 24x24)
 export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?: number; color: string }) {
@@ -147,6 +148,12 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Circle cx={14.4} cy={16.6} r={0.85} fill={color} />
           <Circle cx={16.4} cy={15.2} r={0.85} fill={color} />
           {kind === 'gbc' ? <Path d="M9 8.3h6" {...stroke} /> : null}
+        </>
+      ) : null}
+      {kind === 'dreamcast' ? (
+        // Espiral de Dreamcast
+        <>
+          <Path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5c0-3.2-2.6-5.6-5.7-5.6-2.8 0-5 2.2-5 4.9 0 2.3 1.8 4 4 4 1.8 0 3.2-1.4 3.2-3.1" {...stroke} />
         </>
       ) : null}
       {kind === 'ports' ? (

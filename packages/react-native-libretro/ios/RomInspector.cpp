@@ -90,7 +90,7 @@ bool isRomExtension(const std::string &ext) {
          ext == "cue" || ext == "chd" || ext == "nds" || ext == "cso" || ext == "pbp" ||
          ext == "sms" || ext == "gg" || ext == "sg" || ext == "sfc" || ext == "smc" || ext == "fig" ||
          ext == "swc" || ext == "nes" || ext == "fds" || ext == "unf" || ext == "unif" || ext == "gb" ||
-         ext == "gbc" || ext == "dmg" || ext == "sgb";
+         ext == "gbc" || ext == "dmg" || ext == "sgb" || ext == "gdi" || ext == "cdi";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
@@ -122,6 +122,10 @@ Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
     // Sin logo (hacks, homebrew): se respeta la extensión
     if (size >= 0x4000) return ext == "gbc" ? Kind::GBC : Kind::GB;
   }
+  // Dreamcast (Flycast): hoja .gdi (texto: número de pistas y una línea por pista) e imagen
+  // DiscJuggler .cdi (sin firma al principio: basta la extensión y un tamaño de disco)
+  if (ext == "gdi" && size >= 4 && data[0] >= '1' && data[0] <= '9') return Kind::Dreamcast;
+  if (ext == "cdi" && size >= 0x8000) return Kind::Dreamcast;
   // Mega-CD / Sega CD (necesita la BIOS bios_CD_U.bin / _E / _J en system/)
   if ((ext == "iso" || ext == "bin") && isSegaCd(data, size)) return Kind::Sega;
   if ((ext == "iso" || ext == "bin") && isPs1(data, size)) return Kind::PS1;

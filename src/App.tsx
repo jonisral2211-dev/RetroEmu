@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
@@ -7,6 +7,7 @@ import BrowserScreen from './screens/BrowserScreen';
 import GuideScreen from './screens/GuideScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import type { CoreId } from './emulator/cores';
+import { loadGfxPreset } from './emulator/graphics';
 import { addRecent } from './library/recents';
 import PlayerScreen from './screens/PlayerScreen';
 
@@ -14,7 +15,11 @@ type Tab = 'library' | 'web' | 'guide';
 
 export default function App() {
   // Juego en curso: ruta y, en arcade, el núcleo elegido (FBNeo o MAME)
-  const [game, setGame] = useState<{ path: string; core?: CoreId } | null>(null);
+  const [game, setGame] = useState<{ path: string; core?: CoreId; run?: number } | null>(null);
+  // Calidad gráfica guardada: se lee al arrancar (el reproductor la consulta al abrir un juego)
+  useEffect(() => {
+    loadGfxPreset();
+  }, []);
   const romPath = game?.path ?? null;
   const [tab, setTab] = useState<Tab>('library');
 
@@ -31,11 +36,12 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
         {game ? (
           <PlayerScreen
-            key={`${game.path}:${game.core ?? ''}`}
+            key={`${game.path}:${game.core ?? ''}:${game.run ?? 0}`}
             romPath={game.path}
             coreOverride={game.core}
             onExit={() => setGame(null)}
             onRetryWithCore={(core) => setGame({ path: game.path, core })}
+            onRestart={() => setGame({ path: game.path, run: (game.run ?? 0) + 1 })}
           />
         ) : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>

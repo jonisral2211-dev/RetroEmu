@@ -1,6 +1,6 @@
 import { Btn } from '../emulator/buttons';
 import type { CoreId } from '../emulator/cores';
-import { circle, PadLayout, portLayout, rect, Zone } from './layouts';
+import { circle, DREAMCAST_LANDSCAPE_LAYOUT, DREAMCAST_LAYOUT, PadLayout, portLayout, rect, Zone } from './layouts';
 
 // Modo TV sin mandos físicos: el iPhone entero es el mando (no se ve el juego en el teléfono).
 // Diseños a pantalla completa en horizontal, con la disposición y colores de cada consola.
@@ -381,6 +381,10 @@ const GB_V = twoButtonV('Game Boy', '#84CC16', '#9d174d');
 export function tvPadFor(core: CoreId, portrait = false): TvPad {
   const port = portLayout(core, !portrait);
   if (port) return { title: port.name.replace(/ \(horizontal\)$/, ''), accent: '#F59E0B', layout: port };
+  if (core === 'flycast') {
+    return { title: 'Dreamcast', accent: '#F97316', layout: portrait ? DREAMCAST_LAYOUT : DREAMCAST_LANDSCAPE_LAYOUT };
+  }
+  if (core === 'swanstation') return portrait ? playStationV('PlayStation') : playStation('PlayStation');
   if (portrait) {
     switch (core) {
       case 'pcsx':

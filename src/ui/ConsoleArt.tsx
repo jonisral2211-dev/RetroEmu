@@ -30,7 +30,8 @@ export type ArtKind =
   | 'nes'
   | 'gb'
   | 'gbc'
-  | 'ports';
+  | 'ports'
+  | 'dreamcast';
 
 export const ART_GLOW: Record<ArtKind, string> = {
   ps1: '#3B82F6',
@@ -47,6 +48,7 @@ export const ART_GLOW: Record<ArtKind, string> = {
   gb: '#84CC16',
   gbc: '#EAB308',
   ports: '#F59E0B',
+  dreamcast: '#F97316',
 };
 
 /** Halo de neón y sombra de contacto comunes. */
@@ -608,6 +610,42 @@ function GameBoy({ color }: { color: boolean }) {
   );
 }
 
+// ---- Dreamcast: consola blanca con tapa redonda, espiral naranja y mando con VMU ---------
+function Dreamcast() {
+  return (
+    <>
+      <Stage id="dc" color={ART_GLOW.dreamcast} />
+      <Defs>
+        <LinearGradient id="dc-body" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#F8FAFC" />
+          <Stop offset="1" stopColor="#CBD5E1" />
+        </LinearGradient>
+        <RadialGradient id="dc-lid" cx="45%" cy="40%" rx="60%" ry="60%">
+          <Stop offset="0" stopColor="#FFFFFF" />
+          <Stop offset="1" stopColor="#D6DBE3" />
+        </RadialGradient>
+      </Defs>
+      <Path d="M14 50 L30 36 L112 36 L104 50 Z" fill="url(#dc-body)" />
+      <Path d="M14 50 L104 50 L104 74 L14 74 Z" fill="#B8C1CE" />
+      <Path d="M104 50 L112 36 L112 62 L104 74 Z" fill="#9AA5B4" />
+      <Ellipse cx="64" cy="43" rx="30" ry="6" fill="url(#dc-lid)" stroke="#94A3B8" strokeWidth="0.5" />
+      <Path d="M58 41 a5 3 0 1 0 9 1.6 c0 -1.6 -1.6 -2.6 -3.4 -2.6 -1.4 0 -2.6 0.9 -2.6 2" stroke="#F97316" strokeWidth="1.3" fill="none" />
+      <Circle cx="24" cy="66" r="2" fill="#F97316" />
+      <Rect x="34" y="64" width="22" height="4" rx="2" fill="#94A3B8" />
+      <G transform="translate(102 66)">
+        <Path d="M6 4 Q4 2 10 2 L40 2 Q46 2 44 4 L46 22 Q46 30 38 28 L30 20 L20 20 L12 28 Q4 30 4 22 Z" fill="url(#dc-body)" stroke="#94A3B8" strokeWidth="0.6" />
+        <Rect x="18" y="4" width="14" height="10" rx="1.5" fill="#334155" />
+        <Rect x="20" y="6" width="10" height="6" rx="0.8" fill="#86EFAC" />
+        <Circle cx="12" cy="11" r="3.2" fill="#94A3B8" />
+        <Circle cx="38" cy="9" r="1.6" fill="#22C55E" />
+        <Circle cx="41" cy="12" r="1.6" fill="#3B82F6" />
+        <Circle cx="35" cy="12" r="1.6" fill="#FACC15" />
+        <Circle cx="38" cy="15" r="1.6" fill="#EF4444" />
+      </G>
+    </>
+  );
+}
+
 // ---- Ports: PC clásico (monitor CRT con un pasillo 3D y mira) y teclado -------------------
 function Ports() {
   return (
@@ -657,6 +695,7 @@ export function ConsoleArt({ kind, width, height }: { kind: ArtKind; width: numb
       {kind === 'gb' ? <GameBoy color={false} /> : null}
       {kind === 'gbc' ? <GameBoy color /> : null}
       {kind === 'ports' ? <Ports /> : null}
+      {kind === 'dreamcast' ? <Dreamcast /> : null}
     </Svg>
   );
 }
