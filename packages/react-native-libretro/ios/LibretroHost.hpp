@@ -57,6 +57,11 @@ void webPadKick(int port);
 void webPadReserve(int mask);
 /** IPv4 de la Wi-Fi (o de la primera interfaz activa). */
 std::string localAddress();
+/** Ruta del juego que se va a cargar (arcade: su carpeta hace de system directory). Antes de loadCore. */
+void setContentPath(const char *romPath);
+/** Ritmo nativo del núcleo y ritmo medido del bucle de emulación (frames por segundo). */
+double targetFps();
+double measuredFps();
 void reset();
 
 bool saveState(int slot);

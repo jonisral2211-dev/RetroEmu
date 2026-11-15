@@ -31,6 +31,16 @@ bool isSmd(const uint8_t *d, size_t n) {
 }
 
 // Nintendo DS: el mismo logo de Nintendo que GBA, pero en 0xC0 de la cabecera
+// Mega-CD / Sega CD: "SEGADISCSYSTEM" al inicio del sector 0 (.iso/.bin 2048) o tras los 16 bytes
+// de sincronía y cabecera de un .bin crudo (2352)
+bool isSegaCd(const uint8_t *d, size_t n) {
+  static const char kTag[] = "SEGADISCSYSTEM";
+  for (size_t off : {size_t(0), size_t(0x10)}) {
+    if (n >= off + 14 && std::memcmp(d + off, kTag, 14) == 0) return true;
+  }
+  return false;
+}
+
 bool isNds(const uint8_t *d, size_t n) {
   return n >= 0xC8 && std::memcmp(d + 0xC0, kGbaLogoStart, 8) == 0;
 }
@@ -61,7 +71,8 @@ bool isPs1(const uint8_t *d, size_t n) {
 bool isRomExtension(const std::string &ext) {
   return ext == "gba" || ext == "agb" || ext == "bin" || ext == "z64" || ext == "n64" ||
          ext == "v64" || ext == "md" || ext == "gen" || ext == "smd" || ext == "iso" ||
-         ext == "cue" || ext == "chd" || ext == "nds" || ext == "cso" || ext == "pbp";
+         ext == "cue" || ext == "chd" || ext == "nds" || ext == "cso" || ext == "pbp" ||
+         ext == "sms" || ext == "gg" || ext == "sg";
 }
 
 Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
@@ -76,6 +87,11 @@ Kind sniff(const std::string &ext, const uint8_t *data, size_t size) {
   if ((ext == "z64" || ext == "n64" || ext == "v64") && isN64(data, size)) return Kind::N64;
   if ((ext == "md" || ext == "gen" || ext == "bin") && isMegaDrive(data, size)) return Kind::Sega;
   if (ext == "smd" && (isSmd(data, size) || isMegaDrive(data, size))) return Kind::Sega;
+  // Master System, Game Gear y SG-1000 (Genesis Plus GX): muchas ROMs japonesas no llevan la
+  // cabecera "TMR SEGA", así que basta la extensión
+  if (ext == "sms" || ext == "gg" || ext == "sg") return Kind::Sega;
+  // Mega-CD / Sega CD (necesita la BIOS bios_CD_U.bin / _E / _J en system/)
+  if ((ext == "iso" || ext == "bin") && isSegaCd(data, size)) return Kind::Sega;
   if ((ext == "iso" || ext == "bin") && isPs1(data, size)) return Kind::PS1;
   // CHD (MAME Compressed Hunks of Data): el único núcleo que los abre aquí es PCSX ReARMed
   if (ext == "chd" && size >= 8 && std::memcmp(data, "MComprHD", 8) == 0) return Kind::PS1;

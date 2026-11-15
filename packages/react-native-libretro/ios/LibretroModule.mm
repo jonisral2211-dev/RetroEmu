@@ -31,6 +31,11 @@ static NSArray<NSString *> *consoleFolders(void) {
   return @[ @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"states" ];
 }
 
+// Consolas que aún no tienen núcleo en la app: el organizador las aparta en su carpeta
+static NSDictionary<NSString *, NSString *> *unsupportedFolders(void) {
+  return @{@"gb" : @"gb", @"gbc" : @"gbc", @"nes" : @"nes", @"fds" : @"nes", @"sfc" : @"snes", @"smc" : @"snes"};
+}
+
 // Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
 // fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
 static NSArray<NSString *> *unpackFolders(void) {
@@ -402,6 +407,119 @@ static void relocateFromArcade(NSString *docs) {
       if (console) moveIfFree(full, [[docs stringByAppendingPathComponent:console] stringByAppendingPathComponent:name]);
     }
   }
+}
+
+// ---- Organizador (Biblioteca → "Organizar archivos") ---------------------------------------
+// Carpeta de destino de un archivo según extensión, contenido del .zip y cabecera; nil = no se sabe
+static NSString *folderForExtension(NSString *ext) {
+  static NSDictionary<NSString *, NSString *> *map;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    map = @{
+      @"gba" : @"gba", @"agb" : @"gba", @"n64" : @"n64", @"z64" : @"n64", @"v64" : @"n64", @"nds" : @"nds",
+      @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"sms" : @"sega", @"gg" : @"sega", @"sg" : @"sega",
+      @"cso" : @"psp",
+    };
+  });
+  return map[ext] ?: unsupportedFolders()[ext];
+}
+
+static NSString *classifyFile(NSString *full, NSString *currentFolder) {
+  NSString *name = full.lastPathComponent;
+  NSString *ext = name.pathExtension.lowercaseString;
+  if ([ext isEqualToString:@"zip"]) {
+    if (isNeoGeoBios(full)) return @"arcade";
+    // Contenido del zip (solo el índice): ROM de consola -> su carpeta (allí se descomprime sola)
+    BOOL disc = NO, cueBin = NO;
+    for (const std::string &entry : unpack::listZipEntries(full.UTF8String)) {
+      NSString *e = [NSString stringWithUTF8String:entry.c_str()].pathExtension.lowercaseString;
+      NSString *folder = folderForExtension(e);
+      if (folder) return folder;
+      if ([@[ @"iso", @"pbp" ] containsObject:e]) disc = YES;
+      if ([@[ @"cue", @"bin", @"chd", @"img" ] containsObject:e]) cueBin = YES;
+    }
+    if (disc) return @"psp";   // ISO/PBP dentro de un zip: lo habitual es PSP
+    if (cueBin) return @"ps1";
+    // Romset arcade (nombres cortos de driver con .rom/.bin/etc. dentro)
+    return [@[ @"arcade", @"fbneo" ] containsObject:currentFolder] ? currentFolder : @"arcade";
+  }
+  if ([ext isEqualToString:@"7z"]) return @".inbox";  // se descomprime y se reparte solo
+  if ([ext isEqualToString:@"cue"]) {
+    NSString *bin = cueReferencedBin(full);
+    NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
+    return console ?: @"ps1";
+  }
+  if ([ext isEqualToString:@"chd"]) {
+    if (chdKind(full) == romcheck::Kind::PSP) return @"psp";
+    // CD: PS1, Saturn o Mega-CD; se respeta la carpeta si ya es una de ellas
+    return [@[ @"ps1", @"saturn", @"sega" ] containsObject:currentFolder] ? currentFolder : @"ps1";
+  }
+  // Cabecera (magic bytes): .bin/.iso pueden ser Mega Drive, Mega-CD, Saturn, PS1 o PSP
+  NSString *byContent = romcheck::isRomExtension(ext.UTF8String) ? consoleForKind(sniffFile(full)) : nil;
+  if (byContent) return byContent;
+  return folderForExtension(ext);
+}
+
+static NSString *folderLabel(NSString *folder) {
+  static NSDictionary<NSString *, NSString *> *labels;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    labels = @{
+      @"psp" : @"PSP", @"ps1" : @"PlayStation", @"n64" : @"Nintendo 64", @"gba" : @"Game Boy Advance",
+      @"nds" : @"Nintendo DS", @"sega" : @"Sega", @"saturn" : @"Saturn", @"arcade" : @"Arcade",
+      @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy (sin núcleo)",
+      @"gbc" : @"Game Boy Color (sin núcleo)", @"nes" : @"NES (sin núcleo)", @"snes" : @"Super Nintendo (sin núcleo)",
+    };
+  });
+  return labels[folder] ?: folder;
+}
+
+// Archivos que están fuera de su carpeta: raíz de Documents, Download(s)/Inbox y carpetas de
+// consola equivocadas. Devuelve [{path, name, from, to, label, unsupported}].
+static NSArray<NSDictionary *> *scanMisplaced(NSString *docs) {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+  NSArray<NSString *> *scan = [@[ @"", @"Download", @"Downloads", @"Descargas", @"Inbox" ]
+      arrayByAddingObjectsFromArray:@[ @"psp", @"ps1", @"n64", @"gba", @"nds", @"sega", @"saturn", @"arcade", @"fbneo" ]];
+  NSMutableSet<NSString *> *tracks = [NSMutableSet set];
+  for (NSString *dirName in scan) {
+    NSString *dir = dirName.length ? [docs stringByAppendingPathComponent:dirName] : docs;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+      if ([name hasPrefix:@"."]) continue;
+      NSString *full = [dir stringByAppendingPathComponent:name];
+      BOOL isDir = NO;
+      if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
+      if ([name.pathExtension.lowercaseString isEqualToString:@"cue"]) {
+        for (NSString *t in cueReferencedFiles(full)) [tracks addObject:t];
+      }
+    }
+  }
+  for (NSString *dirName in scan) {
+    NSString *dir = dirName.length ? [docs stringByAppendingPathComponent:dirName] : docs;
+    const BOOL consoleDir = [unpackFolders() containsObject:dirName] || [@[ @"arcade", @"fbneo" ] containsObject:dirName];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+      if ([name hasPrefix:@"."]) continue;
+      NSString *full = [dir stringByAppendingPathComponent:name];
+      BOOL isDir = NO;
+      if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
+      if ([tracks containsObject:full]) continue;  // las pistas viajan con su .cue
+      NSString *ext = name.pathExtension.lowercaseString;
+      // En una carpeta de consola, los .zip/.7z ya se descomprimen solos
+      if (consoleDir && [unpackFolders() containsObject:dirName] && ([ext isEqualToString:@"zip"] || [ext isEqualToString:@"7z"])) continue;
+      NSString *to = classifyFile(full, dirName);
+      if (!to || [to isEqualToString:dirName]) continue;
+      if ([to isEqualToString:@"arcade"] && [dirName isEqualToString:@"fbneo"]) continue;
+      [out addObject:@{
+        @"path" : full,
+        @"name" : name,
+        @"from" : dirName.length ? dirName : @"(raíz)",
+        @"to" : to,
+        @"label" : folderLabel(to),
+        @"unsupported" : @(unsupportedFolders()[ext] != nil),
+      }];
+    }
+  }
+  return out;
 }
 
 // Auto-organización de la raíz de Documents (al arrancar y al pulsar Actualizar):
@@ -865,6 +983,44 @@ RCT_EXPORT_MODULE(Libretro)
   return [NSString stringWithUTF8String:host::webPadStatus().c_str()];
 }
 
+// ---- Organizador de archivos ----------------------------------------------------------------
+- (NSString *)scanFiles {
+  NSData *json = [NSJSONSerialization dataWithJSONObject:scanMisplaced(documentsDirectory()) options:0 error:nil];
+  return json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"[]";
+}
+
+// Mueve los archivos indicados (JSON [{path, to}]) a Documents/<to>/; un .cue arrastra sus pistas.
+// Devuelve JSON {moved, failed}.
+- (NSString *)organizeFiles:(NSString *)movesJson {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *docs = documentsDirectory();
+  NSArray *moves = [NSJSONSerialization JSONObjectWithData:[movesJson dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  int moved = 0, failed = 0;
+  for (NSDictionary *m in [moves isKindOfClass:NSArray.class] ? moves : @[]) {
+    NSString *path = m[@"path"], *to = m[@"to"];
+    if (![path isKindOfClass:NSString.class] || ![to isKindOfClass:NSString.class] || [to containsString:@".."]) continue;
+    if (![path hasPrefix:docs] || ![fm fileExistsAtPath:path]) {
+      ++failed;
+      continue;
+    }
+    NSString *destDir = [docs stringByAppendingPathComponent:to];
+    [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSArray<NSString *> *tracks = [path.pathExtension.lowercaseString isEqualToString:@"cue"] ? cueReferencedFiles(path) : @[];
+    if (moveIfFree(path, [destDir stringByAppendingPathComponent:path.lastPathComponent])) {
+      ++moved;
+      for (NSString *t in tracks) moveIfFree(t, [destDir stringByAppendingPathComponent:t.lastPathComponent]);
+    } else {
+      ++failed;
+    }
+  }
+  return [NSString stringWithFormat:@"{\"moved\":%d,\"failed\":%d}", moved, failed];
+}
+
+// Ruta del juego antes de cargar el núcleo (arcade: su carpeta es el system directory)
+- (void)prepareContent:(NSString *)romPath {
+  host::setContentPath(normalizeRomPath(romPath).UTF8String);
+}
+
 - (void)copyToClipboard:(NSString *)text {
   dispatch_async(dispatch_get_main_queue(), ^{
     UIPasteboard.generalPasteboard.string = text;
@@ -1225,6 +1381,7 @@ RCT_EXPORT_MODULE(Libretro)
     const romcheck::Kind kind = sniffFile(path);
     if (kind == romcheck::Kind::PSP) return @"psp";
     if (kind != romcheck::Kind::PS1) return @"";
+    if (isInDocsFolder(path, @"sega")) return @"sega";  // Mega-CD
     return isInDocsFolder(path, @"saturn") ? @"saturn" : @"ps1";
   }
   return consoleForKind(sniffFile(path)) ?: @"";

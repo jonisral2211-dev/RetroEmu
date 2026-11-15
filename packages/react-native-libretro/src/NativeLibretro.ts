@@ -59,6 +59,12 @@ export interface Spec extends TurboModule {
   webPadReserve(mask: number): void;
   /** "fase|código|mensaje|asientos" (0 apagado, 1 conectando, 2 esperando, 3 alguien conectado; bit p = puerto p). */
   webPadStatus(): string;
+  /** Organizador: archivos fuera de su carpeta, JSON [{path, name, from, to, label, unsupported}]. */
+  scanFiles(): string;
+  /** Mueve los archivos (JSON [{path, to}]) a su carpeta; devuelve JSON {moved, failed}. */
+  organizeFiles(movesJson: string): string;
+  /** Ruta del juego antes de loadCore (arcade: su carpeta hace de system directory). */
+  prepareContent(romPath: string): void;
   /** Copia texto al portapapeles del iPhone. */
   copyToClipboard(text: string): void;
   netStop(): void;

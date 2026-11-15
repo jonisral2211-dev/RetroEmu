@@ -198,7 +198,13 @@ retro_audio_buffer_status_callback_t g_audioStatus = nullptr;
 
 enum retro_pixel_format g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 double g_sampleRate = 32768.0;
-double g_fps = 60.0;
+std::atomic<double> g_fps{60.0};
+// Ritmo real medido (frames emulados por segundo) para el diagnóstico de velocidad
+std::atomic<double> g_measuredFps{0.0};
+// Arcade (MAME 2003-Plus / FBNeo): su "system directory" es la carpeta del romset (arcade/ o
+// fbneo/), donde están neogeo.zip y los romsets padre. Se fija antes de cargar el núcleo.
+std::string g_contentDir;
+bool g_arcadeCore = false;
 std::string g_systemDir;
 std::string g_saveDir;
 std::string g_stateDir;  // Documents/states (save states); antes iban en saves/
@@ -368,7 +374,8 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     }
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
-      *static_cast<const char **>(data) = g_systemDir.c_str();
+      *static_cast<const char **>(data) =
+          g_arcadeCore && !g_contentDir.empty() ? g_contentDir.c_str() : g_systemDir.c_str();
       return true;
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
       *static_cast<const char **>(data) = g_saveDir.c_str();
@@ -381,7 +388,14 @@ static bool onEnvironment(unsigned cmd, void *data) {
       if (data) updateAspect(*static_cast<const struct retro_game_geometry *>(data));
       return true;
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
-      if (data) updateAspect(static_cast<const struct retro_system_av_info *>(data)->geometry);
+      if (data) {
+        // El núcleo puede cambiar de ritmo tras cargar (región PAL/NTSC, modo de vídeo): si no se
+        // sigue, el juego y el audio van más rápidos o más lentos de lo real
+        const auto *av = static_cast<const struct retro_system_av_info *>(data);
+        updateAspect(av->geometry);
+        if (av->timing.fps >= 10.0 && av->timing.fps <= 250.0) g_fps = av->timing.fps;
+        if (av->timing.sample_rate >= 8000.0 && av->timing.sample_rate <= 192000.0) g_sampleRate = av->timing.sample_rate;
+      }
       return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
       auto *var = static_cast<struct retro_variable *>(data);
@@ -1066,12 +1080,17 @@ void netStepLocked() {
   ++g_ns.frame;
 }
 
+// Bucle de emulación a la velocidad exacta del núcleo (retro_get_system_av_info, p. ej. 59.94,
+// 60 o 50 Hz), independiente de la pantalla (60/120 Hz ProMotion): cada frame tiene su hora
+// objetivo y se espera hasta ella; nunca se ejecutan frames de más para "recuperar".
 void runLoop() {
   using clock = std::chrono::steady_clock;
-  const auto period =
-      std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / g_fps));
   auto next = clock::now();
+  auto statsStart = next;
+  int statsFrames = 0;
   while (g_running) {
+    const double fps = g_fps.load();
+    const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
     if (!g_paused) {
       std::lock_guard<std::mutex> lock(g_coreMutex);
       if (g_gameLoaded) {
@@ -1083,6 +1102,12 @@ void runLoop() {
     }
     next += period;
     const auto now = clock::now();
+    if (!g_paused) ++statsFrames;
+    if (now - statsStart >= std::chrono::seconds(2)) {
+      g_measuredFps = statsFrames / std::chrono::duration<double>(now - statsStart).count();
+      statsFrames = 0;
+      statsStart = now;
+    }
     if (next > now) {
       std::this_thread::sleep_until(next);
     } else if (now - next > std::chrono::milliseconds(100)) {
@@ -1114,6 +1139,8 @@ bool loadCore(const char *frameworkBinaryPath) {
   }
 
   g_isN64 = std::strstr(frameworkBinaryPath, "mupen64") != nullptr;
+  g_arcadeCore = std::strstr(frameworkBinaryPath, "mame2003") != nullptr ||
+                 std::strstr(frameworkBinaryPath, "fbneo") != nullptr;
   // Formato por defecto de Libretro: un core que no llame a SET_PIXEL_FORMAT no debe heredar
   // el del core anterior (colores/columnas corruptas)
   g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
@@ -1230,8 +1257,10 @@ bool loadGame(const char *romPath) {
 
   retro_system_av_info av{};
   g_core.getSystemAvInfo(&av);
-  g_sampleRate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32768.0;
-  g_fps = av.timing.fps > 0 ? av.timing.fps : 60.0;
+  g_sampleRate =
+      av.timing.sample_rate >= 8000.0 && av.timing.sample_rate <= 192000.0 ? av.timing.sample_rate : 32768.0;
+  // Ritmo nativo del núcleo (59.94 / 60 / 50 Hz…); valores absurdos -> 60
+  g_fps = av.timing.fps >= 10.0 && av.timing.fps <= 250.0 ? av.timing.fps : 60.0;
   updateAspect(av.geometry);
 
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
@@ -1650,6 +1679,15 @@ FrameBuffer &frame() { return g_frame; }
 
 float aspectRatio() { return g_aspect.load(std::memory_order_relaxed); }
 
+void setContentPath(const char *romPath) {
+  const std::string p = romPath ? romPath : "";
+  const auto slash = p.find_last_of('/');
+  g_contentDir = slash == std::string::npos ? std::string() : p.substr(0, slash);
+}
+
+double targetFps() { return g_fps.load(); }
+double measuredFps() { return g_measuredFps.load(); }
+
 void setOption(const char *key, const char *value) {
   if (!key || !value) return;
   {
@@ -1674,10 +1712,12 @@ std::string debugState() {
                 "UI pulsado (ult. 0.5s) btn=%04x\n"
                 "core pidió (ult. 0.5s) btn=%04x lecturas=%u\n"
                 "stick devuelto x=%d y=%d\n"
+                "velocidad %.2f fps (objetivo %.2f)\n"
                 "frame %ux%u pitch=%u (esperado %u)\n"
                 "color col0=#%06x col1=#%06x centro=#%06x",
                 g_buttons.load(), g_padButtons.load(), g_axisX.load(), g_axisY.load(), uiHits, hits,
-                reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_dbgFrameW.load(), g_dbgFrameH.load(),
+                reads, g_dbgAxisX.load(), g_dbgAxisY.load(), g_measuredFps.load(), g_fps.load(),
+                g_dbgFrameW.load(), g_dbgFrameH.load(),
                 g_dbgFramePitch.load(), g_dbgFrameW.load() * g_dbgFrameBpp.load(), g_dbgCol0.load(),
                 g_dbgCol1.load(), g_dbgColMid.load());
   return buf;

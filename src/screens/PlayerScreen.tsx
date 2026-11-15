@@ -385,6 +385,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     if (isNdsCore(baseCore)) setNdsLayout(landscapeRef.current);
     let started: CoreId | null = null;
     const errors: string[] = [];
+    // Arcade: la carpeta del romset (arcade/ o fbneo/) es el system directory de MAME y FBNeo
+    Libretro.prepareContent(romPath);
     for (const candidate of [baseCore, FALLBACK_CORE[baseCore]]) {
       if (!candidate) continue;
       if (!Libretro.loadCore(candidate)) {

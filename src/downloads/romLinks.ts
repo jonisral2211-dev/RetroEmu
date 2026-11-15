@@ -18,6 +18,8 @@ export const ROM_EXTENSIONS = [
   '.nds',
   '.cso',
   '.pbp',
+  '.sms',
+  '.gg',
 ];
 
 export function hasRomExtension(name: string): boolean {

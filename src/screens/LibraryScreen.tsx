@@ -38,6 +38,7 @@ import { theme } from '../theme';
 import { ART_GLOW, ArtKind, ConsoleArt } from '../ui/ConsoleArt';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
 import { JLBadge } from '../ui/JLBadge';
+import OrganizerScreen from './OrganizerScreen';
 
 type Props = { onPlay: (romPath: string, core?: CoreId) => void };
 type Entry = { path: string; console: string };
@@ -308,6 +309,7 @@ export default function LibraryScreen({ onPlay }: Props) {
   // Consola abierta (vista dedicada) o null = pantalla principal (consolas + recientes)
   const [view, setView] = useState<Console | null>(null);
   const [query, setQuery] = useState('');
+  const [organizerOpen, setOrganizerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
   const [unpacking, setUnpacking] = useState<string[] | null>(null);
@@ -461,6 +463,17 @@ export default function LibraryScreen({ onPlay }: Props) {
         </View>
       ) : null}
 
+      <Pressable
+        onPress={() => setOrganizerOpen(true)}
+        style={({ pressed }) => [styles.organize, pressed && styles.pressed]}>
+        <Svg width={18} height={18} viewBox="0 0 24 24">
+          <Path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke={theme.amber} strokeWidth={1.8} fill="none" />
+          <Path d="M9 13h6M13 10.5l2.5 2.5L13 15.5" stroke={theme.amber} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+        <Text style={styles.organizeText}>Organizar archivos</Text>
+        <Text style={styles.organizeHint}>mueve cada juego a su consola</Text>
+      </Pressable>
+
       <SectionTitle title="Consolas" />
       <View style={styles.consoleGrid}>
         {CONSOLE_CARDS.map((c) => (
@@ -494,6 +507,11 @@ export default function LibraryScreen({ onPlay }: Props) {
     return (
       <View style={styles.root}>
         <ScrollView contentContainerStyle={styles.home}>{header}</ScrollView>
+        {organizerOpen ? (
+          <View style={StyleSheet.absoluteFill}>
+            <OrganizerScreen onClose={() => setOrganizerOpen(false)} onDone={() => refresh(true)} />
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -869,6 +887,20 @@ const styles = StyleSheet.create({
   recentRow: { gap: 12, paddingRight: SIDE },
   recentEmpty: { color: theme.textDim, fontSize: 13, paddingVertical: 8 },
   home: { paddingHorizontal: SIDE, paddingBottom: 28 },
+  organize: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.45)',
+    backgroundColor: theme.amberDim,
+  },
+  organizeText: { color: theme.amber, fontWeight: '800', fontSize: 14 },
+  organizeHint: { flex: 1, color: theme.textDim, fontSize: 12, textAlign: 'right' },
   viewTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 },
   back: {
     paddingHorizontal: 14,
