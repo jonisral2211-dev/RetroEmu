@@ -24,7 +24,7 @@ Pod::Spec.new do |s|
     'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/ios/include" "$(PODS_TARGET_SRCROOT)/ios/rcheevos/include" "$(PODS_TARGET_SRCROOT)/ios/rcheevos/src"',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     # LZMA SDK (ios/lzma): descompresión de .7z, con PPMd y sin código de compresión
-    'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) Z7_PPMD_SUPPORT=1 Z7_EXTRACT_ONLY=1',
+    'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) Z7_PPMD_SUPPORT=1 Z7_EXTRACT_ONLY=1 RC_DISABLE_LUA=1',
   }
 
   install_modules_dependencies(s)
