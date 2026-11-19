@@ -9,3 +9,7 @@ third_party/
 # Generados por scripts/build-cores-ios.sh y scripts/fetch-libretro-header.sh
 packages/react-native-libretro/ios/Frameworks/
 packages/react-native-libretro/ios/include/libretro.h
+
+# Registros locales de la auto-firma (Sideloadly / Programador de tareas)
+*.log
+artifact-tmp/
