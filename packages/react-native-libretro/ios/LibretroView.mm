@@ -35,6 +35,7 @@ using namespace facebook::react;
   const auto &newProps = static_cast<const LibretroViewProps &>(*props);
   _render.linearFilter = newProps.filter ? YES : NO;
   _render.stretch = newProps.stretch ? YES : NO;
+  _render.region = newProps.region;
   [super updateProps:props oldProps:oldProps];
 }
 

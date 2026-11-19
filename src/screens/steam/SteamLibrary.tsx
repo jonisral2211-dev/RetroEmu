@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Libretro } from 'react-native-libretro';
+import { useExperience } from '../../ui/experiencePrefs';
 import {
   ActivityIndicator,
   Alert,
@@ -80,6 +82,14 @@ function useClock(): string {
 }
 
 export default function SteamLibrary({ onPlay, active }: { onPlay: PlayFn; active: boolean }) {
+  // Música ambiental: solo con la biblioteca visible (nunca durante una partida)
+  const experience = useExperience();
+  useEffect(() => {
+    Libretro.ambientVolume(experience.musicVolume);
+    Libretro.ambientMusic(active && experience.music);
+  }, [active, experience.music, experience.musicVolume]);
+  useEffect(() => () => Libretro.ambientMusic(false), []);
+
   const { entries, error, unpacking, refresh } = useLibrary();
   const { width, height } = useWindowDimensions();
   const pad = useGamepadStatus();

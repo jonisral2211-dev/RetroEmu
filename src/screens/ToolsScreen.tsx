@@ -5,6 +5,7 @@ import { folderInfo } from '../library/folderSync';
 import { setUiMode, subscribeUiMode, UiMode } from '../library/uiMode';
 import { theme } from '../theme';
 import { setUiSoundsEnabled, uiSoundsEnabled } from '../ui/uiSounds';
+import { CloudSection, ExperienceSection, RetroAchievementsSection } from './SettingsExtras';
 
 // ---- Subir por Wi-Fi ---------------------------------------------------------------------------
 type WifiStatus = {
@@ -185,6 +186,10 @@ export function SettingsScreen({
             trackColor={{ true: theme.amber }}
           />
         </View>
+
+        <ExperienceSection />
+        <RetroAchievementsSection />
+        <CloudSection />
 
         <Text style={styles.section}>TRANSFERIR JUEGOS</Text>
         {onFolderScan ? (

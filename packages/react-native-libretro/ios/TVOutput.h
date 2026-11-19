@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 /** Opciones de imagen en la TV y si hay partida (sin partida se muestra la portada JL). */
 - (void)setStretch:(BOOL)stretch smooth:(BOOL)smooth playing:(BOOL)playing;
 
+/** Parte del frame en la TV: 0 completo, 1 mitad superior (DS: pantalla de arriba), 2 inferior. */
+- (void)setRegion:(NSInteger)region;
+
 /** Abre el selector nativo de AirPlay (AVRoutePickerView). */
 - (void)showRoutePicker;
 

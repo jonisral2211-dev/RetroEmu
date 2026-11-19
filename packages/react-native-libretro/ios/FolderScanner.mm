@@ -19,19 +19,21 @@ static NSString *const kFolderNameKey = @"jl.scanFolder.name.v1";
 // Archivos ya importados (ruta relativa + tamaño): no se vuelven a copiar en cada sincronización
 static NSString *const kManifestName = @"system/.jl-folder-imports.json";
 
-static NSURL *resolveLinkedFolder(void) {
-  NSData *data = [NSUserDefaults.standardUserDefaults dataForKey:kBookmarkKey];
+static NSURL *resolveBookmarkKey(NSString *key) {
+  NSData *data = [NSUserDefaults.standardUserDefaults dataForKey:key];
   if (!data) return nil;
   BOOL stale = NO;
   NSError *error = nil;
   NSURL *url = [NSURL URLByResolvingBookmarkData:data options:0 relativeToURL:nil bookmarkDataIsStale:&stale error:&error];
   if (url && stale && [url startAccessingSecurityScopedResource]) {
     NSData *fresh = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
-    if (fresh) [NSUserDefaults.standardUserDefaults setObject:fresh forKey:kBookmarkKey];
+    if (fresh) [NSUserDefaults.standardUserDefaults setObject:fresh forKey:key];
     [url stopAccessingSecurityScopedResource];
   }
   return url;
 }
+
+static NSURL *resolveLinkedFolder(void) { return resolveBookmarkKey(kBookmarkKey); }
 
 @interface JLFolderPickerDelegate : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic, copy) void (^done)(NSURL *_Nullable url);
@@ -529,6 +531,16 @@ static BOOL copyCoordinated(NSURL *src, NSString *dest, NSString **error) {
 @implementation JLFolderScanner
 
 + (void)pickFolderWithCompletion:(void (^)(NSString *_Nullable, NSString *_Nullable))completion {
+  [self pickFolderStoringBookmark:kBookmarkKey name:kFolderNameKey completion:completion];
+}
+
++ (nullable NSURL *)resolveBookmark:(NSString *)bookmarkKey {
+  return resolveBookmarkKey(bookmarkKey);
+}
+
++ (void)pickFolderStoringBookmark:(NSString *)bookmarkKey
+                             name:(NSString *)nameKey
+                       completion:(void (^)(NSString *_Nullable, NSString *_Nullable))completion {
   dispatch_async(dispatch_get_main_queue(), ^{
     UIViewController *top = scannerTopViewController();
     if (!top) {
@@ -551,8 +563,8 @@ static BOOL copyCoordinated(NSURL *src, NSString *dest, NSString **error) {
         completion(nil, error.localizedDescription ?: @"iOS no permitió guardar el acceso a esa carpeta");
         return;
       }
-      [NSUserDefaults.standardUserDefaults setObject:bookmark forKey:kBookmarkKey];
-      [NSUserDefaults.standardUserDefaults setObject:url.lastPathComponent forKey:kFolderNameKey];
+      [NSUserDefaults.standardUserDefaults setObject:bookmark forKey:bookmarkKey];
+      [NSUserDefaults.standardUserDefaults setObject:url.lastPathComponent forKey:nameKey];
       completion(url.lastPathComponent, nil);
     };
     g_folderPicker = handler;

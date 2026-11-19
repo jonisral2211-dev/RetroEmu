@@ -139,6 +139,48 @@ export interface Spec extends TurboModule {
   swapPlayers(): void;
   /** Vibración háptica breve (0..1 = intensidad). */
   haptic(strength: number): void;
+  /** Taptic Engine: 'click' (A/B/X/Y), 'trigger' (L/R), 'dpad', 'soft', 'success'. */
+  hapticKind(kind: string): void;
+  /** Vibración Rumble del núcleo en el iPhone cuando el mando no vibra (y DualShock en PS1). */
+  setPhoneRumble(enabled: boolean): void;
+  /** Avance rápido: 1 = normal, 2-8 = veces más rápido (sin audio en los frames extra). */
+  setFastForward(speed: number): void;
+  fastForward(): number;
+  /** Discos del juego (multidisco .m3u/.pbp): JSON {count, index, labels}. */
+  diskInfo(): string;
+  /** Cambia de disco (abre la bandeja, cambia y la cierra). */
+  diskSet(index: number): boolean;
+  /** Parte del frame en la TV: 0 completo, 1 mitad superior (DS: pantalla de arriba), 2 inferior. */
+  setTVRegion(region: number): void;
+  /** Hash RetroAchievements del juego ('!' + motivo si falla). consoleId = id de consola de RA. */
+  raHash(romPath: string, consoleId: number): Promise<string>;
+  /** Activa los logros [{id, memaddr}] del juego en curso. */
+  raActivate(json: string, consoleId: number): boolean;
+  raReset(): void;
+  /** Eventos desde la última consulta: JSON [{id, type: 'unlock'|'progress', value, target}]. */
+  raPoll(): string;
+  /** Carpeta de iCloud Drive para las partidas: abre el selector; resuelve su nombre ('' = cancelado). */
+  cloudPickFolder(): Promise<string>;
+  /** JSON {linked, name, available, lastSync}. */
+  cloudInfo(): string;
+  cloudUnlink(): void;
+  /** Sincroniza las partidas de un juego ('' = todas): 'push' | 'pull' | 'both'. JSON {ok, pushed, pulled, pending, error}. */
+  cloudSync(romPath: string, direction: string): Promise<string>;
+  /** Live Activity de la partida (Dynamic Island / pantalla de bloqueo). */
+  liveActivityAvailable(): boolean;
+  /** JSON {title, console, coverPath, accent, startedAt}. */
+  liveActivityStart(json: string): void;
+  /** JSON {paused, lastSave, startedAt}. */
+  liveActivityUpdate(json: string): void;
+  liveActivityEnd(): void;
+  /** Giroscopio para el paralaje de las carátulas. */
+  motionStart(): void;
+  motionStop(): void;
+  /** "x|y" en [-1, 1]. */
+  motionTilt(): string;
+  /** Música ambiental de la interfaz: suena si se quiere y no hay otro audio. */
+  ambientMusic(wanted: boolean): void;
+  ambientVolume(volume: number): void;
   /** Diagnóstico de entrada: lo que escribe la UI y lo que pidió el core (se reinicia al leer). */
   debugState(): string;
   /** true si hay un DualSense (PS5) conectado ahora mismo. */

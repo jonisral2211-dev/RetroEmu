@@ -12,6 +12,14 @@ NS_ASSUME_NONNULL_BEGIN
 /** Abre el selector de carpetas; completion(nombre) o (nil, error). nil, nil = cancelado. */
 + (void)pickFolderWithCompletion:(void (^)(NSString *_Nullable name, NSString *_Nullable error))completion;
 
+/** Selector de carpetas genérico: guarda el bookmark y el nombre en NSUserDefaults con esas claves. */
++ (void)pickFolderStoringBookmark:(NSString *)bookmarkKey
+                             name:(NSString *)nameKey
+                       completion:(void (^)(NSString *_Nullable name, NSString *_Nullable error))completion;
+
+/** URL de un bookmark guardado (renovado si estaba caducado); nil si no hay. */
++ (nullable NSURL *)resolveBookmark:(NSString *)bookmarkKey;
+
 /** JSON {linked, name, available}. */
 + (NSString *)linkedInfo;
 + (void)unlink;

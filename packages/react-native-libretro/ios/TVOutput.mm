@@ -13,6 +13,7 @@
   BOOL _stretch;
   BOOL _smooth;
   BOOL _playing;
+  NSInteger _region;
   // Copia del estado para leerla desde el hilo de JS sin tocar UIKit
   NSDictionary *_status;
   AVRoutePickerView *_picker;
@@ -133,6 +134,7 @@ static NSDictionary *audioRouteInfo(void) {
   _render.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
   _render.stretch = _stretch;
   _render.linearFilter = _smooth;
+  _render.region = _region;
   [vc.view addSubview:_render];
 
   // Portada mientras no hay partida: monograma dorado
@@ -164,6 +166,13 @@ static NSDictionary *audioRouteInfo(void) {
   window.rootViewController = vc;
   window.hidden = NO;
   _window = window;
+}
+
+- (void)setRegion:(NSInteger)region {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    self->_region = region;
+    self->_render.region = region;
+  });
 }
 
 - (void)setStretch:(BOOL)stretch smooth:(BOOL)smooth playing:(BOOL)playing {

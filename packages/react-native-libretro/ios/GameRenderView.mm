@@ -210,6 +210,7 @@ static uint32_t g_color = 0;
   NSUInteger _ringIndex;
   id<MTLTexture> _texture;  // la última subida, la que se dibuja
   uint32_t _uploadedVersion;
+  NSInteger _uploadedRegion;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -300,25 +301,31 @@ static uint32_t g_color = 0;
   {
     std::lock_guard<std::mutex> lock(frame.mutex);
     // bytesPerRow = stride real del buffer BGRA8 (width*4), comprobado contra el tamaño
-    if (frame.width > 0 && frame.version != _uploadedVersion &&
+    // Región: 0 = frame completo; 1/2 = mitad superior/inferior (DS: pantalla de arriba en la TV
+    // y pantalla táctil en el iPhone)
+    const NSInteger region = self.region;
+    if (frame.width > 0 && (frame.version != _uploadedVersion || region != _uploadedRegion) &&
         frame.stride == size_t(frame.width) * 4 &&
-        frame.pixels.size() >= frame.stride * frame.height) {
+        frame.pixels.size() >= frame.stride * frame.height && (region == 0 || frame.height >= 2)) {
+      const unsigned rows = region ? frame.height / 2 : frame.height;
+      const uint8_t *src = frame.pixels.data() + (region == 2 ? frame.stride * (frame.height - rows) : 0);
       _ringIndex = (_ringIndex + 1) % kTextureRing;
       id<MTLTexture> tex = _textures[_ringIndex];
-      if (!tex || tex.width != frame.width || tex.height != frame.height) {
+      if (!tex || tex.width != frame.width || tex.height != rows) {
         MTLTextureDescriptor *d =
             [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                                width:frame.width
-                                                              height:frame.height
+                                                              height:rows
                                                            mipmapped:NO];
         d.usage = MTLTextureUsageShaderRead;
         tex = [_device newTextureWithDescriptor:d];
         _textures[_ringIndex] = tex;
       }
-      MTLRegion region = MTLRegionMake2D(0, 0, frame.width, frame.height);
-      [tex replaceRegion:region mipmapLevel:0 withBytes:frame.pixels.data() bytesPerRow:frame.stride];
+      MTLRegion area = MTLRegionMake2D(0, 0, frame.width, rows);
+      [tex replaceRegion:area mipmapLevel:0 withBytes:src bytesPerRow:frame.stride];
       _texture = tex;
       _uploadedVersion = frame.version;
+      _uploadedRegion = region;
     }
   }
 
@@ -334,6 +341,7 @@ static uint32_t g_color = 0;
   const double tw = _texture.width;
   const double th = _texture.height;
   double aspect = host::aspectRatio();
+  if (aspect > 0.0 && _uploadedRegion != 0) aspect *= 2.0;  // media imagen: el doble de ancha
   if (!(aspect > 0.0)) aspect = tw / th;
   double vw = drawSize.width, vh = drawSize.height;
   if (!self.stretch) {

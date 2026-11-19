@@ -80,6 +80,19 @@ std::mutex g_coreMutex;  // serializa retro_run() frente a save/load/reset/unloa
 std::thread g_thread;
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_paused{false};
+// Avance rápido: retro_run extra por periodo (1 = normal); los frames extra van sin audio
+std::atomic<int> g_speed{1};
+std::atomic<bool> g_ffSilent{false};
+// Gancho por frame (logros): se llama con g_coreMutex tomado justo después de cada retro_run
+void (*g_frameHook)() = nullptr;
+// Mapa de memoria que declara el núcleo (RETRO_ENVIRONMENT_SET_MEMORY_MAPS), copiado
+std::vector<retro_memory_descriptor> g_memDescs;
+retro_memory_map g_memMap{};
+bool g_hasMemMap = false;
+// Control de discos (multidisco con .m3u / .pbp): interfaz básica o extendida del núcleo
+retro_disk_control_ext_callback g_disk{};
+bool g_hasDisk = false;
+bool g_hasDiskExt = false;
 // ---- Render por GPU (OpenGL ES) ------------------------------------------------------------
 // Solo para núcleos que lo necesitan (Flycast, vitaQuake II) o cuando el usuario elige calidad
 // HD/Ultra (PPSSPP, SwanStation, Mupen64 con GLideN64). En Estándar se sigue usando el render
@@ -109,6 +122,9 @@ retro_proc_address_t hwProcAddress(const char *sym) {
 
 // Tipo de mando "Modern" del core (0 = ninguno) y zona táctil de mirar (stick derecho)
 unsigned g_modernDevice = 0;
+// Mando con vibración que declara el núcleo (DualShock en PS1) y si el usuario quiere vibración
+unsigned g_rumbleDevice = 0;
+std::atomic<bool> g_wantRumble{true};
 std::atomic<int16_t> g_lookX{0};
 std::atomic<int16_t> g_lookY{0};
 std::atomic<uint16_t> g_buttons{0};
@@ -430,8 +446,13 @@ static bool onEnvironment(unsigned cmd, void *data) {
       // Ports (PrBoom, TyrQuake): su tipo de mando "Modern" usa doble stick (mover + mirar) y
       // gatillos para disparar, como un shooter moderno. Se elige al cargar el juego.
       g_modernDevice = 0;
+      g_rumbleDevice = 0;
       const auto *info = static_cast<const struct retro_controller_info *>(data);
       if (info && info[0].types) {
+        for (unsigned i = 0; i < info[0].num_types; ++i) {
+          const char *d = info[0].types[i].desc;
+          if (d && !g_rumbleDevice && strcasestr(d, "dualshock")) g_rumbleDevice = info[0].types[i].id;
+        }
         for (unsigned i = 0; i < info[0].num_types; ++i) {
           const char *desc = info[0].types[i].desc;
           if (desc && std::strstr(desc, "Modern")) {
@@ -539,6 +560,29 @@ static bool onEnvironment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_SHUTDOWN:
       g_running = false;
       return true;
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+      const auto *map = static_cast<const retro_memory_map *>(data);
+      g_memDescs.clear();
+      if (map && map->descriptors) g_memDescs.assign(map->descriptors, map->descriptors + map->num_descriptors);
+      g_memMap.descriptors = g_memDescs.data();
+      g_memMap.num_descriptors = unsigned(g_memDescs.size());
+      g_hasMemMap = !g_memDescs.empty();
+      return true;
+    }
+    case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+      *static_cast<unsigned *>(data) = 1;
+      return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
+      g_disk = retro_disk_control_ext_callback{};
+      std::memcpy(&g_disk, data, sizeof(retro_disk_control_callback));
+      g_hasDisk = true;
+      g_hasDiskExt = false;
+      return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
+      g_disk = *static_cast<const retro_disk_control_ext_callback *>(data);
+      g_hasDisk = true;
+      g_hasDiskExt = true;
+      return true;
     default:
       return false;
   }
@@ -634,7 +678,7 @@ static void onVideo(const void *data, unsigned width, unsigned height, size_t pi
 }
 
 static size_t onAudioBatch(const int16_t *data, size_t frames) {
-  if (g_replaying.load(std::memory_order_relaxed)) return frames;
+  if (g_replaying.load(std::memory_order_relaxed) || g_ffSilent.load(std::memory_order_relaxed)) return frames;
   g_audio.push(data, frames, g_sampleRate);
   return frames;
 }
@@ -642,7 +686,7 @@ static size_t onAudioBatch(const int16_t *data, size_t frames) {
 // Cores que envían el audio muestra a muestra: se agrupan en bloques para el remuestreador
 static std::vector<int16_t> g_sampleBuf;
 static void onAudioSample(int16_t left, int16_t right) {
-  if (g_replaying.load(std::memory_order_relaxed)) return;
+  if (g_replaying.load(std::memory_order_relaxed) || g_ffSilent.load(std::memory_order_relaxed)) return;
   g_sampleBuf.push_back(left);
   g_sampleBuf.push_back(right);
   if (g_sampleBuf.size() >= 512 * 2) {
@@ -772,6 +816,10 @@ void unloadGameLocked() {
   g_romData.clear();
   g_romData.shrink_to_fit();
   g_aspect.store(0.0f, std::memory_order_relaxed);
+  g_memDescs.clear();
+  g_memMap = retro_memory_map{};
+  g_hasMemMap = false;
+  g_speed = 1;
 }
 
 // ---- Netplay ----------------------------------------------------------------------------------
@@ -1283,6 +1331,17 @@ void runLoop() {
           g_rewindHold = 0;
         }
         g_core.run();
+        if (g_frameHook) g_frameHook();
+        // Avance rápido (sin netplay): frames extra en el mismo periodo, sin sonido
+        const int extra = g_netActive ? 0 : std::clamp(g_speed.load(), 1, 8) - 1;
+        if (extra > 0) {
+          g_ffSilent = true;
+          for (int k = 0; k < extra && g_running; ++k) {
+            g_core.run();
+            if (g_frameHook) g_frameHook();
+          }
+          g_ffSilent = false;
+        }
         rewindCaptureLocked();
       }
     }
@@ -1345,6 +1404,10 @@ bool loadCore(const char *frameworkBinaryPath) {
     const auto slash = fw.find_last_of('/');
     g_coreFile = slash == std::string::npos ? fw : fw.substr(slash + 1);
   }
+  // El núcleo nuevo registra (o no) su propio control de discos en retro_set_environment
+  g_disk = retro_disk_control_ext_callback{};
+  g_hasDisk = false;
+  g_hasDiskExt = false;
   void *handle = dlopen(frameworkBinaryPath, RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
     g_lastError = std::string("No se pudo cargar el núcleo: ") + dlerror();
@@ -1387,6 +1450,7 @@ bool loadCore(const char *frameworkBinaryPath) {
 
   // El orden importa: el entorno se registra antes de init()
   g_modernDevice = 0;
+  g_rumbleDevice = 0;
   c.setEnvironment(onEnvironment);
   c.setVideoRefresh(onVideo);
   c.setAudioSampleBatch(onAudioBatch);
@@ -1468,6 +1532,8 @@ bool loadGame(const char *romPath) {
   // N64: el puerto se declara como RETRO_DEVICE_ANALOG para que Mupen lea el stick
   g_core.setControllerPortDevice(0, g_isN64 ? RETRO_DEVICE_ANALOG : RETRO_DEVICE_JOYPAD);
   if (g_modernDevice) g_core.setControllerPortDevice(0, g_modernDevice);
+  // PS1: DualShock en el puerto 1 para que el juego pueda vibrar (Rumble real)
+  else if (g_rumbleDevice && g_wantRumble) g_core.setControllerPortDevice(0, g_rumbleDevice);
   rewindResetLocked();
   restoreSram();
   return true;
@@ -1869,6 +1935,61 @@ void reset() {
   if (g_gameLoaded) g_core.reset();
 }
 
+void setSpeed(int speed) { g_speed = std::clamp(speed, 1, 8); }
+int speed() { return g_speed.load(); }
+
+void setFrameHook(void (*hook)()) {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  g_frameHook = hook;
+}
+
+uint8_t *memoryData(unsigned id) {
+  return g_gameLoaded && g_core.getMemoryData ? static_cast<uint8_t *>(g_core.getMemoryData(id)) : nullptr;
+}
+size_t memorySize(unsigned id) { return g_gameLoaded && g_core.getMemorySize ? g_core.getMemorySize(id) : 0; }
+const retro_memory_map *memoryMap() { return g_hasMemMap ? &g_memMap : nullptr; }
+
+static std::string jsonEscape(const std::string &s) {
+  std::string out;
+  for (char c : s) {
+    if (c == '"' || c == '\\') out += '\\';
+    if (static_cast<unsigned char>(c) < 0x20) continue;
+    out += c;
+  }
+  return out;
+}
+
+std::string diskInfo() {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (!g_gameLoaded || !g_hasDisk || !g_disk.get_num_images || !g_disk.get_image_index) {
+    return "{\"count\":0,\"index\":0,\"labels\":[]}";
+  }
+  const unsigned count = g_disk.get_num_images();
+  const unsigned index = g_disk.get_image_index();
+  std::string labels;
+  for (unsigned i = 0; i < count; ++i) {
+    char buf[256] = {0};
+    std::string label;
+    if (g_hasDiskExt && g_disk.get_image_label && g_disk.get_image_label(i, buf, sizeof(buf)) && buf[0]) label = buf;
+    if (label.empty()) label = "Disco " + std::to_string(i + 1);
+    labels += (i ? ",\"" : "\"") + jsonEscape(label) + "\"";
+  }
+  return "{\"count\":" + std::to_string(count) + ",\"index\":" + std::to_string(index) + ",\"labels\":[" + labels + "]}";
+}
+
+bool diskSet(int index) {
+  std::lock_guard<std::mutex> lock(g_coreMutex);
+  if (!g_gameLoaded || !g_hasDisk || !g_disk.set_eject_state || !g_disk.set_image_index || !g_disk.get_num_images) {
+    return false;
+  }
+  if (index < 0 || unsigned(index) >= g_disk.get_num_images()) return false;
+  // Abrir la bandeja, cambiar de disco y cerrarla (como en la consola)
+  g_disk.set_eject_state(true);
+  const bool ok = g_disk.set_image_index(unsigned(index));
+  g_disk.set_eject_state(false);
+  return ok;
+}
+
 bool saveState(int slot) {
   std::lock_guard<std::mutex> lock(g_coreMutex);
   if (!g_gameLoaded) return false;
@@ -1933,6 +2054,10 @@ void setOption(const char *key, const char *value) {
   // Pseudo-opción: permitir render por GPU (calidad HD/Ultra). Se fija antes de loadGame.
   if (std::strcmp(key, "jl_hw_render") == 0) {
     g_hwAllowed = std::strcmp(value, "enabled") == 0;
+    return;
+  }
+  if (std::strcmp(key, "jl_rumble") == 0) {
+    g_wantRumble = std::strcmp(value, "enabled") == 0;
     return;
   }
   if (std::strcmp(key, "jl_port1_device") == 0) {

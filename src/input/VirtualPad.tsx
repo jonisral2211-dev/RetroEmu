@@ -15,6 +15,7 @@ import { buildPad } from './buildPad';
 import { evaluateZones, Pt, Tuning } from './evaluate';
 import type { Cluster, PadLayout, Zone } from './layouts';
 import type { Feel, PadPrefs } from './padPrefs';
+import { DEFAULT_SKIN, PadSkin } from './skins';
 
 type Size = { w: number; h: number };
 /** Rectángulo de la imagen del juego en px relativos al pad (para el puntero táctil). */
@@ -28,6 +29,19 @@ type Drag = { id: string; touchId: string | number; x0: number; y0: number; dx: 
 let padDebugText = '';
 export function getPadDebug(): string {
   return padDebugText;
+}
+
+const TRIGGER_BITS = Btn.L | Btn.R | Btn.L2 | Btn.R2;
+const DPAD_BITS = Btn.UP | Btn.DOWN | Btn.LEFT | Btn.RIGHT;
+
+// Taptic Engine según lo que se pulsó: gatillo (resistencia suave), cruceta o clic seco
+function hapticFor(newBits: number) {
+  const kind = newBits & TRIGGER_BITS ? 'trigger' : (newBits & ~DPAD_BITS) !== 0 ? 'click' : 'dpad';
+  try {
+    Libretro.hapticKind(kind);
+  } catch {
+    Libretro.haptic(kind === 'click' ? 0.7 : 0.4);
+  }
 }
 
 const isAnalog = (c: Cluster) => c.zones[0]?.kind === 'stick' || c.zones[0]?.kind === 'dpad';
@@ -68,6 +82,7 @@ export function VirtualPad({
   pointerRect,
   pointerBottom = false,
   trackpadLabel,
+  skin = DEFAULT_SKIN,
 }: {
   /** Layout por grupos (consola + modo direccional); aquí se divide en botones sueltos. */
   layout: PadLayout;
@@ -87,6 +102,8 @@ export function VirtualPad({
   pointerBottom?: boolean;
   /** Dibuja el rectángulo del puntero como trackpad con este texto. */
   trackpadLabel?: string;
+  /** Aspecto de los controles según la consola (forma, colores, relieve). */
+  skin?: PadSkin;
 }) {
   const stickEdge = useRef(false);
   const pointerDown = useRef(false);
@@ -217,7 +234,7 @@ export function VirtualPad({
 
     if (bits !== mask.current) {
       // Vibración solo al pulsar un botón nuevo (no al soltar ni al mantener)
-      if (hapticsRef.current && (bits & ~mask.current) !== 0) Libretro.haptic(0.5);
+      if (hapticsRef.current && (bits & ~mask.current) !== 0) hapticFor(bits & ~mask.current);
       mask.current = bits;
       Libretro.setButtons(bits);
       setActive(bits);
@@ -234,7 +251,13 @@ export function VirtualPad({
     setLookKnob((k) => (k.x === lkx && k.y === lky ? k : { x: lkx, y: lky }));
     // Vibración suave al llevar el stick al tope
     const edge = kx * kx + ky * ky > 0.94;
-    if (edge && !stickEdge.current && hapticsRef.current) Libretro.haptic(0.3);
+    if (edge && !stickEdge.current && hapticsRef.current) {
+      try {
+        Libretro.hapticKind('soft');
+      } catch {
+        Libretro.haptic(0.3);
+      }
+    }
     stickEdge.current = edge;
   };
 
@@ -352,6 +375,7 @@ export function VirtualPad({
           selected={editing && selectedId === c.id}
           dragging={drag?.id === c.id}
           offset={drag?.id === c.id ? { x: drag.dx, y: drag.dy } : undefined}
+          skin={skin}
         />
       ))}
     </View>
@@ -368,7 +392,9 @@ function ClusterView({
   selected,
   dragging,
   offset,
+  skin,
 }: {
+  skin: PadSkin;
   cluster: Cluster;
   size: Size;
   active: number;
@@ -406,7 +432,7 @@ function ClusterView({
         />
       ) : null}
       {cluster.zones.map((z, i) => (
-        <ZoneView key={i} zone={z} w={size.w * cluster.w} h={size.h * cluster.h} active={active} knob={knob} />
+        <ZoneView key={i} zone={z} w={size.w * cluster.w} h={size.h * cluster.h} active={active} knob={knob} skin={skin} />
       ))}
     </View>
   );
@@ -417,17 +443,47 @@ function isPressed(zone: { bits: number }, active: number): boolean {
   return zone.bits !== 0 && (active & zone.bits) === zone.bits;
 }
 
-function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: number; active: number; knob: Knob }) {
+function ZoneView({
+  zone,
+  w,
+  h,
+  active,
+  knob,
+  skin,
+}: {
+  zone: Zone;
+  w: number;
+  h: number;
+  active: number;
+  knob: Knob;
+  skin: PadSkin;
+}) {
   if (w <= 0) return null; // esperar al primer layout
   const m = Math.min(w, h);
+  const themed = skin !== DEFAULT_SKIN;
 
   if (zone.kind === 'button') {
     const pressed = isPressed(zone, active);
-    const tint = zone.tint ?? 'rgba(255,255,255,0.25)';
-    const common = [styles.key, { borderColor: tint }, pressed && styles.keyPressed];
+    const face = skin.faces[zone.label];
+    const isRect = zone.shape === 'rect';
+    // Sin skin propia se respeta el color de cada layout (tint) como siempre
+    const border =
+      face?.border ?? (themed ? (isRect ? skin.rect.border : skin.key.border) : zone.tint ?? 'rgba(255,255,255,0.25)');
+    const bg = face?.bg ?? (isRect ? skin.rect.bg : skin.key.bg);
+    const common = [
+      styles.key,
+      {
+        borderColor: border,
+        borderTopColor: face ? border : skin.key.top,
+        borderBottomColor: face ? 'rgba(0,0,0,0.45)' : skin.key.bottom,
+        backgroundColor: pressed && !face ? skin.key.pressed : bg,
+        opacity: pressed && face ? 0.72 : 1,
+      },
+    ];
+    const labelColor = face?.label ?? (isRect ? skin.rect.label : skin.key.label);
     // Texto proporcional al botón (los botones redimensionados no quedan con letras diminutas)
-    const fontSize = Math.max(9, Math.min(18, (zone.shape === 'rect' ? Math.min(zone.h * h, zone.w * w / 3) : zone.w * m) * 0.36));
-    if (zone.shape === 'rect') {
+    const fontSize = Math.max(9, Math.min(18, (isRect ? Math.min(zone.h * h, (zone.w * w) / 3) : zone.w * m) * 0.36));
+    if (isRect) {
       return (
         <View
           pointerEvents="none"
@@ -438,10 +494,11 @@ function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: numb
               top: zone.y * h,
               width: zone.w * w,
               height: zone.h * h,
+              borderRadius: skin.rect.radius,
               transform: [{ scale: pressed ? 0.92 : 1 }],
             },
           ]}>
-          <Text style={[styles.label, { fontSize }]}>{zone.label}</Text>
+          <Text style={[styles.label, { fontSize, color: labelColor }]}>{zone.label}</Text>
         </View>
       );
     }
@@ -457,27 +514,66 @@ function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: numb
             top: zone.y * h - d / 2,
             width: d,
             height: d,
-            transform: [{ scale: pressed ? 0.92 : 1 }],
+            transform: [{ scale: pressed ? 0.9 : 1 }],
           },
         ]}>
-        <Text style={[styles.label, { fontSize }]}>{zone.label}</Text>
+        {skin.glossy ? (
+          <View style={[styles.gloss, { width: d * 0.62, height: d * 0.34, top: d * 0.1, borderRadius: d }]} />
+        ) : null}
+        <Text style={[styles.label, { fontSize, color: labelColor }]}>{zone.label}</Text>
       </View>
     );
   }
 
   if (zone.kind === 'dpad') {
     const d = 2 * zone.r * m;
-    const pressed = (active & (Btn.UP | Btn.DOWN | Btn.LEFT | Btn.RIGHT)) !== 0;
+    const pressed = (active & DPAD_BITS) !== 0;
+    if (skin.dpad.style === 'cross') {
+      // Cruz de plástico: dos barras redondeadas; la dirección pulsada se ilumina
+      const arm = d * 0.36;
+      const lit = (bit: number) => (active & bit ? 'rgba(255,255,255,0.32)' : 'transparent');
+      const arrow = { color: skin.dpad.arrow, fontSize: Math.max(10, d * 0.11) };
+      const bar = { backgroundColor: skin.dpad.bg, borderColor: skin.dpad.border, borderRadius: arm * 0.22 };
+      const mid = (d - arm) / 2;
+      return (
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', left: zone.cx * w - d / 2, top: zone.cy * h - d / 2, width: d, height: d }}>
+          <View style={[styles.crossBar, bar, { left: 0, top: mid, width: d, height: arm }]} />
+          <View style={[styles.crossBar, bar, { top: 0, left: mid, width: arm, height: d }]} />
+          <View style={[styles.crossCell, { left: mid, top: 0, width: arm, height: arm, backgroundColor: lit(Btn.UP) }]}>
+            <Text style={arrow}>▲</Text>
+          </View>
+          <View
+            style={[styles.crossCell, { left: mid, top: d - arm, width: arm, height: arm, backgroundColor: lit(Btn.DOWN) }]}>
+            <Text style={arrow}>▼</Text>
+          </View>
+          <View style={[styles.crossCell, { left: 0, top: mid, width: arm, height: arm, backgroundColor: lit(Btn.LEFT) }]}>
+            <Text style={arrow}>◀</Text>
+          </View>
+          <View
+            style={[styles.crossCell, { left: d - arm, top: mid, width: arm, height: arm, backgroundColor: lit(Btn.RIGHT) }]}>
+            <Text style={arrow}>▶</Text>
+          </View>
+          <View
+            style={[
+              styles.crossHub,
+              { left: d / 2 - arm * 0.22, top: d / 2 - arm * 0.22, width: arm * 0.44, height: arm * 0.44, borderRadius: arm },
+            ]}
+          />
+        </View>
+      );
+    }
     return (
       <View
         pointerEvents="none"
         style={[
           styles.ring,
           styles.round,
-          pressed && styles.ringPressed,
+          { borderColor: skin.dpad.border, backgroundColor: pressed ? 'rgba(255,255,255,0.2)' : skin.dpad.bg },
           { left: zone.cx * w - d / 2, top: zone.cy * h - d / 2, width: d, height: d },
         ]}>
-        <Text style={[styles.arrow, { fontSize: Math.max(14, d * 0.3) }]}>✚</Text>
+        <Text style={[styles.arrow, { color: skin.dpad.arrow, fontSize: Math.max(14, d * 0.3) }]}>✚</Text>
       </View>
     );
   }
@@ -492,6 +588,7 @@ function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: numb
       style={[
         styles.stickBase,
         styles.round,
+        { backgroundColor: skin.stick.base, borderBottomColor: skin.stick.border },
         { left: zone.cx * w - baseD / 2, top: zone.cy * h - baseD / 2, width: baseD, height: baseD },
       ]}>
       <View
@@ -499,6 +596,7 @@ function ZoneView({ zone, w, h, active, knob }: { zone: Zone; w: number; h: numb
           styles.puck,
           styles.round,
           {
+            backgroundColor: skin.stick.puck,
             width: puckD,
             height: puckD,
             left: baseD / 2 - puckD / 2 + knob.x * travel,
@@ -570,6 +668,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ringPressed: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  // Cruceta en cruz (skins de Nintendo / Sony)
+  crossBar: { position: 'absolute', borderWidth: 1.5 },
+  crossCell: { position: 'absolute', alignItems: 'center', justifyContent: 'center', borderRadius: 6 },
+  crossHub: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.25)' },
+  // Brillo superior de las bolas de arcade
+  gloss: { position: 'absolute', alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.32)' },
   arrow: { color: 'rgba(255,255,255,0.5)', fontSize: 18 },
   // Base del stick: fondo oscuro translúcido con borde biselado
   stickBase: {

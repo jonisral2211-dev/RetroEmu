@@ -5,6 +5,12 @@
 #import <React/RCTEventEmitter.h>
 
 #import "FolderScanner.h"
+#import "JLAchievements.h"
+#import "JLAmbientMusic.h"
+#import "JLCloudSync.h"
+#import "JLHaptics.h"
+#import "JLLiveActivity.h"
+#import "JLMotion.h"
 #import "GameRenderView.h"
 #import <AudioToolbox/AudioToolbox.h>
 #import "JLTools.h"
@@ -1482,7 +1488,149 @@ static NSString *biosDestination(NSString *docs, NSString *name) {
   if ([kind isEqualToString:@"select"]) sound = 1057;  // Tink
   else if ([kind isEqualToString:@"back"]) sound = 1103;
   else if ([kind isEqualToString:@"tab"]) sound = 1105;
+  else if ([kind isEqualToString:@"trophy"]) sound = 1025;  // fanfarria: logro desbloqueado
   AudioServicesPlaySystemSound(sound);
+}
+
+static id parseJSON(NSString *json) {
+  NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+  return data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+}
+
+#pragma mark - Háptica (Taptic Engine) y avance rápido
+
+- (void)hapticKind:(NSString *)kind {
+  [[JLHaptics shared] play:kind];
+}
+
+- (void)setPhoneRumble:(BOOL)enabled {
+  [JLHaptics shared].phoneRumbleEnabled = enabled;
+  if (!enabled) [[JLHaptics shared] rumble:0 sharpness:0];
+  host::setOption("jl_rumble", enabled ? "enabled" : "disabled");
+}
+
+- (void)setFastForward:(double)speed {
+  host::setSpeed(int(speed));
+}
+
+- (NSNumber *)fastForward {
+  return @(host::speed());
+}
+
+#pragma mark - Discos (PS1 / Saturn multidisco)
+
+- (NSString *)diskInfo {
+  return [NSString stringWithUTF8String:host::diskInfo().c_str()];
+}
+
+- (NSNumber *)diskSet:(double)index {
+  return @(host::diskSet(int(index)));
+}
+
+#pragma mark - Modo TV: región del frame en la pantalla externa
+
+- (void)setTVRegion:(double)region {
+  [[TVOutput shared] setRegion:NSInteger(region)];
+}
+
+#pragma mark - RetroAchievements
+
+- (void)raHash:(NSString *)romPath
+     consoleId:(double)consoleId
+       resolve:(RCTPromiseResolveBlock)resolve
+        reject:(RCTPromiseRejectBlock)reject {
+  NSString *path = normalizeRomPath(romPath);
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSString *error = nil;
+    NSString *hash = [JLAchievements hashForPath:path console:int(consoleId) error:&error];
+    resolve(hash.length ? hash : [@"!" stringByAppendingString:error ?: @""]);
+  });
+}
+
+- (NSNumber *)raActivate:(NSString *)json consoleId:(double)consoleId {
+  NSArray *list = parseJSON(json);
+  if (![list isKindOfClass:NSArray.class]) return @NO;
+  return @([JLAchievements activate:list console:int(consoleId)]);
+}
+
+- (void)raReset {
+  [JLAchievements reset];
+}
+
+- (NSString *)raPoll {
+  return [JLAchievements poll];
+}
+
+#pragma mark - Partidas en iCloud Drive
+
+- (void)cloudPickFolder:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [JLCloudSync pickFolderWithCompletion:^(NSString *name, NSString *error) {
+    if (error) {
+      reject(@"cloud", error, nil);
+    } else {
+      resolve(name ?: @"");
+    }
+  }];
+}
+
+- (NSString *)cloudInfo {
+  return [JLCloudSync info];
+}
+
+- (void)cloudUnlink {
+  [JLCloudSync unlink];
+}
+
+- (void)cloudSync:(NSString *)romPath
+        direction:(NSString *)direction
+          resolve:(RCTPromiseResolveBlock)resolve
+           reject:(RCTPromiseRejectBlock)reject {
+  NSString *path = romPath.length ? normalizeRomPath(romPath) : @"";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    resolve([JLCloudSync syncGame:path docs:documentsDirectory() direction:direction]);
+  });
+}
+
+#pragma mark - Live Activity (Dynamic Island / pantalla de bloqueo)
+
+- (NSNumber *)liveActivityAvailable {
+  return @([JLLiveActivity available]);
+}
+
+- (void)liveActivityStart:(NSString *)json {
+  NSDictionary *info = parseJSON(json);
+  if ([info isKindOfClass:NSDictionary.class]) [JLLiveActivity start:info];
+}
+
+- (void)liveActivityUpdate:(NSString *)json {
+  NSDictionary *info = parseJSON(json);
+  if ([info isKindOfClass:NSDictionary.class]) [JLLiveActivity update:info];
+}
+
+- (void)liveActivityEnd {
+  [JLLiveActivity end];
+}
+
+#pragma mark - Giroscopio (paralaje) y música ambiental
+
+- (void)motionStart {
+  [JLMotion start];
+}
+
+- (void)motionStop {
+  [JLMotion stop];
+}
+
+- (NSString *)motionTilt {
+  return [JLMotion tilt];
+}
+
+- (void)ambientMusic:(BOOL)wanted {
+  [[JLAmbientMusic shared] setWanted:wanted];
+}
+
+- (void)ambientVolume:(double)volume {
+  [[JLAmbientMusic shared] setVolume:float(volume)];
 }
 
 - (NSString *)biosStatus {
@@ -1625,6 +1773,7 @@ static NSString *biosDestination(NSString *docs, NSString *name) {
 }
 
 - (void)unloadGame {
+  [JLAchievements reset];  // la memoria del juego deja de existir
   host::unloadGame();
 }
 
@@ -1634,11 +1783,13 @@ static NSString *biosDestination(NSString *docs, NSString *name) {
   AVAudioSession *session = AVAudioSession.sharedInstance;
   [session setCategory:AVAudioSessionCategoryPlayback error:&error];
   [session setActive:YES error:&error];
+  [[JLAmbientMusic shared] setWanted:NO];  // la música de la interfaz nunca suena con el juego
   host::start();
 }
 
 - (void)stop {
   host::stop();
+  [[JLHaptics shared] rumble:0 sharpness:0];
 }
 
 - (void)setPaused:(BOOL)paused {

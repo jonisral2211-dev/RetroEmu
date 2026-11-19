@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  AppState,
   LayoutChangeEvent,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -78,6 +81,13 @@ import ControllerScreen from './ControllerScreen';
 import GuideScreen from './GuideScreen';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { slotsFor } from '../emulator/slots';
+import { AchievementBanner, AchievementProgress, useAchievements } from '../achievements/useAchievements';
+import { pullBeforePlay, pushAfterSave } from '../library/cloudSync';
+import { skinFor, skinsEnabled, subscribeSkins } from '../input/skins';
+import { getExperience, useExperience } from '../ui/experiencePrefs';
+import { subscribeCover } from '../covers/CoverCache';
+import { CONSOLE_LABEL, Console } from '../emulator/cores';
+import TVDeskPanel from './TVDeskPanel';
 
 type Props = {
   romPath: string;
@@ -187,6 +197,18 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const core = loadedCore ?? baseCore;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Partidas en iCloud Drive: se traen las más recientes antes de abrir el juego (máx. 4 s)
+  const [cloudReady, setCloudReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setCloudReady(false);
+    pullBeforePlay(romPath)
+      .catch(() => null)
+      .then(() => alive && setCloudReady(true));
+    return () => {
+      alive = false;
+    };
+  }, [romPath]);
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [genesisSix, setGenesisSix] = useState(false);
@@ -260,6 +282,27 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const pad = useGamepadStatus();
   const [touchMode, setTouchMode] = useState<TouchMode>('auto');
   const touchVisible = editing || touchMode === 'show' || (touchMode === 'auto' && !pad.connected);
+  // Transición suave: al conectar el mando el pad se desvanece y baja; luego se libera el espacio
+  const padAnim = useRef(new Animated.Value(touchVisible ? 1 : 0)).current;
+  const [padShown, setPadShown] = useState(touchVisible);
+  useEffect(() => {
+    if (touchVisible) {
+      setPadShown(true);
+      Animated.timing(padAnim, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+      return;
+    }
+    Animated.timing(padAnim, { toValue: 0, duration: 380, useNativeDriver: true }).start(({ finished }) => {
+      if (finished) setPadShown(false);
+    });
+  }, [touchVisible, padAnim]);
+  const wasConnected = useRef(pad.connected);
+  useEffect(() => {
+    if (pad.connected && !wasConnected.current) flash(`🎮 ${pad.name || 'Mando'} conectado · controles táctiles ocultos`);
+    wasConnected.current = pad.connected;
+  }, [pad.connected]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Skin de los controles táctiles según la consola
+  const [skinsOn, setSkinsOn] = useState(skinsEnabled());
+  useEffect(() => subscribeSkins(setSkinsOn), []);
 
   // Menú de configuración (engranaje) y filtro de imagen elegido
   const [menuOpen, setMenuOpen] = useState(false);
@@ -356,6 +399,15 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     Libretro.setTVOptions(tvStretch, tvSmooth, ready);
   }, [tvStretch, tvSmooth, ready]);
   useEffect(() => () => Libretro.setTVOptions(false, false, false), []);
+  // DS en modo sobremesa: arriba en la TV, abajo táctil en el iPhone (se decide al dibujar)
+  const tvRegionRef = useRef(0);
+  useEffect(() => {
+    const id = setInterval(() => Libretro.setTVRegion(tvRegionRef.current), 500);
+    return () => {
+      clearInterval(id);
+      Libretro.setTVRegion(0);
+    };
+  }, []);
   const controllerMode = tvConnected || forceController;
   // Orientación del mando de TV: Vertical (palanca), Horizontal (mando clásico) o Automática
   const [tvOrient, setTvOrientState] = useState<TvOrientation>('portrait');
@@ -434,8 +486,13 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       );
       return;
     }
+    if (!cloudReady) return;
     // Opciones que el core lee al cargar el juego
     if (isNdsCore(baseCore)) setNdsLayout(landscapeRef.current);
+    // Vibración Rumble: en el mando o en el iPhone; N64 con Rumble Pak, PS1 con DualShock
+    const exp = getExperience();
+    Libretro.setPhoneRumble(exp.rumble);
+    Libretro.setCoreOption('mupen64plus-pak1', exp.rumble && exp.n64RumblePak ? 'rumble' : 'memory');
     let started: CoreId | null = null;
     const errors: string[] = [];
     // Arcade: la carpeta del romset (arcade/ o fbneo/) es el system directory de MAME y FBNeo
@@ -473,8 +530,10 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       Libretro.saveState(slots.auto);
       Libretro.stop();
       Libretro.unloadGame();
+      // Copia en iCloud Drive de la partida y del guardado nativo (.srm) recién escrito
+      pushAfterSave(romPath, 200);
     };
-  }, [romPath, baseCore]);
+  }, [romPath, baseCore, cloudReady]);
 
   // DS: al girar el iPhone las pantallas pasan de apiladas a lado a lado (en caliente)
   const [ndsScreen, setNdsScreen] = useState<NdsScreen>(ndsScreenMode);
@@ -522,6 +581,80 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       flash('✨ Ultra HD Remaster activado');
     }
   };
+
+  // Logros (RetroAchievements): banner tipo trofeo al desbloquear
+  const achievements = useAchievements(romPath, ready ? core : null, ready);
+  useEffect(() => {
+    if (achievements.status === 'active' || achievements.status === 'none') flash(achievements.message);
+  }, [achievements.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live Activity: Dynamic Island y pantalla de bloqueo mientras dura la partida
+  const experience = useExperience();
+  const sessionStart = useRef(Date.now());
+  useEffect(() => {
+    if (!ready || !core || !experience.liveActivity) return;
+    let available = false;
+    try {
+      available = Libretro.liveActivityAvailable();
+    } catch {
+      available = false;
+    }
+    if (!available) return;
+    const consoleId = Libretro.consoleOf(romPath) as Console;
+    let started = false;
+    const start = (cover: string | null) => {
+      if (started) return;
+      started = true;
+      Libretro.liveActivityStart(
+        JSON.stringify({
+          title: gameTitle(romPath),
+          console: CONSOLE_LABEL[consoleId] ?? '',
+          coverPath: cover ? cover.replace(/^file:\/\//, '').split('?')[0] : '',
+          accent: '#1A9FFF',
+          startedAt: sessionStart.current,
+        }),
+      );
+    };
+    // Con carátula si ya está en caché; si tarda, sin ella
+    const unsub = subscribeCover(romPath, consoleId, (uri) => start(uri));
+    const fallback = setTimeout(() => start(null), 1500);
+    return () => {
+      unsub();
+      clearTimeout(fallback);
+      Libretro.liveActivityEnd();
+    };
+  }, [ready, core, romPath, experience.liveActivity]);
+  const noteSaved = useCallback(() => {
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    try {
+      Libretro.liveActivityUpdate(JSON.stringify({ lastSave: `Guardado ${hhmm}` }));
+    } catch {
+      // sin Live Activity
+    }
+    pushAfterSave(romPath);
+  }, [romPath]);
+
+  // Botones de la Live Activity: jlemu://save guarda el estado; jlemu://resume solo vuelve
+  useEffect(() => {
+    if (!ready || !core) return;
+    const quick = slotsFor(core).save;
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      if (!url.startsWith('jlemu://save')) return;
+      const ok = Libretro.saveState(quick);
+      flash(ok ? 'Partida guardada desde la Dynamic Island' : 'Error al guardar');
+      if (ok) noteSaved();
+    });
+    return () => sub.remove();
+  }, [ready, core, noteSaved]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Al minimizar la app: copia de las partidas en iCloud
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'background') pushAfterSave(romPath, 100);
+    });
+    return () => sub.remove();
+  }, [ready, romPath]);
 
   // Trucos guardados para este juego y tiempo jugado (no cuenta con el menú abierto o en pausa)
   const pausedRef = useRef(false);
@@ -585,6 +718,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const openMenu = () => {
     setMenuOpen(true);
     if (!online) Libretro.setPaused(true);
+    pushAfterSave(romPath);
   };
   const closeMenu = () => {
     setMenuOpen(false);
@@ -615,7 +749,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   if (error || !ready || !core) {
     return (
       <View style={styles.center}>
-        <Text style={styles.text}>{error ?? 'Cargando…'}</Text>
+        <Text style={styles.text}>{error ?? (cloudReady ? 'Cargando…' : 'Sincronizando partidas con iCloud…')}</Text>
         <Pressable onPress={onExit} style={styles.button}>
           <Text style={styles.buttonText}>Volver</Text>
         </Pressable>
@@ -670,6 +804,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const notices = (
     <View style={styles.notices} pointerEvents="box-none">
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+      <AchievementBanner unlock={achievements.banner} landscape={landscape} />
+      <AchievementProgress progress={achievements.progress} />
       {debugOn && debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       {online && !menuOpen ? <Text style={styles.netNotice}>{net.message}</Text> : null}
       {webPad.seats && !menuOpen ? (
@@ -795,7 +931,11 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       title={gameTitle(romPath)}
       onResume={closeMenu}
       onExit={onExit}
-      onSave={() => flash(Libretro.saveState(slot) ? 'Partida guardada' : 'Error al guardar')}
+      onSave={() => {
+        const ok = Libretro.saveState(slot);
+        flash(ok ? 'Partida guardada' : 'Error al guardar');
+        if (ok) noteSaved();
+      }}
       onLoad={() => {
         const ok = Libretro.loadState(slot);
         flash(ok ? 'Partida cargada' : 'No hay partida guardada');
@@ -864,7 +1004,10 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
         <SaveSlots
           base={10 + slotsFor(core).save * 10}
           canLoad={net.phase === 'idle'}
-          onMessage={flash}
+          onMessage={(m) => {
+            flash(m);
+            if (m.startsWith('Guardado')) noteSaved();
+          }}
           onLoaded={closeMenu}
         />
       }
@@ -1005,21 +1148,33 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     ) : null;
 
   const nds = isNdsCore(core);
+  const padSkin = skinFor(core, skinsOn);
   const padView = (style: object, pointerRect?: PointerRect) =>
-    touchVisible ? (
-      <VirtualPad
-        key={`${padLayout.name}:${dirMode}`}
-        layout={padLayout}
-        prefs={padPrefs}
-        feel={feel}
-        style={style}
-        opacity={padPrefs.opacity}
-        editing={editing}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onMoveControl={moveControl}
-        pointerRect={pointerRect}
-      />
+    padShown ? (
+      <Animated.View
+        pointerEvents={touchVisible ? 'box-none' : 'none'}
+        style={[
+          style,
+          {
+            opacity: padAnim,
+            transform: [{ translateY: padAnim.interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) }],
+          },
+        ]}>
+        <VirtualPad
+          key={`${padLayout.name}:${dirMode}`}
+          layout={padLayout}
+          prefs={padPrefs}
+          feel={feel}
+          style={StyleSheet.absoluteFill}
+          opacity={padPrefs.opacity}
+          editing={editing}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onMoveControl={moveControl}
+          pointerRect={pointerRect}
+          skin={padSkin}
+        />
+      </Animated.View>
     ) : null;
 
   // ---- Modo TV: el iPhone es el mando (sin vídeo duplicado) ----------------------------------
@@ -1043,27 +1198,29 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     const tvSize = tvSelected ? tvPrefs.sizes?.[tvSelected] ?? 1 : 1;
     const tvAlpha = tvSelected ? tvPrefs.alphas?.[tvSelected] ?? 1 : 1;
     const showPad = tvEditing || !(pad.connected && touchMode !== 'show');
+    // DS en el panel de sobremesa: la TV muestra solo la pantalla de arriba
+    tvRegionRef.current = tvConnected && nds && !showPad ? 1 : 0;
     return (
       <View style={styles.root}>
         <View style={[styles.flex, styles.tvRoot]} onLayout={onArea}>
           <View style={[styles.tvGlow, { backgroundColor: tv.accent }]} pointerEvents="none" />
           {!showPad ? (
-            <View style={styles.consolePanel}>
-              <Text style={styles.consoleKicker}>MODO CONSOLA ACTIVO</Text>
-              <Text style={styles.consoleTitle}>{gameTitle(romPath)}</Text>
-              <Text style={styles.consolePlayers}>
-                {[0, 1]
-                  .map((i) => `J${i + 1} ${players[i] ? `· ${players[i].kind} conectado` : '· sin mando'}`)
-                  .join('     ')}
-              </Text>
-              <View style={styles.consoleActions}>
-                <HudButton label="Configuración" onPress={openMenu} active />
-                <HudButton label="Guardar partida" onPress={() => flash(Libretro.saveState(slot) ? 'Partida guardada' : 'Error al guardar')} />
-                <HudButton label="Cargar partida" onPress={() => flash(Libretro.loadState(slot) ? 'Partida cargada' : 'No hay partida guardada')} />
-                {(pad.count ?? 0) >= 2 ? <HudButton label="Intercambiar J1/J2" onPress={() => Libretro.swapPlayers()} /> : null}
-                <HudButton label="Mostrar controles táctiles" onPress={() => setTouchMode('show')} />
-              </View>
-            </View>
+            <TVDeskPanel
+              title={gameTitle(romPath)}
+              slotBase={10 + slotsFor(core).save * 10}
+              canLoad={net.phase === 'idle'}
+              players={[0, 1]
+                .map((i) => `J${i + 1} ${players[i] ? `· ${players[i].kind} conectado` : '· sin mando'}`)
+                .join('     ')}
+              nds={nds && tvConnected}
+              dsAspect={aspect}
+              cheatsPanel={<CheatsPanel romPath={romPath} />}
+              onMessage={flash}
+              onSaved={noteSaved}
+              onOpenMenu={openMenu}
+              onSwapPlayers={(pad.count ?? 0) >= 2 ? () => Libretro.swapPlayers() : undefined}
+              onShowTouch={() => setTouchMode('show')}
+            />
           ) : area.w > 0 ? (
             <View
               style={
@@ -1100,6 +1257,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
                 pointerRect={trackpad}
                 pointerBottom
                 trackpadLabel={trackpad ? 'Pantalla táctil (lápiz)' : undefined}
+                skin={padSkin}
               />
             </View>
           ) : null}
@@ -1176,13 +1334,13 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Horizontal, o vertical con el pad oculto: barra arriba con margen limpio; debajo, la imagen
   // a todo el área y el pad translúcido encima (gatillos justo bajo la barra)
-  if (landscape || !touchVisible) {
+  if (landscape || !padShown) {
     return (
       <View style={styles.root}>
         <View
           style={styles.flex}
           onLayout={onArea}
-          {...(nds && !touchVisible ? pointerHandlers(fitRect(area.w, area.h, aspect, display.stretch)) : {})}>
+          {...(nds && !padShown ? pointerHandlers(fitRect(area.w, area.h, aspect, display.stretch)) : {})}>
           <LibretroView style={StyleSheet.absoluteFill} filter={smooth3d} stretch={display.stretch} />
           {padView(StyleSheet.absoluteFill, nds ? fitRect(area.w, area.h, aspect, display.stretch) : undefined)}
           {notices}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import RNFS from 'react-native-fs';
 import { Libretro } from 'react-native-libretro';
@@ -11,6 +11,9 @@ import type { Entry } from '../../library/useLibrary';
 import { playUi } from '../../ui/uiSounds';
 import { getArcadeChoices } from '../LibraryScreen';
 import { GeneratedArt, PadGlyph, S, useArt } from './art';
+import { RaSummary, subscribeSummaries, summaryForRom } from '../../achievements/ra';
+import { useExperience } from '../../ui/experiencePrefs';
+import { useTilt } from '../../ui/useTilt';
 
 type Slot = { index: number; exists: boolean; time: number; png: string | null };
 
@@ -64,6 +67,21 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
   const [info, setInfo] = useState<{ serial: string; title: string }>({ serial: '', title: '' });
   // Foco: 0 JUGAR, 1 Favorito, 2 Opciones, 3..7 ranuras 1-5
   const [focus, setFocus] = useState(0);
+  // Paralaje 3D con el giroscopio (banner y carátula) mientras la ficha está visible
+  const experience = useExperience();
+  const tilt = useTilt(experience.parallax && active);
+  // Progreso de logros (RetroAchievements)
+  const [ra, setRa] = useState<RaSummary | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => summaryForRom(entry.path, core).then((r) => alive && setRa(r));
+    load();
+    const unsub = subscribeSummaries(load);
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, [entry.path, core]);
 
   useEffect(() => {
     if (!isArcadeConsole(entry.console)) return;
@@ -147,14 +165,26 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.scroll} bounces={false}>
-        <View style={{ height: bannerH }}>
-          {hero ? (
-            <Image source={{ uri: hero }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-          ) : box ? (
-            <Image source={{ uri: box }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={22} />
-          ) : (
-            <GeneratedArt entry={entry} title="" width={width} height={bannerH} />
-          )}
+        <View style={{ height: bannerH, overflow: 'hidden' }}>
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                transform: [
+                  { translateX: tilt.x.interpolate({ inputRange: [-1, 1], outputRange: [-16, 16] }) },
+                  { translateY: tilt.y.interpolate({ inputRange: [-1, 1], outputRange: [-10, 10] }) },
+                  { scale: 1.1 },
+                ],
+              },
+            ]}>
+            {hero ? (
+              <Image source={{ uri: hero }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            ) : box ? (
+              <Image source={{ uri: box }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={22} />
+            ) : (
+              <GeneratedArt entry={entry} title="" width={width} height={bannerH} />
+            )}
+          </Animated.View>
           <Svg style={StyleSheet.absoluteFill} width={width} height={bannerH} pointerEvents="none">
             <Defs>
               <LinearGradient id="detFade" x1="0" y1="0" x2="0" y2="1">
@@ -171,13 +201,37 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
 
         <View style={styles.body}>
           <View style={styles.head}>
-            <View style={styles.boxArt}>
+            <Animated.View
+              style={[
+                styles.boxArt,
+                {
+                  transform: [
+                    { perspective: 600 },
+                    { rotateY: tilt.x.interpolate({ inputRange: [-1, 1], outputRange: ['-12deg', '12deg'] }) },
+                    { rotateX: tilt.y.interpolate({ inputRange: [-1, 1], outputRange: ['9deg', '-9deg'] }) },
+                    { translateX: tilt.x.interpolate({ inputRange: [-1, 1], outputRange: [4, -4] }) },
+                  ],
+                },
+              ]}>
               {box ? (
                 <Image source={{ uri: box }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               ) : (
                 <GeneratedArt entry={entry} title={title} width={96} height={134} />
               )}
-            </View>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.glare,
+                  {
+                    opacity: tilt.x.interpolate({ inputRange: [-1, 0, 1], outputRange: [0.28, 0.08, 0.28] }),
+                    transform: [
+                      { translateX: tilt.x.interpolate({ inputRange: [-1, 1], outputRange: [-70, 70] }) },
+                      { rotate: '20deg' },
+                    ],
+                  },
+                ]}
+              />
+            </Animated.View>
             <View style={styles.headText}>
               <Text style={styles.title} numberOfLines={3}>
                 {title}
@@ -190,6 +244,16 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
               <Text style={styles.meta} numberOfLines={2}>
                 {meta.join('  ·  ')}
               </Text>
+              {ra && ra.total > 0 ? (
+                <View style={styles.ra}>
+                  <Text style={styles.raText}>
+                    🏆 {ra.earned}/{ra.total} logros · {ra.points}/{ra.maxPoints} pts
+                  </Text>
+                  <View style={styles.raBar}>
+                    <View style={[styles.raFill, { width: `${Math.round((ra.earned / ra.total) * 100)}%` }]} />
+                  </View>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -261,6 +325,11 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
 }
 
 const styles = StyleSheet.create({
+  glare: { position: 'absolute', top: -40, bottom: -40, width: 40, left: 28, backgroundColor: '#FFFFFF' },
+  ra: { marginTop: 6, gap: 4 },
+  raText: { color: S.gold, fontSize: 12, fontWeight: '800' },
+  raBar: { height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', maxWidth: 260 },
+  raFill: { height: 5, borderRadius: 3, backgroundColor: S.gold },
   root: { ...StyleSheet.absoluteFillObject, backgroundColor: S.bg },
   scroll: { paddingBottom: 24 },
   backBtn: {

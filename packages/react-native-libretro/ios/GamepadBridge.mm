@@ -1,6 +1,7 @@
 #import "GamepadBridge.h"
 
 #import <CoreHaptics/CoreHaptics.h>
+#import "JLHaptics.h"
 #import <GameController/GameController.h>
 
 #include <cmath>
@@ -303,6 +304,7 @@ static uint32_t stickAsDpad(float x, float y) {
 #pragma mark - Vibración
 
 - (void)stopAllRumble {
+  [[JLHaptics shared] rumble:0 sharpness:0];
   for (id<CHHapticAdvancedPatternPlayer> p in self.rumblePlayers.allValues) [p stopAtTime:0 error:nil];
   for (CHHapticEngine *e in self.engines.allValues) [e stopWithCompletionHandler:nil];
   [self.rumblePlayers removeAllObjects];
@@ -310,7 +312,15 @@ static uint32_t stickAsDpad(float x, float y) {
 }
 
 - (void)applyRumble:(float)intensity sharpness:(float)sharpness port:(unsigned)port {
-  if (port >= self.players.count) return;
+  // Sin mando que vibre en este puerto: el Jugador 1 siente el Rumble en el iPhone (Taptic Engine)
+  BOOL padHaptics = NO;
+  if (port < self.players.count) {
+    if (@available(iOS 14.0, *)) padHaptics = self.players[port].haptics != nil;
+  }
+  if (!padHaptics) {
+    if (port == 0) [[JLHaptics shared] rumble:intensity sharpness:sharpness];
+    return;
+  }
   GCController *c = self.players[port];
   if (@available(iOS 14.0, *)) {
     if (!c.haptics) return;  // mandos sin motores de vibración

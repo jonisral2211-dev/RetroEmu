@@ -6,6 +6,8 @@
 
 #include "FrameBuffer.hpp"
 
+struct retro_memory_map;
+
 // API de alto nivel sobre Libretro.
 // Solo puede haber UNA sesión activa por proceso: los cores mantienen estado global.
 namespace host {
@@ -74,6 +76,21 @@ void setContentPath(const char *romPath);
 double targetFps();
 double measuredFps();
 void reset();
+
+/** Avance rápido: 1 = normal, 2-8 = frames extra por periodo (sin audio en los extra). */
+void setSpeed(int speed);
+int speed();
+/** Función llamada en el hilo de emulación, con el núcleo bloqueado, tras cada retro_run. */
+void setFrameHook(void (*hook)());
+/** Memoria del núcleo (RETRO_MEMORY_*) del juego cargado; solo desde el gancho por frame. */
+uint8_t *memoryData(unsigned id);
+size_t memorySize(unsigned id);
+/** Mapa de memoria declarado por el núcleo (nullptr si no declaró ninguno). */
+const struct retro_memory_map *memoryMap();
+/** Discos del juego: JSON {count, index, labels}. count 0 = el núcleo no permite cambiarlos. */
+std::string diskInfo();
+/** Cambia al disco index (abre la bandeja, cambia y la cierra). */
+bool diskSet(int index);
 
 bool saveState(int slot);
 bool loadState(int slot);

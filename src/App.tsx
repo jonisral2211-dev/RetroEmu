@@ -13,6 +13,7 @@ import { autoSyncOnLaunch, importedCount, importSummary } from './library/folder
 import { subscribeUiMode, UiMode } from './library/uiMode';
 import PlayerScreen from './screens/PlayerScreen';
 import SteamLibrary from './screens/steam/SteamLibrary';
+import { Libretro } from 'react-native-libretro';
 
 type Tab = 'library' | 'web' | 'guide';
 
@@ -25,6 +26,12 @@ export default function App() {
   // Carpeta vinculada: al abrir la app se importa lo nuevo (aviso breve con el resumen)
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
+    // Live Activity huérfana (la app se cerró a la fuerza durante una partida)
+    try {
+      Libretro.liveActivityEnd();
+    } catch {
+      // nativo sin Live Activity
+    }
     autoSyncOnLaunch().then((r) => {
       if (!r || !r.ok || (importedCount(r) === 0 && !r.failed)) return;
       setNotice(importSummary(r));

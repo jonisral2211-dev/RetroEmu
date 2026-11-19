@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface GameRenderView : UIView
 @property (nonatomic) BOOL linearFilter;  // true = juego 3D (bilineal + realce)
 @property (nonatomic) BOOL stretch;       // true = "Expandir": ocupa toda la vista
+/** 0 = frame completo, 1 = mitad superior, 2 = mitad inferior (pantallas de la DS por separado). */
+@property (atomic) NSInteger region;
 /** NO detiene el dibujo (p. ej. iPhone mientras el juego sale por la TV). */
 - (void)setRendering:(BOOL)rendering;
 @end
