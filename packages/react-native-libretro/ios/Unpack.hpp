@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,5 +37,22 @@ std::vector<std::string> listZipEntries(const std::string &zipPath);
 
 /** true si el archivo es un .7z (por firma, no por extensión). */
 bool is7z(const std::string &path);
+
+/** Entrada de un comprimido vista sin extraerlo: nombre, tamaño, CRC32 del índice y cabecera. */
+struct PeekEntry {
+  std::string name;           // ruta dentro del comprimido
+  uint64_t size = 0;          // tamaño descomprimido
+  uint32_t crc = 0;           // CRC32 que guarda el índice (0 si no lo trae)
+  std::vector<uint8_t> head;  // primeros bytes descomprimidos (vacío si no se pudo leer)
+};
+
+/**
+ * Inspecciona un .zip o .7z sin extraerlo al disco: lista sus archivos (sin carpetas ni basura) y
+ * descomprime en memoria solo la cabecera de cada uno (headBytes(nombre) bytes; 0 = no leerla).
+ * En un .7z sólido solo se leen cabeceras dentro de los primeros 96 MB de cada bloque.
+ * Devuelve false si no es un comprimido válido (motivo en error).
+ */
+bool peekArchive(const std::string &path, const std::function<size_t(const std::string &name)> &headBytes,
+                 std::vector<PeekEntry> &entries, std::string &error);
 
 }  // namespace unpack

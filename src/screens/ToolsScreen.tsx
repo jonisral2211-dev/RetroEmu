@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Libretro } from 'react-native-libretro';
+import { folderInfo } from '../library/folderSync';
+import { setUiMode, subscribeUiMode, UiMode } from '../library/uiMode';
 import { theme } from '../theme';
+import { setUiSoundsEnabled, uiSoundsEnabled } from '../ui/uiSounds';
 
 // ---- Subir por Wi-Fi ---------------------------------------------------------------------------
 type WifiStatus = {
@@ -95,7 +98,23 @@ export function WifiUploadScreen({ onClose, onReceived }: { onClose: () => void;
 // ---- Ajustes: respaldo de partidas y estado de BIOS ----------------------------------------------
 type Bios = { console: string; file: string; found: boolean; md5ok: boolean | null; required: boolean; note: string };
 
-export function SettingsScreen({ onClose, onWifi }: { onClose: () => void; onWifi: () => void }) {
+export function SettingsScreen({
+  onClose,
+  onWifi,
+  onFolderScan,
+  onOrganize,
+}: {
+  onClose: () => void;
+  onWifi: () => void;
+  /** Escanear / vincular carpeta (Descargas, iCloud…). */
+  onFolderScan?: () => void;
+  /** Organizador de archivos sueltos en Documents. */
+  onOrganize?: () => void;
+}) {
+  const [uiMode, setMode] = useState<UiMode>('steam');
+  useEffect(() => subscribeUiMode(setMode), []);
+  const [sounds, setSounds] = useState(uiSoundsEnabled());
+  const linked = folderInfo();
   const [bios, setBios] = useState<Bios[] | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -135,10 +154,54 @@ export function SettingsScreen({ onClose, onWifi }: { onClose: () => void; onWif
     <View style={styles.root}>
       <Header title="Ajustes" kicker="JL EMULATOR" onClose={onClose} />
       <ScrollView contentContainerStyle={styles.body}>
+        <Text style={styles.section}>INTERFAZ</Text>
+        <View style={styles.rowGap}>
+          {(
+            [
+              ['steam', 'Gaming Mode (estilo SteamOS)'],
+              ['classic', 'Vista clásica'],
+            ] as const
+          ).map(([m, label]) => (
+            <Pressable
+              key={m}
+              onPress={() => setUiMode(m)}
+              style={({ pressed }) => [styles.action, styles.flex, uiMode === m && styles.actionOn, pressed && styles.pressed]}>
+              <Text style={[styles.actionText, uiMode === m && styles.actionTextOn]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.note}>
+          Gaming Mode: carruseles con banners, ficha con JUGAR y las 5 ranuras, y control total con el mando (cruceta o
+          stick para moverte, ✕ abrir, ○ atrás, △ favorito, L1/R1 pestañas).
+        </Text>
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Sonidos de la interfaz</Text>
+          <Switch
+            value={sounds}
+            onValueChange={(v) => {
+              setSounds(v);
+              setUiSoundsEnabled(v);
+            }}
+            trackColor={{ true: theme.amber }}
+          />
+        </View>
+
         <Text style={styles.section}>TRANSFERIR JUEGOS</Text>
+        {onFolderScan ? (
+          <Pressable onPress={onFolderScan} style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
+            <Text style={styles.actionText}>
+              📁 {linked.linked ? `Carpeta vinculada: ${linked.name} (escanear)` : 'Vincular y escanear carpeta (ej. Descargas)'}
+            </Text>
+          </Pressable>
+        ) : null}
         <Pressable onPress={onWifi} style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
           <Text style={styles.actionText}>📶 Subir por Wi-Fi desde el PC / Mac</Text>
         </Pressable>
+        {onOrganize ? (
+          <Pressable onPress={onOrganize} style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
+            <Text style={styles.actionText}>🗂 Organizar archivos sueltos</Text>
+          </Pressable>
+        ) : null}
 
         <Text style={styles.section}>RESPALDO DE PARTIDAS</Text>
         <Text style={styles.note}>
@@ -242,6 +305,10 @@ const styles = StyleSheet.create({
   actionText: { color: theme.text, fontWeight: '800', fontSize: 14 },
   pressed: { opacity: 0.7 },
   rowGap: { flexDirection: 'row', gap: 10 },
+  actionOn: { borderColor: theme.amber, backgroundColor: theme.amberDim },
+  actionTextOn: { color: theme.amber },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
+  switchLabel: { flex: 1, color: theme.text, fontSize: 14, fontWeight: '600' },
   biosCard: { padding: 12, borderRadius: 12, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, gap: 4 },
   biosHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   light: { width: 12, height: 12, borderRadius: 6, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },

@@ -711,4 +711,212 @@ Result extractTree(const std::string &archivePath, const std::string &destDir) {
   return r;
 }
 
+// ---- Inspección sin extraer (escáner de carpetas) ------------------------------------------------
+namespace {
+
+// Primeros 'want' bytes descomprimidos de una entrada del zip (stored o deflate)
+void zipHead(FILE *f, uint64_t dataAt, uint16_t method, uint64_t csize, size_t want, std::vector<uint8_t> &head) {
+  head.clear();
+  if (want == 0 || U_FSEEK(f, int64_t(dataAt), SEEK_SET) != 0) return;
+  if (method == 0) {
+    head.resize(size_t(std::min<uint64_t>(csize, want)));
+    head.resize(std::fread(head.data(), 1, head.size(), f));
+    return;
+  }
+  if (method != 8) return;
+  z_stream zs{};
+  if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) return;
+  head.resize(want);
+  std::vector<uint8_t> in(64 * 1024);
+  uint64_t left = csize;
+  zs.next_out = head.data();
+  zs.avail_out = uInt(want);
+  int rc = Z_OK;
+  while (zs.avail_out > 0 && rc == Z_OK) {
+    if (zs.avail_in == 0) {
+      if (left == 0) break;
+      const size_t n = std::fread(in.data(), 1, size_t(std::min<uint64_t>(left, in.size())), f);
+      if (n == 0) break;
+      left -= n;
+      zs.next_in = in.data();
+      zs.avail_in = uInt(n);
+    }
+    rc = inflate(&zs, Z_NO_FLUSH);
+  }
+  head.resize(want - zs.avail_out);
+  inflateEnd(&zs);
+}
+
+bool peekZip(FILE *f, uint64_t fileSize, const std::function<size_t(const std::string &)> &headBytes,
+             std::vector<PeekEntry> &entries, std::string &error) {
+  std::vector<uint8_t> cd;
+  uint64_t count = 0;
+  if (!readCentralDirectory(f, fileSize, cd, count, error)) return false;
+  size_t p = 0;
+  for (uint64_t i = 0; i < count && entries.size() < 4096; ++i) {
+    if (p + 46 > cd.size() || le32(&cd[p]) != 0x02014b50) break;
+    const uint16_t flags = le16(&cd[p + 8]);
+    const uint16_t method = le16(&cd[p + 10]);
+    const uint32_t crc = le32(&cd[p + 16]);
+    uint64_t csize = le32(&cd[p + 20]);
+    uint64_t usize = le32(&cd[p + 24]);
+    const uint16_t nameLen = le16(&cd[p + 28]);
+    const uint16_t extraLen = le16(&cd[p + 30]);
+    const uint16_t commentLen = le16(&cd[p + 32]);
+    uint64_t localOffset = le32(&cd[p + 42]);
+    if (p + 46 + nameLen + extraLen > cd.size()) break;
+    const std::string name(cd.begin() + long(p + 46), cd.begin() + long(p + 46 + nameLen));
+    for (size_t e = p + 46 + nameLen; e + 4 <= p + 46 + nameLen + extraLen;) {
+      const uint16_t id = le16(&cd[e]);
+      const uint16_t len = le16(&cd[e + 2]);
+      size_t q = e + 4;
+      if (id == 0x0001) {
+        if (usize == 0xFFFFFFFFu && q + 8 <= e + 4 + len) usize = le64(&cd[q]), q += 8;
+        if (csize == 0xFFFFFFFFu && q + 8 <= e + 4 + len) csize = le64(&cd[q]), q += 8;
+        if (localOffset == 0xFFFFFFFFu && q + 8 <= e + 4 + len) localOffset = le64(&cd[q]), q += 8;
+      }
+      e += 4 + len;
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+    if (name.empty() || name.back() == '/' || name.back() == '\\' || isJunk(name)) continue;
+
+    PeekEntry entry;
+    entry.name = name;
+    entry.size = usize;
+    entry.crc = crc;
+    const size_t want = (flags & 1) ? 0 : size_t(std::min<uint64_t>(usize, headBytes(name)));
+    uint8_t lh[30];
+    if (want && readAt(f, localOffset, lh, sizeof lh) && le32(lh) == 0x04034b50) {
+      zipHead(f, localOffset + 30 + le16(lh + 26) + le16(lh + 28), method, csize, want, entry.head);
+    }
+    entries.push_back(std::move(entry));
+  }
+  return true;
+}
+
+bool peek7z(FILE *f, const std::function<size_t(const std::string &)> &headBytes, std::vector<PeekEntry> &entries,
+            std::string &error) {
+  static bool crcReady = false;
+  if (!crcReady) {
+    CrcGenerateTable();
+    crcReady = true;
+  }
+  FileSeekStream stream{};
+  stream.vt.Read = fileRead;
+  stream.vt.Seek = fileSeek;
+  stream.f = f;
+  CLookToRead2 look;
+  LookToRead2_CreateVTable(&look, False);
+  std::vector<Byte> lookBuf(1 << 18);
+  look.buf = lookBuf.data();
+  look.bufSize = lookBuf.size();
+  look.realStream = &stream.vt;
+  LookToRead2_INIT(&look);
+
+  CSzArEx db;
+  SzArEx_Init(&db);
+  const SRes res = SzArEx_Open(&db, &look.vt, &kAlloc, &kAlloc);
+  if (res != SZ_OK) {
+    SzArEx_Free(&db, &kAlloc);
+    error = szMessage(res);
+    return false;
+  }
+  constexpr uint64_t kPeekCap = 96ull << 20;
+  for (UInt32 fi = 0; fi < db.db.NumFolders; ++fi) {
+    struct Item {
+      size_t entry;  // índice en entries, o SIZE_MAX si no se lista
+      uint64_t size;
+      size_t want;
+    };
+    std::vector<Item> items;
+    bool anyWant = false;
+    for (UInt32 i = db.FolderToFile[fi]; i < db.FolderToFile[fi + 1]; ++i) {
+      if (db.FileToFolder[i] != fi) continue;
+      const size_t len = SzArEx_GetFileNameUtf16(&db, i, nullptr);
+      std::vector<UInt16> w(len);
+      SzArEx_GetFileNameUtf16(&db, i, w.data());
+      const std::string full = utf16ToUtf8(w);
+      const uint64_t size = SzArEx_GetFileSize(&db, i);
+      Item it{SIZE_MAX, size, 0};
+      if (!SzArEx_IsDir(&db, i) && !isJunk(full) && size > 0) {
+        PeekEntry e;
+        e.name = full;
+        e.size = size;
+        e.crc = SzBitWithVals_Check(&db.CRCs, i) ? db.CRCs.Vals[i] : 0;
+        it.entry = entries.size();
+        it.want = size_t(std::min<uint64_t>(size, headBytes(full)));
+        anyWant = anyWant || it.want > 0;
+        entries.push_back(std::move(e));
+      }
+      items.push_back(it);
+    }
+    if (!anyWant) continue;
+    // Último archivo del bloque cuya cabecera merece la pena (dentro del tope)
+    uint64_t pos = 0, stopAt = 0;
+    for (const Item &it : items) {
+      if (it.want && pos < kPeekCap) stopAt = pos + it.want;
+      pos += it.size;
+    }
+    size_t cur = 0;
+    uint64_t curPos = 0, produced = 0;
+    auto sink = [&](const uint8_t *data, size_t n) -> bool {
+      while (n > 0 && cur < items.size()) {
+        Item &it = items[cur];
+        const uint64_t left = it.size - curPos;
+        const size_t take = size_t(std::min<uint64_t>(n, left));
+        if (it.entry != SIZE_MAX && curPos < it.want) {
+          std::vector<uint8_t> &head = entries[it.entry].head;
+          const size_t copy = size_t(std::min<uint64_t>(take, it.want - curPos));
+          head.insert(head.end(), data, data + copy);
+        }
+        data += take;
+        n -= take;
+        curPos += take;
+        produced += take;
+        if (curPos == it.size) {
+          ++cur;
+          curPos = 0;
+        }
+      }
+      return produced < stopAt;  // false = suficiente: corta el bloque
+    };
+    bool handled = false;
+    decodeFolderStreaming(db, fi, f, sink, handled);  // el corte devuelve SZ_ERROR_WRITE: es lo esperado
+    if (!handled) {
+      // Bloque con filtros (BCJ2, PPMd…): solo si es pequeño, en memoria
+      const uint64_t unpackSize = SzAr_GetFolderUnpackSize(&db.db, fi);
+      if (unpackSize <= (64ull << 20)) {
+        Byte *buf = static_cast<Byte *>(std::malloc(size_t(unpackSize ? unpackSize : 1)));
+        if (buf && SzAr_DecodeFolder(&db.db, fi, &look.vt, db.dataPos, buf, size_t(unpackSize), &kAlloc) == SZ_OK) {
+          sink(buf, size_t(unpackSize));
+        }
+        std::free(buf);
+      }
+    }
+  }
+  SzArEx_Free(&db, &kAlloc);
+  return true;
+}
+
+}  // namespace
+
+bool peekArchive(const std::string &path, const std::function<size_t(const std::string &name)> &headBytes,
+                 std::vector<PeekEntry> &entries, std::string &error) {
+  entries.clear();
+  FilePtr f(std::fopen(path.c_str(), "rb"));
+  if (!f) {
+    error = "No se pudo abrir el archivo comprimido";
+    return false;
+  }
+  if (is7z(path)) return peek7z(f.get(), headBytes, entries, error);
+  U_FSEEK(f.get(), 0, SEEK_END);
+  const uint64_t size = uint64_t(U_FTELL(f.get()));
+  uint8_t sig[4] = {};
+  if (!readAt(f.get(), 0, sig, 4) || std::memcmp(sig, "PK", 2) != 0) {
+    error = std::memcmp(sig, "Rar!", 4) == 0 ? "Los .rar no están soportados: usa .zip o .7z" : "No es un .zip ni un .7z válido";
+    return false;
+  }
+  return peekZip(f.get(), size, headBytes, entries, error);
+}
+
 }  // namespace unpack

@@ -89,6 +89,21 @@ export interface Spec extends TurboModule {
   qrCode(text: string): string;
   /** JSON [{console, file, found, md5ok, required, note}] de las BIOS conocidas. */
   biosStatus(): string;
+  /** Carpeta vinculada: abre el selector de carpetas de Archivos; resuelve su nombre ('' = cancelado). */
+  pickScanFolder(): Promise<string>;
+  /** JSON {linked, name, available} de la carpeta vinculada. */
+  scanFolderInfo(): string;
+  unlinkScanFolder(): void;
+  /** Analiza la carpeta vinculada sin cambiar nada: JSON {ok, error, folder, items, summary}. */
+  scanLinkedFolder(): Promise<string>;
+  /** Importa lo nuevo y reconocido (move = borra el original): JSON {ok, imported, bios, failed…}. */
+  importLinkedFolder(move: boolean): Promise<string>;
+  /** Progreso del escáner: JSON {busy, phase, current, done, total}. */
+  folderScanStatus(): string;
+  /** Identificación por cabecera de un juego: JSON {console, serial, title}. */
+  romInfo(romPath: string): string;
+  /** Sonido sutil de interfaz: 'move' | 'select' | 'back' | 'tab'. */
+  uiSound(kind: string): void;
   /** Crea el respaldo .zip de partidas y abre Compartir; resuelve la ruta. */
   exportBackup(): Promise<string>;
   /** Elige un .zip de respaldo y lo restaura; resuelve el número de archivos (-1 = cancelado). */

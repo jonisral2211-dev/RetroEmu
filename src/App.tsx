@@ -9,13 +9,28 @@ import LibraryScreen from './screens/LibraryScreen';
 import type { CoreId } from './emulator/cores';
 import { loadGfxPreset } from './emulator/graphics';
 import { addRecent } from './library/recents';
+import { autoSyncOnLaunch, importedCount, importSummary } from './library/folderSync';
+import { subscribeUiMode, UiMode } from './library/uiMode';
 import PlayerScreen from './screens/PlayerScreen';
+import SteamLibrary from './screens/steam/SteamLibrary';
 
 type Tab = 'library' | 'web' | 'guide';
 
 export default function App() {
   // Juego en curso: ruta y, en arcade, el núcleo elegido (FBNeo o MAME)
-  const [game, setGame] = useState<{ path: string; core?: CoreId; run?: number } | null>(null);
+  const [game, setGame] = useState<{ path: string; core?: CoreId; run?: number; slot?: number } | null>(null);
+  // Interfaz de la biblioteca: Gaming Mode (estilo SteamOS, por defecto) o clásica
+  const [uiMode, setUiModeState] = useState<UiMode | null>(null);
+  useEffect(() => subscribeUiMode(setUiModeState), []);
+  // Carpeta vinculada: al abrir la app se importa lo nuevo (aviso breve con el resumen)
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    autoSyncOnLaunch().then((r) => {
+      if (!r || !r.ok || (importedCount(r) === 0 && !r.failed)) return;
+      setNotice(importSummary(r));
+      setTimeout(() => setNotice(null), 6000);
+    });
+  }, []);
   // Calidad gráfica guardada: se lee al arrancar (el reproductor la consulta al abrir un juego)
   useEffect(() => {
     loadGfxPreset();
@@ -23,9 +38,9 @@ export default function App() {
   const romPath = game?.path ?? null;
   const [tab, setTab] = useState<Tab>('library');
 
-  const play = (path: string, core?: CoreId) => {
+  const play = (path: string, core?: CoreId, slot?: number) => {
     addRecent(path);
-    setGame({ path, core });
+    setGame({ path, core, slot });
   };
 
   // Ambas pantallas quedan montadas (la sesión del navegador y la biblioteca se conservan);
@@ -42,12 +57,17 @@ export default function App() {
             onExit={() => setGame(null)}
             onRetryWithCore={(core) => setGame({ path: game.path, core })}
             onRestart={() => setGame({ path: game.path, run: (game.run ?? 0) + 1 })}
+            startSlot={game.slot}
           />
         ) : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>
           <View style={styles.root}>
             <View style={[styles.pane, tab !== 'library' && styles.hidden]}>
-              <LibraryScreen onPlay={play} />
+              {uiMode === 'classic' ? (
+                <LibraryScreen onPlay={play} />
+              ) : uiMode === 'steam' ? (
+                <SteamLibrary onPlay={play} active={!romPath && tab === 'library'} />
+              ) : null}
             </View>
             <View style={[styles.pane, tab !== 'web' && styles.hidden]}>
               <BrowserScreen />
@@ -79,6 +99,11 @@ export default function App() {
             <TabButton label="Guía" icon="guide" active={tab === 'guide'} onPress={() => setTab('guide')} />
           </View>
         </View>
+        {notice && !game ? (
+          <View style={styles.notice} pointerEvents="none">
+            <Text style={styles.noticeText}>📁 {notice}</Text>
+          </View>
+        ) : null}
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -161,4 +186,17 @@ const styles = StyleSheet.create({
   },
   tabText: { color: theme.textDim, fontWeight: '600', fontSize: 11, letterSpacing: 0.4 },
   tabTextActive: { color: theme.amber, fontWeight: '800' },
+  notice: {
+    position: 'absolute',
+    top: 60,
+    alignSelf: 'center',
+    maxWidth: '90%',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(21,23,29,0.96)',
+    borderWidth: 1,
+    borderColor: theme.amber,
+  },
+  noticeText: { color: theme.text, fontSize: 13, fontWeight: '700', textAlign: 'center' },
 });

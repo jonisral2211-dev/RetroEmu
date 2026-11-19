@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { Image, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Libretro } from 'react-native-libretro';
+import { PHYS, readPad } from '../input/uiNav';
 import type { DirMode } from '../input/layouts';
 import type { GamepadStatus } from '../input/useGamepadStatus';
 import { isRoomCode, loadRelay, parseRelay, saveRelay, WEBPAD_HTTP_PORT } from '../net/relaySettings';
@@ -63,7 +64,17 @@ function useFocusItem(item: Omit<FocusItem, 'ref'>): { ref: React.RefObject<View
   return { ref, focused: !!ctx && ctx.focused === index };
 }
 
-const PAD = { B: 1, SELECT: 4, START: 8, UP: 16, DOWN: 32, LEFT: 64, RIGHT: 128, A: 256 };
+// gamepadInput() da botones FÍSICOS (PHYS): ✕ elige, ○ / Create cierran, Options elige
+const PAD = {
+  B: PHYS.CROSS,
+  SELECT: PHYS.OPTIONS,
+  START: PHYS.MENU,
+  UP: PHYS.UP,
+  DOWN: PHYS.DOWN,
+  LEFT: PHYS.LEFT,
+  RIGHT: PHYS.RIGHT,
+  A: PHYS.CIRCLE,
+};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -228,12 +239,7 @@ export function GameMenu(p: GameMenuProps) {
   useEffect(() => {
     let last = 0;
     const id = setInterval(() => {
-      let buttons = 0;
-      try {
-        buttons = Number(JSON.parse(Libretro.gamepadInput()).buttons) || 0;
-      } catch {
-        return;
-      }
+      const buttons = readPad();
       const pressed = buttons & ~last;
       last = buttons;
       if (!pressed) return;

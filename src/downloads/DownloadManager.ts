@@ -59,6 +59,11 @@ export function onRomImported(listener: (path: string) => void): () => void {
   };
 }
 
+/** Avisa a la biblioteca de que llegaron juegos por otra vía (carpeta vinculada, Wi-Fi…). */
+export function notifyRomImported(path: string): void {
+  importedListeners.forEach((l) => l(path));
+}
+
 function decodeSafe(s: string): string {
   try {
     return decodeURIComponent(s);

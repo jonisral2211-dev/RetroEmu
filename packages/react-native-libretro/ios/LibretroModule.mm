@@ -4,7 +4,9 @@
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
+#import "FolderScanner.h"
 #import "GameRenderView.h"
+#import <AudioToolbox/AudioToolbox.h>
 #import "JLTools.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "GamepadBridge.h"
@@ -821,6 +823,13 @@ static void organizeDocumentsRoot(NSString *docs, const romzip::Folders &folders
     if (![fm fileExistsAtPath:full isDirectory:&isDir] || isDir) continue;
     NSString *ext = name.pathExtension.lowercaseString;
 
+    // BIOS (por nombre o MD5, p. ej. extraídas de un .zip de la carpeta vinculada) -> system/
+    NSString *bios = [JLFolderScanner biosTargetFor:full docs:docs];
+    if (bios) {
+      [fm createDirectoryAtPath:bios.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+      moveIfFree(full, bios);
+      continue;
+    }
     if (isPortDataName(name)) {
       moveIfFree(full, [[docs stringByAppendingPathComponent:@"ports"] stringByAppendingPathComponent:name]);
       continue;
@@ -1429,6 +1438,51 @@ static NSString *biosDestination(NSString *docs, NSString *name) {
   NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:
                                                [NSString stringWithFormat:@"qr-%lu.png", (unsigned long)text.hash]];
   return [JLTools writeQRCode:text toPath:path] ? path : @"";
+}
+
+// ---- Carpeta vinculada (Descargas / iCloud / Archivos): escáner y auto-clasificador ------------
+- (void)pickScanFolder:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [JLFolderScanner pickFolderWithCompletion:^(NSString *name, NSString *error) {
+    if (error) reject(@"folder", error, nil);
+    else resolve(name ?: @"");
+  }];
+}
+
+- (NSString *)scanFolderInfo {
+  return [JLFolderScanner linkedInfo];
+}
+
+- (void)unlinkScanFolder {
+  [JLFolderScanner unlink];
+}
+
+- (void)scanLinkedFolder:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    resolve([JLFolderScanner analyze:documentsDirectory()]);
+  });
+}
+
+- (void)importLinkedFolder:(BOOL)move resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    resolve([JLFolderScanner importInto:documentsDirectory() move:move]);
+  });
+}
+
+- (NSString *)folderScanStatus {
+  return [JLFolderScanner status];
+}
+
+- (NSString *)romInfo:(NSString *)romPath {
+  return [JLFolderScanner romInfo:normalizeRomPath(romPath)];
+}
+
+// Sonidos sutiles de la interfaz (respetan el interruptor de silencio del iPhone)
+- (void)uiSound:(NSString *)kind {
+  SystemSoundID sound = 1104;  // clic de teclado: mover el foco
+  if ([kind isEqualToString:@"select"]) sound = 1057;  // Tink
+  else if ([kind isEqualToString:@"back"]) sound = 1103;
+  else if ([kind isEqualToString:@"tab"]) sound = 1105;
+  AudioServicesPlaySystemSound(sound);
 }
 
 - (NSString *)biosStatus {

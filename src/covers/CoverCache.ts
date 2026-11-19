@@ -86,6 +86,12 @@ function rank(name: string): number {
   return r * 1000 + name.length;
 }
 
+// Tipo de imagen: carátula (Named_Boxarts) o captura panorámica para los banners (Named_Snaps).
+// Las capturas se guardan aparte, en Documents/covers/<consola>/snaps/.
+type Art = 'Named_Boxarts' | 'Named_Snaps';
+const BOX: Art = 'Named_Boxarts';
+const artDir = (console: string, art: Art) => (art === BOX ? `${COVERS_DIR}/${console}` : `${COVERS_DIR}/${console}/snaps`);
+
 // ---- Índice por sistema ---------------------------------------------------------
 type Index = Map<string, string[]>; // titleKey -> nombres oficiales (sin .png)
 const indexes = new Map<string, Promise<Index | null>>();
@@ -102,8 +108,8 @@ function buildIndex(names: string[]): Index {
   return idx;
 }
 
-async function fetchIndex(console: string): Promise<Index | null> {
-  const dir = `${COVERS_DIR}/${console}`;
+async function fetchIndex(console: string, art: Art = BOX): Promise<Index | null> {
+  const dir = artDir(console, art);
   const cache = `${dir}/.index.json`;
   try {
     await RNFS.mkdir(dir);
@@ -114,7 +120,7 @@ async function fetchIndex(console: string): Promise<Index | null> {
       }
     }
     const tmp = `${dir}/.index.html`;
-    const url = `${BASE}/${encodeURIComponent(SYSTEM_DIR[console])}/Named_Boxarts/`;
+    const url = `${BASE}/${encodeURIComponent(SYSTEM_DIR[console])}/${art}/`;
     const res = await RNFS.downloadFile({ fromUrl: url, toFile: tmp }).promise;
     if (res.statusCode !== 200) throw new Error(String(res.statusCode));
     const html = await RNFS.readFile(tmp, 'utf8');
@@ -142,22 +148,23 @@ async function fetchIndex(console: string): Promise<Index | null> {
   }
 }
 
-function getIndex(console: string): Promise<Index | null> {
-  let p = indexes.get(console);
+function getIndex(console: string, art: Art = BOX): Promise<Index | null> {
+  const k = art === BOX ? console : `${console}:${art}`;
+  let p = indexes.get(k);
   if (!p) {
-    p = fetchIndex(console);
-    indexes.set(console, p);
+    p = fetchIndex(console, art);
+    indexes.set(k, p);
     p.then((idx) => {
-      if (!idx) indexes.delete(console); // reintentar en la próxima carátula
+      if (!idx) indexes.delete(k); // reintentar en la próxima carátula
     });
   }
   return p;
 }
 
 /** Nombres oficiales a probar, del más probable al menos. */
-async function candidates(console: string, romName: string): Promise<string[]> {
+async function candidates(console: string, romName: string, art: Art = BOX): Promise<string[]> {
   const exact = thumbnailName(romName);
-  const idx = await getIndex(console);
+  const idx = await getIndex(console, art);
   // Arcade: el nombre corto del romset (kof2002) se traduce a su título (The King of Fighters 2002)
   const full = console === 'mame' || console === 'fbneo' ? arcadeTitle(romName) : null;
   const found = [...(idx?.get(titleKey(romName)) ?? []), ...(full ? idx?.get(titleKey(full)) ?? [] : [])];
@@ -173,12 +180,14 @@ type Listener = (uri: string | null) => void;
 
 const resolved = new Map<string, string | null>(); // clave -> file:// o null (sin carátula)
 const listeners = new Map<string, Set<Listener>>();
-const queue: { key: string; console: string; name: string; rom: string }[] = [];
+type Job = { key: string; console: string; name: string; rom: string; art?: Art };
+const queue: Job[] = [];
 const queued = new Set<string>();
 let running = 0;
 
-const keyOf = (console: string, name: string) => `${console}/${name}`;
-const fileOf = (console: string, name: string) => `${COVERS_DIR}/${console}/${name}.png`;
+const keyOf = (console: string, name: string, art: Art = BOX) =>
+  art === BOX ? `${console}/${name}` : `${console}/snaps/${name}`;
+const fileOf = (console: string, name: string, art: Art = BOX) => `${artDir(console, art)}/${name}.png`;
 // Miniatura elegida por el usuario desde Fotos: tiene prioridad sobre la descargada
 const customOf = (console: string, name: string) => `${COVERS_DIR}/${console}/${name}.custom.png`;
 
@@ -187,8 +196,8 @@ function emit(key: string, uri: string | null) {
   listeners.get(key)?.forEach((l) => l(uri));
 }
 
-async function tryDownload(console: string, official: string, file: string): Promise<boolean> {
-  const url = `${BASE}/${encodeURIComponent(SYSTEM_DIR[console])}/Named_Boxarts/${encodeURIComponent(official)}.png`;
+async function tryDownload(console: string, official: string, file: string, art: Art = BOX): Promise<boolean> {
+  const url = `${BASE}/${encodeURIComponent(SYSTEM_DIR[console])}/${art}/${encodeURIComponent(official)}.png`;
   const tmp = `${file}.part`;
   const res = await RNFS.downloadFile({ fromUrl: url, toFile: tmp, background: true }).promise;
   if (res.statusCode === 200 && res.bytesWritten > 0) {
@@ -200,12 +209,13 @@ async function tryDownload(console: string, official: string, file: string): Pro
   return false;
 }
 
-async function work(job: { key: string; console: string; name: string; rom: string }) {
-  const file = fileOf(job.console, job.name);
+async function work(job: Job) {
+  const art = job.art ?? BOX;
+  const file = fileOf(job.console, job.name, art);
   const miss = `${file}.miss3`;
   const custom = customOf(job.console, job.name);
   try {
-    if (await RNFS.exists(custom)) {
+    if (art === BOX && (await RNFS.exists(custom))) {
       const st = await RNFS.stat(custom);
       emit(job.key, `file://${custom}?v=${new Date(st.mtime).getTime()}`);
       return;
@@ -221,9 +231,9 @@ async function work(job: { key: string; console: string; name: string; rom: stri
         return;
       }
     }
-    await RNFS.mkdir(`${COVERS_DIR}/${job.console}`);
-    for (const official of (await candidates(job.console, job.rom)).slice(0, 4)) {
-      if (await tryDownload(job.console, official, file)) {
+    await RNFS.mkdir(artDir(job.console, art));
+    for (const official of (await candidates(job.console, job.rom, art)).slice(0, 4)) {
+      if (await tryDownload(job.console, official, file, art)) {
         if (await RNFS.exists(miss)) await RNFS.unlink(miss);
         emit(job.key, `file://${file}`);
         return;
@@ -254,6 +264,18 @@ function pump() {
  * está en caché). Devuelve la función para cancelar la suscripción.
  */
 export function subscribeCover(romPath: string, console: string, cb: Listener): () => void {
+  return subscribeArt(romPath, console, cb, BOX);
+}
+
+/**
+ * Captura panorámica del juego (Named_Snaps de libretro-thumbnails) para los Hero Banners de la
+ * interfaz SteamOS. Misma caché local y misma búsqueda por título que las carátulas.
+ */
+export function subscribeHero(romPath: string, console: string, cb: Listener): () => void {
+  return subscribeArt(romPath, console, cb, 'Named_Snaps');
+}
+
+function subscribeArt(romPath: string, console: string, cb: Listener, art: Art): () => void {
   if (console === 'ports') {
     const port = portThumbConsole(romPath);
     if (!port) {
@@ -269,7 +291,7 @@ export function subscribeCover(romPath: string, console: string, cb: Listener): 
   }
   const rom = romPath.split('/').pop() ?? romPath;
   const name = thumbnailName(romPath);
-  const key = keyOf(console, name);
+  const key = keyOf(console, name, art);
   let set = listeners.get(key);
   if (!set) listeners.set(key, (set = new Set()));
   set.add(cb);
@@ -277,7 +299,7 @@ export function subscribeCover(romPath: string, console: string, cb: Listener): 
     cb(resolved.get(key) ?? null);
   } else if (!queued.has(key)) {
     queued.add(key);
-    queue.push({ key, console, name, rom });
+    queue.push({ key, console, name, rom, art });
     pump();
   }
   return () => {

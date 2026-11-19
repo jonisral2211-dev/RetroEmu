@@ -18,7 +18,7 @@ import { Libretro } from 'react-native-libretro';
 import RNFS from 'react-native-fs';
 import { arcadeTitle } from '../covers/arcadeNames';
 import { customCoverChanged, customCoverPath, forgetCover, reloadCover, subscribeCover } from '../covers/CoverCache';
-import { onRomImported } from '../downloads/DownloadManager';
+import { useLibrary } from '../library/useLibrary';
 import {
   ALL_CONSOLES,
   ARCADE_CORES,
@@ -40,12 +40,14 @@ import { theme } from '../theme';
 import { ART_GLOW, ArtKind, ConsoleArt } from '../ui/ConsoleArt';
 import { ConsoleIcon } from '../ui/ConsoleIcon';
 import { JLBadge } from '../ui/JLBadge';
+import FolderScanScreen from './FolderScanScreen';
 import OrganizerScreen from './OrganizerScreen';
 import { SettingsScreen, WifiUploadScreen } from './ToolsScreen';
 import { ContinueRow, DynamicBackdrop } from './ContinueRow';
 import { subscribePlaytime } from '../library/playtime';
 
-type Props = { onPlay: (romPath: string, core?: CoreId) => void };
+export type PlayFn = (romPath: string, core?: CoreId, slot?: number) => void;
+type Props = { onPlay: PlayFn };
 type Entry = { path: string; console: string };
 
 // Tarjetas de la sección CONSOLAS (orden y nombre completo)
@@ -71,7 +73,7 @@ const CONSOLE_CARDS: { id: Console; name: string }[] = [
 const ARCADE_CHOICE_KEY = 'jl.arcadecore.v1';
 let arcadeChoices: Record<string, CoreId> | null = null;
 
-async function getArcadeChoices(): Promise<Record<string, CoreId>> {
+export async function getArcadeChoices(): Promise<Record<string, CoreId>> {
   if (arcadeChoices) return arcadeChoices;
   try {
     const raw = await AsyncStorage.getItem(ARCADE_CHOICE_KEY);
@@ -88,7 +90,7 @@ function rememberArcadeChoice(path: string, core: CoreId) {
 }
 
 // Pregunta con qué núcleo abrir un romset arcade. El de su carpeta va primero (recomendado).
-function chooseArcadeCore(entry: Entry, onPlay: Props['onPlay']) {
+export function chooseArcadeCore(entry: Entry, onPlay: Props['onPlay']) {
   const preferred = coreForConsole(entry.console);
   const order = [...ARCADE_CORES].sort((a, b) => (a === preferred ? -1 : b === preferred ? 1 : 0));
   Alert.alert(
@@ -118,7 +120,7 @@ function relativeToDocuments(path: string): string {
 }
 
 // Título legible: sin extensión ni etiquetas entre paréntesis/corchetes
-function displayTitle(path: string): string {
+export function displayTitle(path: string): string {
   const port = portTitle(path);
   if (port) return port;
   const arcade = /\.zip$/i.test(path) ? arcadeTitle(path) : null;
@@ -176,7 +178,7 @@ async function moveGame(path: string, folder: string): Promise<string> {
   return `${destDir}/${path.split('/').pop()}`;
 }
 
-function confirmDelete(entry: Entry, onRemoved: () => void) {
+export function confirmDelete(entry: Entry, onRemoved: () => void) {
   const name = entry.path.split('/').pop() ?? entry.path;
   const extra = /\.cue$/i.test(entry.path) ? ' y sus pistas .bin' : '';
   Alert.alert('Eliminar juego', `Se borrará "${name}"${extra} del iPhone. No se puede deshacer.`, [
@@ -196,7 +198,7 @@ function confirmDelete(entry: Entry, onRemoved: () => void) {
   ]);
 }
 
-function chooseMoveTarget(entry: Entry, onMoved: () => void) {
+export function chooseMoveTarget(entry: Entry, onMoved: () => void) {
   const current = relativeToDocuments(entry.path).split('/')[0];
   Alert.alert(
     'Mover a otra consola',
@@ -219,7 +221,7 @@ function chooseMoveTarget(entry: Entry, onMoved: () => void) {
 }
 
 // Miniatura elegida desde la galería de Fotos (se guarda en Documents/covers/<consola>/)
-function pickCover(entry: Entry) {
+export function pickCover(entry: Entry) {
   Libretro.pickImage(customCoverPath(entry.path, entry.console))
     .then((ok) => {
       if (ok) customCoverChanged(entry.path, entry.console);
@@ -324,85 +326,57 @@ function explainUnavailable(entry: Entry) {
   Alert.alert('No se puede abrir este juego', message);
 }
 
-type UnpackResult = { name: string; ok: boolean; files: number; error: string };
+/**
+ * Abre un juego con las mismas comprobaciones que la cuadrícula clásica: archivo incompleto,
+ * núcleo incluido y, en arcade, romset/BIOS y núcleo elegido. slot = ranura 0-4 de la ficha.
+ */
+export async function launchEntry(entry: Entry, onPlay: PlayFn, onRemoved: () => void, slot?: number): Promise<void> {
+  try {
+    const size = Number((await RNFS.stat(entry.path)).size);
+    if (!isSheet(entry.path) && size < MIN_GAME_BYTES) {
+      Alert.alert(
+        'Archivo incompleto',
+        `"${entry.path.split('/').pop()}" pesa solo ${formatKb(size)}: está dañado o la descarga se cortó.`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar', style: 'destructive', onPress: () => confirmDelete(entry, onRemoved) },
+        ],
+      );
+      return;
+    }
+  } catch {
+    // sin tamaño: se intenta abrir igualmente
+  }
+  const core = coreForConsole(entry.console, entry.path);
+  if (!core || !ENABLED_CORES.has(core)) {
+    explainUnavailable(entry);
+    return;
+  }
+  if (isArcadeConsole(entry.console)) {
+    if (!(await validateArcade(entry, onRemoved))) return;
+    const saved = (await getArcadeChoices())[entry.path];
+    if (saved) onPlay(entry.path, saved, slot);
+    else chooseArcadeCore(entry, onPlay);
+    return;
+  }
+  onPlay(entry.path, undefined, slot);
+}
 
 export default function LibraryScreen({ onPlay }: Props) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  // Consola abierta (vista dedicada) o null = pantalla principal (consolas + recientes)
+  const { entries, error, unpacking, refresh } = useLibrary();
   const [view, setView] = useState<Console | null>(null);
   const [query, setQuery] = useState('');
   const [organizerOpen, setOrganizerOpen] = useState(false);
   const [wifiOpen, setWifiOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [folderOpen, setFolderOpen] = useState(false);
   const [recents, setRecents] = useState<string[]>([]);
-  const [unpacking, setUnpacking] = useState<string[] | null>(null);
-  const unpackBusy = useRef(false);
-  const unpackFailed = useRef(new Set<string>());
   const { width } = useWindowDimensions();
   const columns = width >= 900 ? 5 : width >= 700 ? 4 : width >= 560 ? 3 : 2;
   const cardW = (width - SIDE * 2 - GAP * (columns - 1)) / columns;
   const consoleCols = width >= 900 ? 5 : width >= 600 ? 3 : 2;
   const consoleW = (width - SIDE * 2 - GAP * (consoleCols - 1)) / consoleCols;
 
-  // El nativo organiza la raíz de Documents, verifica cada ROM por contenido y deduplica
-  const listNow = useCallback(() => {
-    try {
-      const list = Libretro.listRoms();
-      setEntries(list.map((path) => ({ path, console: Libretro.consoleOf(path) })));
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  // .zip/.7z en carpetas de consola o descargas grandes: se descomprimen en segundo plano y
-  // la biblioteca se actualiza al terminar. Un comprimido que falla no se reintenta solo
-  // (sí al pulsar Actualizar).
-  const refresh = useCallback(
-    (manual = false) => {
-      listNow();
-      if (unpackBusy.current) return;
-      if (manual) unpackFailed.current.clear();
-      let pending: string[] = [];
-      try {
-        pending = Libretro.pendingArchives().filter((p) => !unpackFailed.current.has(p));
-      } catch {
-        return;
-      }
-      if (!pending.length) return;
-      unpackBusy.current = true;
-      setUnpacking(pending);
-      Libretro.unpackArchives()
-        .then((json) => {
-          const results = JSON.parse(json) as UnpackResult[];
-          const failed = results.filter((r) => !r.ok);
-          pending.forEach((p) => {
-            if (failed.some((f) => p.endsWith(`/${f.name}`))) unpackFailed.current.add(p);
-          });
-          if (failed.length) {
-            Alert.alert(
-              'No se pudo descomprimir',
-              failed.map((f) => `• ${f.name}: ${f.error}`).join('\n'),
-            );
-          }
-        })
-        .catch((e) => Alert.alert('Error al descomprimir', String(e)))
-        .finally(() => {
-          unpackBusy.current = false;
-          setUnpacking(null);
-          listNow();
-        });
-    },
-    [listNow],
-  );
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Una descarga terminada se añade a la biblioteca sin reiniciar la app
-  useEffect(() => onRomImported(() => refresh()), [refresh]);
   useEffect(() => subscribeRecents(setRecents), []);
   const [playtime, setPlaytime] = useState<Record<string, number>>({});
   useEffect(() => subscribePlaytime(setPlaytime), []);
@@ -592,7 +566,16 @@ export default function LibraryScreen({ onPlay }: Props) {
                 setSettingsOpen(false);
                 setWifiOpen(true);
               }}
+              onFolderScan={() => {
+                setSettingsOpen(false);
+                setFolderOpen(true);
+              }}
             />
+          </View>
+        ) : null}
+        {folderOpen ? (
+          <View style={StyleSheet.absoluteFill}>
+            <FolderScanScreen onClose={() => setFolderOpen(false)} onImported={() => refresh(true)} />
           </View>
         ) : null}
       </View>

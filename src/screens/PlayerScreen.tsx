@@ -77,6 +77,7 @@ import {
 import ControllerScreen from './ControllerScreen';
 import GuideScreen from './GuideScreen';
 import Svg, { Path, Rect } from 'react-native-svg';
+import { slotsFor } from '../emulator/slots';
 
 type Props = {
   romPath: string;
@@ -86,16 +87,10 @@ type Props = {
   onRetryWithCore?: (core: CoreId) => void;
   /** Vuelve a abrir el juego (p. ej. tras cambiar la calidad gráfica). */
   onRestart?: () => void;
+  /** Ranura 0-4 desde la que empezar (ficha del juego); sin ella se reanuda el auto-guardado. */
+  startSlot?: number;
 };
 
-// Ranuras de guardado. Un mismo juego abierto con otro núcleo (FBNeo vs MAME, DeSmuME vs
-// melonDS) usa ranuras propias: sus estados no son compatibles entre núcleos.
-function slotsFor(core: CoreId | null): { save: number; auto: number } {
-  // SwanStation y PCSX abren los mismos juegos pero sus estados no son compatibles
-  if (core === 'swanstation') return { save: 2, auto: 97 };
-  const alt = core === 'fbneo' || core === 'desmume';
-  return alt ? { save: 1, auto: 98 } : { save: 0, auto: 99 };
-}
 
 const isNdsCore = (c: CoreId | null) => c === 'melonds' || c === 'desmume';
 
@@ -181,7 +176,7 @@ function gameTitle(path: string): string {
   return base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || base;
 }
 
-export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore, onRestart }: Props) {
+export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWithCore, onRestart, startSlot }: Props) {
   // Consola por contenido verificado (nativo), no por extensión; en arcade, el núcleo elegido
   const baseCore = useMemo(
     () => coreOverride ?? coreForConsole(Libretro.consoleOf(romPath), romPath),
@@ -467,8 +462,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       return;
     }
     const slots = slotsFor(started);
-    // Reanuda donde se dejó (si hay auto-guardado de la última salida)
-    Libretro.loadState(slots.auto);
+    // Ranura elegida en la ficha del juego; si no, reanuda donde se dejó (auto-guardado)
+    if (startSlot === undefined || !Libretro.loadState(10 + slots.save * 10 + startSlot)) Libretro.loadState(slots.auto);
     Libretro.start();
     setLoadedCore(started);
     setReady(true);
