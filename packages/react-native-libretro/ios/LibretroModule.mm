@@ -1974,6 +1974,92 @@ static id parseJSON(NSString *json) {
   [[TVOutput shared] showRoutePicker];
 }
 
+// ---- Clips de partida (ReplayKit) ----
+// Reduce una imagen en disco para que su lado mayor no pase de maxPixels (ahorro de RAM en carátulas)
+- (NSNumber *)resizeImage:(NSString *)path maxPixels:(double)maxPixels {
+  NSURL *url = [NSURL fileURLWithPath:path];
+  CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+  if (!source) return @NO;
+  NSDictionary *options = @{
+    (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways : @YES,
+    (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform : @YES,
+    (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize : @(maxPixels),
+  };
+  CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+  CFRelease(source);
+  if (!image) return @NO;
+  NSMutableData *data = [NSMutableData data];
+  CGImageDestinationRef destination =
+      CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, CFSTR("public.png"), 1, NULL);
+  BOOL ok = NO;
+  if (destination) {
+    CGImageDestinationAddImage(destination, image, NULL);
+    ok = CGImageDestinationFinalize(destination) && [data writeToFile:path atomically:YES];
+    CFRelease(destination);
+  }
+  CGImageRelease(image);
+  return @(ok);
+}
+
+- (BOOL)clipAvailable {
+  // Nunca lanza: si ReplayKit falla, el menú simplemente no ofrece clips
+  @try {
+    return RPScreenRecorder.sharedRecorder.available;
+  } @catch (NSException *e) {
+    return NO;
+  }
+}
+
+- (BOOL)clipRecording {
+  return g_clipActive;
+}
+
+- (void)clipStart:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  RPScreenRecorder *recorder = RPScreenRecorder.sharedRecorder;
+  if (!recorder.available) {
+    reject(@"clip", @"La grabación de pantalla no está disponible en este dispositivo", nil);
+    return;
+  }
+  if (g_clipActive) {
+    resolve(@YES);
+    return;
+  }
+  [recorder startRecordingWithMicrophoneEnabled:YES
+                                        handler:^(NSError *error) {
+                                          if (error) {
+                                            reject(@"clip", error.localizedDescription, error);
+                                            return;
+                                          }
+                                          g_clipActive = YES;
+                                          resolve(@YES);
+                                        }];
+}
+
+// Detiene la grabación y muestra la vista previa (desde ahí se guarda en Fotos o se comparte)
+- (void)clipStop:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!g_clipActive) {
+    resolve(@NO);
+    return;
+  }
+  [RPScreenRecorder.sharedRecorder stopRecordingWithHandler:^(RPPreviewViewController *preview, NSError *error) {
+    g_clipActive = NO;
+    if (error || !preview) {
+      reject(@"clip", error.localizedDescription ?: @"No se pudo terminar la grabación", error);
+      return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      g_clipPreview = [JLClipPreview new];
+      preview.previewControllerDelegate = g_clipPreview;
+      UIViewController *top = topViewController();
+      if (top) {
+        [top presentViewController:preview animated:YES completion:nil];
+      }
+      resolve(@YES);
+    });
+  }];
+}
+
+
 // ---- Mandos físicos: mapeo, zona muerta, prueba de botones y búsqueda -----------------------
 - (void)setPadMapping:(NSArray *)mapping {
   [[GamepadBridge sharedBridge] setMapping:mapping];

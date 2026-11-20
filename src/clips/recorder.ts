@@ -11,9 +11,17 @@ export function clipsAvailable(): boolean {
 }
 
 export function startClip(): Promise<boolean> {
-  return Libretro.clipStart();
+  try {
+    return Libretro.clipStart();
+  } catch (e) {
+    return Promise.reject(e);
+  }
 }
 
 export function stopClip(): Promise<boolean> {
-  return Libretro.clipStop();
+  try {
+    return Libretro.clipStop();
+  } catch (e) {
+    return Promise.reject(e);
+  }
 }
