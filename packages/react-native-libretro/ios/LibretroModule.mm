@@ -2093,6 +2093,11 @@ static id parseJSON(NSString *json) {
   return [NSString stringWithUTF8String:localplay::statusJson().c_str()];
 }
 
+// Reescalado MetalFX (0 apagado, 1 HD, 2 4K): en vivo, sin reiniciar el juego
+- (void)setMetalFX:(double)mode {
+  [GameRenderView setMetalFX:(uint32_t)mode];
+}
+
 - (void)setFrameCap:(double)fps {
   host::setFrameCap(fps);
 }

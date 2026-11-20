@@ -116,6 +116,8 @@ export interface Spec extends TurboModule {
   resizeImage(path: string, maxPixels: number): boolean;
   /** Límite de FPS del emulador (0 = libre): ahorro de batería. */
   setFrameCap(fps: number): void;
+  /** Reescalado MetalFX: 0 apagado, 1 HD (1080p), 2 4K. Sin soporte del dispositivo no hace nada. */
+  setMetalFX(mode: number): void;
   /** Turbo / auto-fire de los botones de cara del mando físico. */
   setTurbo(on: boolean): void;
   /** Multijugador en red local: arranca el servidor (puerto 8765). Devuelve la URL o "". */

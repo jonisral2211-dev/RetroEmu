@@ -209,6 +209,9 @@ export type GameMenuProps = {
   /** Turbo / auto-fire de los botones de cara (táctil y mando físico). */
   turbo: boolean;
   onTurbo: (v: boolean) => void;
+  /** Reescalado MetalFX (GPU): 0 apagado, 1 HD 1080p, 2 4K. */
+  metalFx: number;
+  onMetalFx: (m: number) => void;
   /** Modo control forzado a mano (Chromecast, capturadora…). */
   forceController: boolean;
   onForceController: (v: boolean) => void;
@@ -372,6 +375,16 @@ export function GameMenu(p: GameMenuProps) {
                 { id: '0', label: 'Libre' },
                 { id: '60', label: '60 FPS' },
                 { id: '30', label: '30 · batería' },
+              ]}
+            />
+            <Segmented
+              label="Reescalado MetalFX (GPU)"
+              value={String(p.metalFx)}
+              onChange={(v) => p.onMetalFx(Number(v))}
+              options={[
+                { id: '0', label: 'Apagado' },
+                { id: '1', label: 'HD 1080p' },
+                { id: '2', label: '4K' },
               ]}
             />
             <Action

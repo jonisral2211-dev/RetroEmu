@@ -17,6 +17,7 @@ Pod::Spec.new do |s|
   s.private_header_files = ['ios/lzma/*.h', 'ios/rcheevos/**/*.h']
   s.vendored_frameworks = 'ios/Frameworks/*.framework'
   s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController', 'CoreHaptics', 'AVKit', 'PhotosUI', 'OpenGLES', 'CoreImage', 'UniformTypeIdentifiers', 'CoreMotion', 'ReplayKit', 'ImageIO'
+  s.weak_frameworks     = 'MetalFX'
   s.libraries           = 'c++', 'z'
   s.requires_arc        = true
 

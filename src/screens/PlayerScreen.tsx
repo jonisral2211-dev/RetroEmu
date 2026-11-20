@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getGfxPreset, gfxOptions, GFX_CORES, GfxPreset, saveGfxPreset } from '../emulator/graphics';
+import { loadMetalFx, MetalFxMode, sanitizeMetalFx, saveMetalFx } from '../emulator/metalfx';
 import {
   defaultImagePrefs,
   ImagePrefs,
@@ -216,6 +217,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   // Ahorro de batería (límite de FPS, 0 = libre) y turbo / auto-fire, por juego
   const [fpsCap, setFpsCap] = useState(0);
   const [turbo, setTurbo] = useState(false);
+  // Reescalado MetalFX (GPU) por juego; sin valor propio se usa el predeterminado global
+  const [metalFxMode, setMetalFxMode] = useState<MetalFxMode>(0);
   // Multijugador en red local: servidor para P2-P4 (el iPhone es P1)
   const [localUrl, setLocalUrl] = useState('');
   const [localSeats, setLocalSeats] = useState<LocalSeat[]>([]);
@@ -249,6 +252,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     setTouchTurbo(turbo);
     Libretro.setTurbo(turbo);
   }, [cfgReady, turbo]);
+  useEffect(() => {
+    if (cfgReady) Libretro.setMetalFX(metalFxMode);
+  }, [cfgReady, metalFxMode]);
   // Guarda un cambio del menú rápido en el perfil del juego
   const saveCfg = (patch: GameConfig) => {
     gameCfgRef.current = { ...gameCfgRef.current, ...patch };
@@ -256,7 +262,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   };
   useEffect(() => {
     let alive = true;
-    loadGameConfig(romPath).then((c) => {
+    Promise.all([loadGameConfig(romPath), loadMetalFx()]).then(([c, globalMetalFx]) => {
       if (!alive) return;
       // Modo seguro (el arranque anterior no terminó): se ignoran los ajustes del perfil
       const safe = safeModeFlag();
@@ -264,6 +270,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       setPspRes(safe ? 1 : (c.pspRes ?? 1));
       setFpsCap(safe ? 0 : (c.fpsCap ?? 0));
       setTurbo(safe ? false : (c.turbo ?? false));
+      setMetalFxMode(safe ? 0 : sanitizeMetalFx(c.metalFx ?? globalMetalFx));
       if (safe) flash('Modo seguro: el arranque anterior no terminó. Se usan ajustes base.');
       setCfgReady(true);
     });
@@ -1146,6 +1153,14 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           setTurbo(v);
           saveCfg({ turbo: v });
           flash(v ? 'Turbo activado en los botones de cara' : 'Turbo desactivado');
+        }}
+        metalFx={metalFxMode}
+        onMetalFx={(m) => {
+          const mode = sanitizeMetalFx(m);
+          setMetalFxMode(mode);
+          saveMetalFx(mode);
+          saveCfg({ metalFx: mode });
+          flash(mode ? `MetalFX ${mode === 2 ? '4K' : 'HD'}: si el iPhone no lo soporta, se dibuja normal` : 'MetalFX apagado');
         }}
         disks={disks}
         onDisk={(i) => {

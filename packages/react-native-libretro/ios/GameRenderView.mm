@@ -178,6 +178,15 @@ static const NSUInteger kTextureRing = 3;
 // Ajustes de imagen del menú (comunes al iPhone y a la TV, se aplican en vivo cada frame):
 // shader 0 = según el filtro (Nítido / Suavizado), 3 = CRT, 4 = LCD; suavizado de bordes y
 // nitidez CAS 0..1; color 0 Normal, 1 Vívido, 2 Cine
+// MetalFX (iOS 16+): se compila solo si el SDK lo trae; en iOS 15 o sin soporte no hace nada
+#if __has_include(<MetalFX/MetalFX.h>)
+#import <MetalFX/MetalFX.h>
+#define JL_HAS_METALFX 1
+#endif
+
+// 0 apagado, 1 HD (tope 1080p), 2 4K (tope 2160p)
+static uint32_t g_metalFX = 0;
+
 static uint32_t g_proShader = 0;
 static float g_smooth = 0.0f;
 static float g_cas = 0.0f;
@@ -189,6 +198,12 @@ static uint32_t g_color = 0;
   g_smooth = std::min(1.0f, std::max(0.0f, smooth));
   g_cas = std::min(1.0f, std::max(0.0f, cas));
   g_color = color;
+}
+@end
+
+@implementation GameRenderView (MetalFX)
++ (void)setMetalFX:(uint32_t)mode {
+  g_metalFX = mode > 2 ? 0 : mode;
 }
 @end
 
@@ -211,6 +226,10 @@ static uint32_t g_color = 0;
   id<MTLTexture> _texture;  // la última subida, la que se dibuja
   uint32_t _uploadedVersion;
   NSInteger _uploadedRegion;
+  // MetalFX: escalador y textura de salida (se recrean solo si cambian las dimensiones)
+  id _scaler;
+  id<MTLTexture> _scaledTexture;
+  NSUInteger _scKey[4];
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -310,6 +329,53 @@ static uint32_t g_color = 0;
   _linearSampler = [_device newSamplerStateWithDescriptor:d];
 }
 
+// Reescala el frame del core con MetalFX (espacial) hasta el tope HD o 4K, sin pasar de lo que
+// cabe en la pantalla. Si el modo está apagado, el dispositivo no lo soporta o la imagen ya es
+// más grande que el tope, devuelve la textura original (dibujo normal).
+- (id<MTLTexture>)metalFXUpscale:(id<MTLTexture>)src drawSize:(CGSize)ds cmd:(id<MTLCommandBuffer>)cmd {
+#if JL_HAS_METALFX
+  if (!g_metalFX || !src || ds.width <= 0 || ds.height <= 0) return src;
+  if (@available(iOS 16.0, *)) {
+    if (![MTLFXSpatialScalerDescriptor supportsDevice:_device]) return src;
+    const double tw = src.width, th = src.height;
+    const double maxH = g_metalFX == 2 ? 2160.0 : 1080.0;
+    double s = std::min(ds.width / tw, ds.height / th);
+    s = std::min(s, maxH / th);
+    if (s <= 1.0) return src;  // solo reescalado hacia arriba
+    const NSUInteger ow = (NSUInteger)floor(tw * s), oh = (NSUInteger)floor(th * s);
+    if (ow < src.width || oh < src.height) return src;
+    const NSUInteger key[4] = { src.width, src.height, ow, oh };
+    if (!_scaler || !_scaledTexture || memcmp(_scKey, key, sizeof(key)) != 0) {
+      MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
+      d.inputWidth = src.width;
+      d.inputHeight = src.height;
+      d.outputWidth = ow;
+      d.outputHeight = oh;
+      d.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
+      d.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+      d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+      _scaler = [d newSpatialScalerWithDevice:_device];
+      MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                    width:ow
+                                                                                   height:oh
+                                                                                mipmapped:NO];
+      td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+      td.storageMode = MTLStorageModePrivate;
+      _scaledTexture = [_device newTextureWithDescriptor:td];
+      memcpy(_scKey, key, sizeof(key));
+    }
+    if (!_scaler || !_scaledTexture) return src;
+    [_scaler setColorTexture:src];
+    [_scaler setOutputTexture:_scaledTexture];
+    [_scaler setInputContentWidth:src.width];
+    [_scaler setInputContentHeight:src.height];
+    [_scaler encodeToCommandBuffer:cmd];
+    return _scaledTexture;
+  }
+#endif
+  return src;
+}
+
 #pragma mark - MTKViewDelegate
 
 - (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size {
@@ -353,14 +419,17 @@ static uint32_t g_color = 0;
   id<CAMetalDrawable> drawable = view.currentDrawable;
   MTLRenderPassDescriptor *pass = view.currentRenderPassDescriptor;
   if (!drawable || !pass || !_texture || !_pipeline) return;
+  id<MTLCommandBuffer> cmd = [_commandQueue commandBuffer];
+  // MetalFX: reescalado espacial antes del dibujo (sin cambios si está apagado o no hay soporte)
+  id<MTLTexture> srcTex = [self metalFXUpscale:_texture drawSize:view.drawableSize cmd:cmd];
 
   // Letterbox con la relación de aspecto que declara el core (PS1 usa píxeles no cuadrados:
   // 368x480 se ve 4:3, no 368:480). "Expandir" ocupa toda la vista. Origen y tamaño en
   // píxeles enteros: un origen fraccionario desplaza la rejilla de muestreo y produce una
   // columna desplazada en el borde izquierdo.
   const CGSize drawSize = view.drawableSize;
-  const double tw = _texture.width;
-  const double th = _texture.height;
+  const double tw = srcTex.width;
+  const double th = srcTex.height;
   double aspect = host::aspectRatio();
   if (aspect > 0.0 && _uploadedRegion != 0) aspect *= 2.0;  // media imagen: el doble de ancha
   if (!(aspect > 0.0)) aspect = tw / th;
@@ -380,11 +449,10 @@ static uint32_t g_color = 0;
                           g_proShader ? g_proShader : (self.linearFilter ? 1u : 0u), 0.35f,
                           g_smooth, g_color, g_cas };
 
-  id<MTLCommandBuffer> cmd = [_commandQueue commandBuffer];
   id<MTLRenderCommandEncoder> enc = [cmd renderCommandEncoderWithDescriptor:pass];
   [enc setViewport:viewport];
   [enc setRenderPipelineState:_pipeline];
-  [enc setFragmentTexture:_texture atIndex:0];
+  [enc setFragmentTexture:srcTex atIndex:0];
   // Ambos modos parten de muestreo lineal: el shader decide cuánto mezclar
   [enc setFragmentSamplerState:_linearSampler atIndex:0];
   [enc setFragmentBytes:&params length:sizeof(params) atIndex:0];

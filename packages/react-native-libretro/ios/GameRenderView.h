@@ -20,4 +20,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setProShader:(uint32_t)mode smooth:(float)smooth cas:(float)cas color:(uint32_t)color;
 @end
 
+@interface GameRenderView (MetalFX)
+/** Reescalado espacial MetalFX: 0 apagado, 1 HD (1080p), 2 4K (2160p). Sin soporte del
+ *  dispositivo (iOS 16+ con GPU compatible) se dibuja sin reescalar. */
++ (void)setMetalFX:(uint32_t)mode;
+@end
+
 NS_ASSUME_NONNULL_END
