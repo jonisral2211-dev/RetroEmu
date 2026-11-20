@@ -95,6 +95,7 @@ import TVDeskPanel from './TVDeskPanel';
 import { clipsAvailable, startClip, stopClip } from '../clips/recorder';
 import { GameConfig, loadGameConfig, saveGameConfig } from '../emulator/gameConfig';
 import { setTouchTurbo } from '../input/turbo';
+import { LocalSeat, localPlaySeats, localPlayStart, localPlayStop } from '../net/localPlay';
 
 type Props = {
   romPath: string;
@@ -213,6 +214,31 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   // Ahorro de batería (límite de FPS, 0 = libre) y turbo / auto-fire, por juego
   const [fpsCap, setFpsCap] = useState(0);
   const [turbo, setTurbo] = useState(false);
+  // Multijugador en red local: servidor para P2-P4 (el iPhone es P1)
+  const [localUrl, setLocalUrl] = useState('');
+  const [localSeats, setLocalSeats] = useState<LocalSeat[]>([]);
+  useEffect(() => {
+    if (!localUrl) return;
+    const id = setInterval(() => setLocalSeats(localPlaySeats()), 1500);
+    return () => clearInterval(id);
+  }, [localUrl]);
+  useEffect(() => () => localPlayStop(), []);
+  const toggleLocal = () => {
+    if (localUrl) {
+      localPlayStop();
+      setLocalUrl('');
+      setLocalSeats([]);
+      return;
+    }
+    const url = localPlayStart();
+    if (!url) {
+      flash('No se pudo abrir el servidor de jugadores (¿sin Wi-Fi?)');
+      return;
+    }
+    setLocalUrl(url);
+    setLocalSeats(localPlaySeats());
+    flash(`Jugadores: abre ${url} en el teléfono (misma Wi-Fi)`);
+  };
   useEffect(() => {
     if (cfgReady) Libretro.setFrameCap(fpsCap);
   }, [cfgReady, fpsCap]);
@@ -1102,6 +1128,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           saveGameConfig(romPath, gameCfgRef.current);
           flash(`Resolución PSP ${m}x: reinicia el juego para aplicarla`);
         }}
+        localUrl={localUrl}
+        localSeats={localSeats}
+        onLocalToggle={toggleLocal}
         fpsCap={fpsCap}
         onFpsCap={(v) => {
           setFpsCap(v);

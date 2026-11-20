@@ -16,6 +16,7 @@
 #import "JLTools.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "GamepadBridge.h"
+#import "LocalPlay.hpp"
 #import "TVOutput.h"
 #import <ReactCommon/RCTTurboModule.h>
 #import <RNLibretroSpec/RNLibretroSpec.h>
@@ -2259,6 +2260,20 @@ static id parseJSON(NSString *json) {
 - (void)stop {
   host::stop();
   [[JLHaptics shared] rumble:0 sharpness:0];
+}
+
+// Multijugador en red local: servidor en el puerto 8765; devuelve la URL o "" si no pudo arrancar
+- (NSString *)localPlayStart {
+  if (!localplay::start(8765)) return @"";
+  return [NSString stringWithFormat:@"http://%s:8765/", host::localAddress().c_str()];
+}
+
+- (void)localPlayStop {
+  localplay::stop();
+}
+
+- (NSString *)localPlayStatus {
+  return [NSString stringWithUTF8String:localplay::statusJson().c_str()];
 }
 
 - (void)setFrameCap:(double)fps {

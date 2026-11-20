@@ -128,6 +128,11 @@ export interface Spec extends TurboModule {
   setFrameCap(fps: number): void;
   /** Turbo / auto-fire de los botones de cara del mando físico. */
   setTurbo(on: boolean): void;
+  /** Multijugador en red local: arranca el servidor (puerto 8765). Devuelve la URL o "". */
+  localPlayStart(): string;
+  localPlayStop(): void;
+  /** JSON {seats:[{slot, connected, stream}]} de los jugadores P2-P4. */
+  localPlayStatus(): string;
   clipRecording(): boolean;
   /** Empieza a grabar la pantalla del juego con micrófono. */
   clipStart(): Promise<boolean>;

@@ -199,6 +199,10 @@ export type GameMenuProps = {
   /** Discos de un juego multidisco (.m3u); count > 1 muestra el selector. */
   disks: { count: number; index: number; labels: string[] };
   onDisk: (i: number) => void;
+  /** Multijugador en red local: URL del servidor (vacía si está apagado) y ranuras P2-P4. */
+  localUrl: string;
+  localSeats: { slot: number; connected: boolean; stream: boolean }[];
+  onLocalToggle: () => void;
   /** Límite de FPS del juego (0 = libre, 60, 30 para ahorrar batería). */
   fpsCap: number;
   onFpsCap: (v: number) => void;
@@ -327,6 +331,27 @@ export function GameMenu(p: GameMenuProps) {
           {p.pad.connected ? (
             <Text style={styles.padHint}>🎮 Mando: cruceta para moverte · ✕ / A elegir · ○ / B volver al juego</Text>
           ) : null}
+          <Section title="Jugadores en red local (P2–P4)">
+            <Action
+              label={p.localUrl ? 'Detener jugadores en red local' : 'Abrir jugadores en red local'}
+              onPress={p.onLocalToggle}
+              primary={!p.localUrl}
+              danger={!!p.localUrl}
+            />
+            {p.localUrl ? (
+              <>
+                <Text style={styles.padHint} selectable>
+                  {p.localUrl}
+                </Text>
+                <Text style={styles.padHint}>
+                  {p.localSeats
+                    .map((s) => `P${s.slot}: ${s.connected ? (s.stream ? 'conectado · video' : 'conectado') : 'libre'}`)
+                    .join('   ')}
+                </Text>
+                <Text style={styles.padHint}>Abre esa dirección en el navegador de cada teléfono (misma Wi-Fi). P1 es este iPhone.</Text>
+              </>
+            ) : null}
+          </Section>
           <Section title="Partida">
             {p.disks.count > 1 ? (
               <Segmented
