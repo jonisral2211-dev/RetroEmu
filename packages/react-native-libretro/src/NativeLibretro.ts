@@ -120,6 +120,13 @@ export interface Spec extends TurboModule {
   /** JSON {playing, name, position, duration}. */
   mediaState(): string;
   mediaRemove(name: string): void;
+  /** Clips de partida (ReplayKit): disponible en el dispositivo. */
+  clipAvailable(): boolean;
+  clipRecording(): boolean;
+  /** Empieza a grabar la pantalla del juego con micrófono. */
+  clipStart(): Promise<boolean>;
+  /** Termina y abre la vista previa (Guardar en Fotos / Compartir). */
+  clipStop(): Promise<boolean>;
   /** Elige un parche .ips/.bps/.ups para la ROM (se guarda aparte; la ROM no se modifica). Resuelve el nombre o "". */
   patchPick(romPath: string): Promise<string>;
   /** JSON {active, name} del parche de la ROM. */

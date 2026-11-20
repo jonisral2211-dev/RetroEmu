@@ -21,6 +21,7 @@
 #import <RNLibretroSpec/RNLibretroSpec.h>
 
 #import <PhotosUI/PhotosUI.h>
+#import <ReplayKit/ReplayKit.h>
 #import <objc/runtime.h>
 
 #include <memory>
@@ -1008,6 +1009,23 @@ static void applyOrientationMask(UIInterfaceOrientationMask mask) {
   }
 }
 
+// ---- Blindaje: presión de memoria e interrupciones de audio ----
+static BOOL g_gameLoaded = NO;          // hay una ROM cargada en el núcleo
+static BOOL g_pausedByAudio = NO;       // la pausa la puso una interrupción de audio (se reanuda sola)
+static const double kEmergencySlot = 99; // ranura de emergencia (no aparece en la interfaz)
+
+// ---- Grabador de clips (ReplayKit): grabación manual con micrófono; la vista previa permite guardar en Fotos ----
+static BOOL g_clipActive = NO;
+
+@interface JLClipPreview : NSObject <RPPreviewViewControllerDelegate>
+@end
+static JLClipPreview *g_clipPreview;
+@implementation JLClipPreview
+- (void)previewControllerDidFinish:(RPPreviewViewController *)previewController {
+  [previewController dismissViewControllerAnimated:YES completion:nil];
+}
+@end
+
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
 @end
 
@@ -1021,7 +1039,40 @@ static void applyOrientationMask(UIInterfaceOrientationMask mask) {
 RCT_EXPORT_MODULE(Libretro)
 
 - (NSArray<NSString *> *)supportedEvents {
-  return @[ @"gamepadStatus" ];
+  return @[ @"gamepadStatus", @"jlPlayerPause" ];
+}
+
+// Presión de memoria: guarda el progreso en la ranura de emergencia y pausa el vídeo
+- (void)onMemoryWarning:(NSNotification *)note {
+  if (!g_gameLoaded) return;
+  host::saveState((int)kEmergencySlot);
+  host::setPaused(true);
+  [self sendPauseEvent:YES reason:@"memoria"];
+}
+
+// Llamadas, Siri o alarmas: pausa mientras dura y reanuda si iOS lo permite
+- (void)onAudioInterruption:(NSNotification *)note {
+  if (!g_gameLoaded) return;
+  const NSUInteger type = [note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+  if (type == AVAudioSessionInterruptionTypeBegan) {
+    host::setPaused(true);
+    g_pausedByAudio = YES;
+    [self sendPauseEvent:YES reason:@"audio"];
+    return;
+  }
+  const NSUInteger options = [note.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
+  if (g_pausedByAudio && (options & AVAudioSessionInterruptionOptionShouldResume)) {
+    [AVAudioSession.sharedInstance setActive:YES error:nil];
+    host::setPaused(false);
+    [self sendPauseEvent:NO reason:@"audio"];
+  }
+  g_pausedByAudio = NO;
+}
+
+- (void)sendPauseEvent:(BOOL)paused reason:(NSString *)reason {
+  if (_listening) {
+    [self sendEventWithName:@"jlPlayerPause" body:@{ @"paused" : @(paused), @"reason" : reason }];
+  }
 }
 
 - (void)startObserving {
@@ -1046,6 +1097,9 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (instancetype)init {
   if (self = [super init]) {
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+    [nc addObserver:self selector:@selector(onMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+    [nc addObserver:self selector:@selector(onAudioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *docs = documentsDirectory();
     NSString *system = [docs stringByAppendingPathComponent:@"system"];
@@ -1218,7 +1272,9 @@ RCT_EXPORT_MODULE(Libretro)
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
   host::setPatchDir(patchesDirectory().UTF8String);
-  return @(host::loadGame(path.UTF8String));
+  const BOOL ok = host::loadGame(path.UTF8String);
+  g_gameLoaded = ok;
+  return @(ok);
 }
 
 // Mueve una descarga comprimida a la bandeja; la biblioteca la descomprime al actualizar
@@ -2004,6 +2060,60 @@ static id parseJSON(NSString *json) {
   [NSFileManager.defaultManager removeItemAtPath:[musicDirectory() stringByAppendingPathComponent:name] error:nil];
 }
 
+// ---- Clips de partida (ReplayKit) ----
+- (BOOL)clipAvailable {
+  return RPScreenRecorder.sharedRecorder.available;
+}
+
+- (BOOL)clipRecording {
+  return g_clipActive;
+}
+
+- (void)clipStart:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  RPScreenRecorder *recorder = RPScreenRecorder.sharedRecorder;
+  if (!recorder.available) {
+    reject(@"clip", @"La grabación de pantalla no está disponible en este dispositivo", nil);
+    return;
+  }
+  if (g_clipActive) {
+    resolve(@YES);
+    return;
+  }
+  [recorder startRecordingWithMicrophoneEnabled:YES
+                                        handler:^(NSError *error) {
+                                          if (error) {
+                                            reject(@"clip", error.localizedDescription, error);
+                                            return;
+                                          }
+                                          g_clipActive = YES;
+                                          resolve(@YES);
+                                        }];
+}
+
+// Detiene la grabación y muestra la vista previa (desde ahí se guarda en Fotos o se comparte)
+- (void)clipStop:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!g_clipActive) {
+    resolve(@NO);
+    return;
+  }
+  [RPScreenRecorder.sharedRecorder stopRecordingWithHandler:^(RPPreviewViewController *preview, NSError *error) {
+    g_clipActive = NO;
+    if (error || !preview) {
+      reject(@"clip", error.localizedDescription ?: @"No se pudo terminar la grabación", error);
+      return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      g_clipPreview = [JLClipPreview new];
+      preview.previewControllerDelegate = g_clipPreview;
+      UIViewController *top = topViewController();
+      if (top) {
+        [top presentViewController:preview animated:YES completion:nil];
+      }
+      resolve(@YES);
+    });
+  }];
+}
+
 - (void)showAirPlayPicker {
   [[TVOutput shared] showRoutePicker];
 }
@@ -2084,6 +2194,7 @@ static id parseJSON(NSString *json) {
 }
 
 - (void)unloadGame {
+  g_gameLoaded = NO;
   [JLAchievements reset];  // la memoria del juego deja de existir
   host::unloadGame();
 }

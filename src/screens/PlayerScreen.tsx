@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  NativeEventEmitter,
   Animated,
   AppState,
   LayoutChangeEvent,
@@ -89,6 +90,7 @@ import { getExperience, useExperience } from '../ui/experiencePrefs';
 import { subscribeCover } from '../covers/CoverCache';
 import { CONSOLE_LABEL, Console } from '../emulator/cores';
 import TVDeskPanel from './TVDeskPanel';
+import { clipsAvailable, startClip, stopClip } from '../clips/recorder';
 
 type Props = {
   romPath: string;
@@ -301,6 +303,39 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     if (pad.connected && !wasConnected.current) flash(`🎮 ${pad.name || 'Mando'} conectado · controles táctiles ocultos`);
     wasConnected.current = pad.connected;
   }, [pad.connected]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Blindaje nativo: pausa por memoria baja o interrupción de audio (el núcleo ya está pausado)
+  useEffect(() => {
+    const emitter = new NativeEventEmitter(Libretro as never);
+    const sub = emitter.addListener('jlPlayerPause', (e: { paused: boolean; reason: string }) => {
+      setPaused(e.paused);
+      flash(
+        e.paused
+          ? e.reason === 'memoria'
+            ? 'Memoria baja: progreso guardado en la ranura de emergencia'
+            : 'Pausado por una interrupción de audio'
+          : 'Juego reanudado',
+      );
+    });
+    return () => sub.remove();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Clips de partida (ReplayKit): iniciar, y al detener se abre la vista previa para guardar en Fotos
+  const [clipOn, setClipOn] = useState(false);
+  const clipsOk = useMemo(() => clipsAvailable(), []);
+  const toggleClip = () => {
+    if (!clipOn) {
+      startClip()
+        .then(() => {
+          setClipOn(true);
+          flash('Grabando el clip (con micrófono)');
+        })
+        .catch((e) => flash(String(e?.message ?? e)));
+    } else {
+      setClipOn(false);
+      stopClip()
+        .then(() => flash('Clip listo: guárdalo en Fotos desde la vista previa'))
+        .catch((e) => flash(String(e?.message ?? e)));
+    }
+  };
   // Skin de los controles táctiles según la consola
   const [skinsOn, setSkinsOn] = useState(skinsEnabled());
   useEffect(() => subscribeSkins(setSkinsOn), []);
@@ -993,6 +1028,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           setAirplayModal(true);
         }
       }}
+      clipRecording={clipOn}
+      clipAvailable={clipsOk}
+      onClip={toggleClip}
       forceController={tvModeOff}
       onForceController={(v) => {
         setTvModeOff(v);

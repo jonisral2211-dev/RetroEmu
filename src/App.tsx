@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
@@ -16,6 +16,7 @@ import { subscribeUiMode, UiMode } from './library/uiMode';
 import PlayerScreen from './screens/PlayerScreen';
 import SteamLibrary from './screens/steam/SteamLibrary';
 import { Libretro } from 'react-native-libretro';
+import { missingBios } from './emulator/biosCheck';
 
 type Tab = 'library' | 'web' | 'guide' | 'media';
 
@@ -48,8 +49,21 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('library');
 
   const play = (path: string, core?: CoreId, slot?: number) => {
-    addRecent(path);
-    setGame({ path, core, slot });
+    const go = () => {
+      addRecent(path);
+      setGame({ path, core, slot });
+    };
+    // Aviso previo: sin la BIOS obligatoria el juego puede no arrancar
+    const missing = missingBios(Libretro.consoleOf(path));
+    if (missing.length === 0) return go();
+    Alert.alert(
+      'Falta una BIOS',
+      `Este juego necesita: ${missing.join(', ')}. Sin ella puede no arrancar o fallar a mitad de partida.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Jugar igual', onPress: go },
+      ],
+    );
   };
 
   // Ambas pantallas quedan montadas (la sesión del navegador y la biblioteca se conservan);

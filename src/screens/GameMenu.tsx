@@ -188,6 +188,10 @@ export type GameMenuProps = {
   onGuide: () => void;
   /** Botón TV/AirPlay: sin pantalla externa abre las instrucciones de Duplicar pantalla. */
   onAirPlay: () => void;
+  /** Grabación de clip (ReplayKit): iniciar o detener y abrir la vista previa. */
+  clipRecording: boolean;
+  clipAvailable: boolean;
+  onClip: () => void;
   /** Modo control forzado a mano (Chromecast, capturadora…). */
   forceController: boolean;
   onForceController: (v: boolean) => void;
@@ -315,6 +319,13 @@ export function GameMenu(p: GameMenuProps) {
               <Action label="Guardar partida" onPress={p.onSave} />
               <Action label="Cargar partida" onPress={p.onLoad} disabled={online} />
               <Action label="Reiniciar" onPress={p.onReset} disabled={online} />
+              {p.clipAvailable ? (
+                <Action
+                  label={p.clipRecording ? 'Detener y guardar clip' : 'Grabar clip de partida'}
+                  onPress={p.onClip}
+                  danger={p.clipRecording}
+                />
+              ) : null}
               <Action label="Salir del juego" onPress={p.onExit} danger />
             </View>
           </Section>

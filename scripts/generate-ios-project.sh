@@ -69,6 +69,12 @@ if ! ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
 fi
 ruby "$ROOT/scripts/add-live-activity.rb" "$ROOT/ios/RetroEmu.xcodeproj" "$ROOT/ios-overlay/LiveActivity"
 
+# Clips de partida (ReplayKit): micrófono opcional y guardar el MP4 en Fotos
+/usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Para grabar tu voz junto a los clips de partida" "$PLIST"
+/usr/libexec/PlistBuddy -c "Delete :NSPhotoLibraryAddUsageDescription" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string Para guardar los clips de partida en tu carrete" "$PLIST"
+
 # Multimedia: reproducción de música con la app en segundo plano (AVAudioPlayer)
 /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"

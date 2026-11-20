@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   # LZMA SDK y rcheevos (RetroAchievements, MIT): cabeceras internas, no se exportan
   s.private_header_files = ['ios/lzma/*.h', 'ios/rcheevos/**/*.h']
   s.vendored_frameworks = 'ios/Frameworks/*.framework'
-  s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController', 'CoreHaptics', 'AVKit', 'PhotosUI', 'OpenGLES', 'CoreImage', 'UniformTypeIdentifiers', 'CoreMotion'
+  s.frameworks          = 'Metal', 'MetalKit', 'AudioToolbox', 'AVFoundation', 'GameController', 'CoreHaptics', 'AVKit', 'PhotosUI', 'OpenGLES', 'CoreImage', 'UniformTypeIdentifiers', 'CoreMotion', 'ReplayKit'
   s.libraries           = 'c++', 'z'
   s.requires_arc        = true
 
