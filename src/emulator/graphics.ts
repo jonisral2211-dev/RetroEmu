@@ -93,9 +93,8 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
           ]
         : [
             ['mupen64plus-cpucore', 'cached_interpreter'],
-            ['mupen64plus-rdp-plugin', 'gliden64'],
-            ['mupen64plus-43screensize', '640x480'],
-            ['mupen64plus-169screensize', '640x360'],
+            // Estándar = sin GPU (jl_hw_render desactivado): RDP por software, nunca GLideN64
+            ['mupen64plus-rdp-plugin', 'angrylion'],
             ['mupen64plus-aspect', '4:3'],
             ['mupen64plus-txHiresEnable', 'False'],
           ];
