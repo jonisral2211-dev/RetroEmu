@@ -248,7 +248,26 @@ static uint32_t g_color = 0;
   }
   self.contentScaleFactor = scale;
   _mtkView.contentScaleFactor = scale;
-  _mtkView.autoResizeDrawable = YES;
+  _mtkView.autoResizeDrawable = NO;
+  [self syncLayout];
+}
+
+// Ocupa siempre el área actual de la vista (rotación, controles ocultos o mostrados) y pide un
+// drawable en píxeles Retina del tamaño real: sin esto el dibujo podía quedarse en un cuarto.
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  [self syncLayout];
+}
+
+- (void)syncLayout {
+  CGFloat scale = self.contentScaleFactor > 0 ? self.contentScaleFactor : UIScreen.mainScreen.nativeScale;
+  if (scale <= 0) scale = 1;
+  _mtkView.frame = self.bounds;
+  _mtkView.contentScaleFactor = scale;
+  CGSize px = CGSizeMake(floor(self.bounds.size.width * scale), floor(self.bounds.size.height * scale));
+  if (px.width > 0 && px.height > 0 && !CGSizeEqualToSize(_mtkView.drawableSize, px)) {
+    _mtkView.drawableSize = px;
+  }
 }
 
 - (void)setRendering:(BOOL)rendering {

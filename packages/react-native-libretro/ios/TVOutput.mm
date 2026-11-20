@@ -49,6 +49,8 @@
 }
 
 - (UIScreen *)externalScreen {
+  // Solo con una pantalla real conectada (HDMI / Duplicar pantalla): con una sola nunca es modo TV
+  if (UIScreen.screens.count < 2) return nil;
   for (UIScreen *screen in UIScreen.screens) {
     if (screen != UIScreen.mainScreen) return screen;
   }

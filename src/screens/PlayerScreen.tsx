@@ -26,6 +26,7 @@ import {
 import { addPlaytime } from '../library/playtime';
 import { applySavedCheats, CheatsPanel, ImagePanel, RewindPanel, SaveSlots } from './MenuPanels';
 import { Libretro, LibretroView } from 'react-native-libretro';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CoreId,
   coreForConsole,
@@ -375,7 +376,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const [tvStretch, setTvStretch] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   // Modo control vertical: con TV real o activado a mano (Chromecast, capturadora…)
-  const [forceController, setForceController] = useState(false);
+  // Modo TV solo con pantalla externa real; «Salir de Modo TV» lo apaga hasta que se reconecte
+  const [tvModeOff, setTvModeOff] = useState(false);
   const [airplayModal, setAirplayModal] = useState(false);
   const [controllerTest, setControllerTest] = useState(false);
   useEffect(() => {
@@ -408,7 +410,8 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       Libretro.setTVRegion(0);
     };
   }, []);
-  const controllerMode = tvConnected || forceController;
+  const controllerMode = tvConnected && !tvModeOff;
+  useEffect(() => setTvModeOff(false), [tvConnected]);
   // Orientación del mando de TV: Vertical (palanca), Horizontal (mando clásico) o Automática
   const [tvOrient, setTvOrientState] = useState<TvOrientation>('portrait');
   useEffect(() => {
@@ -584,6 +587,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Logros (RetroAchievements): banner tipo trofeo al desbloquear
   const achievements = useAchievements(romPath, ready ? core : null, ready);
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     if (achievements.status === 'active' || achievements.status === 'none') flash(achievements.message);
   }, [achievements.status]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -802,7 +806,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
 
   // Avisos flotando sobre la imagen (no desplazan el layout)
   const notices = (
-    <View style={styles.notices} pointerEvents="box-none">
+    <View style={[styles.notices, { top: insets.top + 6 }]} pointerEvents="box-none">
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       <AchievementBanner unlock={achievements.banner} landscape={landscape} />
       <AchievementProgress progress={achievements.progress} />
@@ -989,9 +993,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           setAirplayModal(true);
         }
       }}
-      forceController={forceController}
+      forceController={tvModeOff}
       onForceController={(v) => {
-        setForceController(v);
+        setTvModeOff(v);
         setMenuOpen(false);
         Libretro.setPaused(paused || editing);
       }}
@@ -1114,16 +1118,6 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           adaptador HDMI.
         </Text>
         <View style={styles.modalActions}>
-          <HudButton
-            label="Activar modo control ahora"
-            active
-            onPress={() => {
-              setAirplayModal(false);
-              setMenuOpen(false);
-              setForceController(true);
-              Libretro.setPaused(paused || editing);
-            }}
-          />
           <HudButton label="Entendido" onPress={() => setAirplayModal(false)} />
         </View>
       </View>
@@ -1202,6 +1196,9 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     tvRegionRef.current = tvConnected && nds && !showPad ? 1 : 0;
     return (
       <View style={styles.root}>
+        <Pressable onPress={() => setTvModeOff(true)} style={[styles.exitControl, { top: insets.top + 8, zIndex: 20 }]}>
+          <Text style={styles.exitControlText}>Salir de Modo TV</Text>
+        </Pressable>
         <View style={[styles.flex, styles.tvRoot]} onLayout={onArea}>
           <View style={[styles.tvGlow, { backgroundColor: tv.accent }]} pointerEvents="none" />
           {!showPad ? (
@@ -1320,11 +1317,6 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
             <GearButton onPress={openMenu} online={online} />
           </View>
         )}
-        {forceController && !tvConnected && !tvEditing ? (
-          <Pressable onPress={() => setForceController(false)} style={styles.exitControl}>
-            <Text style={styles.exitControlText}>Salir del modo control</Text>
-          </Pressable>
-        ) : null}
         {menu}
         {guide}
         {controllerScreen}

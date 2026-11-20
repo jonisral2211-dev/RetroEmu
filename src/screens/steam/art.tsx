@@ -184,23 +184,14 @@ export const GameTile = memo(function GameTile({
     <Pressable onPress={onPress} style={{ width }}>
       <View style={[styles.tile, { width, height }, focused && styles.tileFocused]}>
         <GameImage entry={entry} title={title} width={width} height={height} wide={wide} box={box} hero={hero} />
-        {wide ? (
-          <View style={styles.tileShade} pointerEvents="none">
-            <Text style={styles.tileTitle} numberOfLines={1}>
-              {title}
-            </Text>
-          </View>
-        ) : null}
         <View style={styles.tileBadges} pointerEvents="none">
           <ConsoleChip console={entry.console} small />
           {favorite ? <Text style={styles.star}>★</Text> : null}
         </View>
       </View>
-      {!wide ? (
-        <Text style={[styles.caption, focused && styles.captionFocused]} numberOfLines={1}>
-          {title}
-        </Text>
-      ) : null}
+      <Text style={[styles.caption, focused && styles.captionFocused]} numberOfLines={1}>
+        {title}
+      </Text>
     </Pressable>
   );
 });

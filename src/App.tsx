@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { theme } from './theme';
 import BrowserScreen from './screens/BrowserScreen';
@@ -54,6 +55,7 @@ export default function App() {
   // la inactiva se oculta. Al jugar se oculta todo el contenedor y aparece el reproductor.
   return (
     <GestureHandlerRootView style={styles.root}>
+    <SafeAreaProvider>
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
         {game ? (
@@ -112,6 +114,7 @@ export default function App() {
           </View>
         ) : null}
       </SafeAreaView>
+    </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

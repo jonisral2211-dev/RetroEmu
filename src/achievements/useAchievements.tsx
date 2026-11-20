@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
 import { Libretro } from 'react-native-libretro';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CoreId } from '../emulator/cores';
 import {
   BADGE_URL,
@@ -136,6 +137,7 @@ export function useAchievements(romPath: string, core: CoreId | null, ready: boo
 
 /** Banner animado estilo trofeo (arriba, centrado). */
 export function AchievementBanner({ unlock, landscape }: { unlock: Unlock | null; landscape: boolean }) {
+  const insets = useSafeAreaInsets();
   const anim = useRef(new Animated.Value(0)).current;
   const shine = useRef(new Animated.Value(0)).current;
   const [shown, setShown] = useState<Unlock | null>(unlock);
@@ -166,6 +168,7 @@ export function AchievementBanner({ unlock, landscape }: { unlock: Unlock | null
       style={[
         styles.banner,
         landscape && styles.bannerLandscape,
+        { top: insets.top + 8 },
         {
           opacity: anim,
           transform: [

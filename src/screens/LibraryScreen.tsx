@@ -128,7 +128,9 @@ export function displayTitle(path: string): string {
   const file = path.split('/').pop() ?? path;
   const base = file.replace(/\.[^.]+$/, '');
   const clean = base.replace(/\s*[([][^)\]]*[)\]]/g, '').trim();
-  return clean || base;
+  // Prefijo numérico de escena ("0753 - Título"): solo se oculta al mostrarlo, el archivo no cambia
+  const unprefixed = clean.replace(/^\d{3,5}\s+-\s+/, '').trim();
+  return unprefixed || clean || base;
 }
 
 // Por debajo de este tamaño un juego está incompleto o dañado (descarga cortada, zip vacío).

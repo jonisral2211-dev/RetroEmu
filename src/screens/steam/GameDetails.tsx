@@ -203,7 +203,7 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
           <View style={styles.head}>
             <Animated.View
               style={[
-                styles.boxArt,
+                styles.boxWrap,
                 {
                   transform: [
                     { perspective: 600 },
@@ -213,6 +213,7 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
                   ],
                 },
               ]}>
+              <View style={styles.boxArt}>
               {box ? (
                 <Image source={{ uri: box }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               ) : (
@@ -231,6 +232,7 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
                   },
                 ]}
               />
+              </View>
             </Animated.View>
             <View style={styles.headText}>
               <Text style={styles.title} numberOfLines={3}>
@@ -342,19 +344,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10,14,20,0.7)',
   },
   backText: { color: S.text, fontWeight: '800', fontSize: 14 },
-  body: { paddingHorizontal: 16, marginTop: -54, gap: 12 },
+  body: { paddingHorizontal: 16, marginTop: -40, gap: 12 },
   head: { flexDirection: 'row', alignItems: 'flex-end', gap: 14 },
-  boxArt: {
+  boxWrap: {
     width: 96,
     height: 134,
     borderRadius: 6,
-    overflow: 'hidden',
     backgroundColor: S.panel,
     shadowColor: '#000',
     shadowOpacity: 0.7,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
   },
+  // Recorte de la carátula: hijo sin transformar (en iOS el overflow no recorta dentro de un padre 3D)
+  boxArt: { flex: 1, borderRadius: 6, overflow: 'hidden', backgroundColor: S.panel },
   headText: { flex: 1, gap: 4 },
   title: { color: S.text, fontSize: 24, fontWeight: '900' },
   internal: { color: S.faint, fontSize: 12, fontWeight: '700' },

@@ -25,6 +25,10 @@ let seq = 0;
 const listeners = new Set<() => void>();
 const importedListeners = new Set<(path: string) => void>();
 
+// User-Agent de Safari en iPhone: muchos servidores de descarga devuelven 500 o HTML sin él
+const SAFARI_IOS_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1';
+
 function emit() {
   listeners.forEach((l) => l());
 }
@@ -116,6 +120,7 @@ export function startDownload(url: string, suggestedName?: string): void {
           toFile: tmp,
           background: true,
           progressInterval: 250,
+          headers: { 'User-Agent': SAFARI_IOS_UA, Accept: '*/*' },
           begin: (r) => {
             // El nombre real suele venir en la cabecera (enlaces sin extensión en la URL)
             const fromHeader = nameFromHeaders(r.headers as Record<string, string>);

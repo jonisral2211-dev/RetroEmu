@@ -560,9 +560,9 @@ export function GameMenu(p: GameMenuProps) {
               </Text>
             ) : null}
             <Action label="Transmitir a TV / AirPlay" primary onPress={p.onAirPlay} />
-            {!p.tvConnected ? (
+            {p.tvConnected ? (
               <Action
-                label={p.forceController ? 'Salir del modo control' : 'Activar modo control ahora'}
+                label={p.forceController ? 'Volver a Modo TV' : 'Salir de Modo TV'}
                 onPress={() => p.onForceController(!p.forceController)}
               />
             ) : null}

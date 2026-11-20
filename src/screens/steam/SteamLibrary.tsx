@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { reloadCover } from '../../covers/CoverCache';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ALL_CONSOLES, Console, isArcadeConsole } from '../../emulator/cores';
 import { NavKey, usePadNav } from '../../input/uiNav';
 import { useGamepadStatus } from '../../input/useGamepadStatus';
@@ -92,6 +93,7 @@ export default function SteamLibrary({ onPlay, active }: { onPlay: PlayFn; activ
 
   const { entries, error, unpacking, refresh } = useLibrary();
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const pad = useGamepadStatus();
   const clock = useClock();
 
@@ -507,7 +509,7 @@ export default function SteamLibrary({ onPlay, active }: { onPlay: PlayFn; activ
       ) : null}
 
       {toast ? (
-        <View style={styles.toast} pointerEvents="none">
+        <View style={[styles.toast, { top: insets.top + 8 }]} pointerEvents="none">
           <Text style={styles.toastText}>{toast}</Text>
         </View>
       ) : null}

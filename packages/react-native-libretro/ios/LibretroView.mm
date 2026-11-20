@@ -31,6 +31,11 @@ using namespace facebook::react;
   return self;
 }
 
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  _render.frame = self.bounds;
+}
+
 - (void)updateProps:(const Props::Shared &)props oldProps:(const Props::Shared &)oldProps {
   const auto &newProps = static_cast<const LibretroViewProps &>(*props);
   _render.linearFilter = newProps.filter ? YES : NO;
