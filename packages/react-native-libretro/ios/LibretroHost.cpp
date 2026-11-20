@@ -813,8 +813,7 @@ bool patchRomBuffer(std::vector<uint8_t> &rom, std::string &err) {
     return false;
   }
   rom.swap(out);
-  std::fprintf(stderr, "[RetroEmu] parche aplicado: %s
-", name.c_str());
+  std::fprintf(stderr, "[RetroEmu] parche aplicado: %s\n", name.c_str());
   return true;
 }
 
