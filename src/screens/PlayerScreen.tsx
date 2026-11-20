@@ -93,6 +93,7 @@ import { subscribeCover } from '../covers/CoverCache';
 import { CONSOLE_LABEL, Console } from '../emulator/cores';
 import TVDeskPanel from './TVDeskPanel';
 import { clipsAvailable, startClip, stopClip } from '../clips/recorder';
+import { GameConfig, loadGameConfig, saveGameConfig } from '../emulator/gameConfig';
 
 type Props = {
   romPath: string;
@@ -204,6 +205,28 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const [error, setError] = useState<string | null>(null);
   // Partidas en iCloud Drive: se traen las más recientes antes de abrir el juego (máx. 4 s)
   const [cloudReady, setCloudReady] = useState(false);
+  // Perfil del juego (resolución PSP): se lee antes de cargar el núcleo
+  const gameCfgRef = useRef<GameConfig>({});
+  const [cfgReady, setCfgReady] = useState(false);
+  const [pspRes, setPspRes] = useState(1);
+  useEffect(() => {
+    let alive = true;
+    loadGameConfig(romPath).then((c) => {
+      if (!alive) return;
+      gameCfgRef.current = c;
+      setPspRes(c.pspRes ?? 1);
+      setCfgReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [romPath]);
+  // Discos (multidisco): índice y etiquetas, refrescados al abrir el menú
+  const [disks, setDisks] = useState<{ count: number; index: number; labels: string[] }>({
+    count: 0,
+    index: 0,
+    labels: [],
+  });
   useEffect(() => {
     let alive = true;
     setCloudReady(false);
@@ -526,7 +549,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       );
       return;
     }
-    if (!cloudReady) return;
+    if (!cloudReady || !cfgReady) return;
     // Opciones que el core lee al cargar el juego
     if (isNdsCore(baseCore)) setNdsLayout(landscapeRef.current);
     // Vibración Rumble: en el mando o en el iPhone; N64 con Rumble Pak, PS1 con DualShock
@@ -543,6 +566,11 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     for (const candidate of [baseCore, FALLBACK_CORE[baseCore]]) {
       if (!candidate) continue;
       gfxOptions(candidate, preset).forEach(([k, v]) => Libretro.setCoreOption(k, v));
+      // Multiplicador de resolución interna en PSP (PPSSPP): 1x = 480x272 … 4x = 1920x1088
+      if (candidate === 'ppsspp' && (gameCfgRef.current.pspRes ?? 1) > 1) {
+        const m = gameCfgRef.current.pspRes ?? 1;
+        Libretro.setCoreOption('ppsspp_internal_resolution', `${480 * m}x${272 * m}`);
+      }
       if (!Libretro.loadCore(candidate)) {
         errors.push(Libretro.lastError() || `No se pudo cargar el núcleo "${candidate}"`);
         continue;
@@ -573,7 +601,7 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
       // Copia en iCloud Drive de la partida y del guardado nativo (.srm) recién escrito
       pushAfterSave(romPath, 200);
     };
-  }, [romPath, baseCore, cloudReady]);
+  }, [romPath, baseCore, cloudReady, cfgReady]);
 
   // DS: al girar el iPhone las pantallas pasan de apiladas a lado a lado (en caliente)
   const [ndsScreen, setNdsScreen] = useState<NdsScreen>(ndsScreenMode);
@@ -759,6 +787,12 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   // Abrir el menú pausa la partida (salvo en línea: pararía también al otro jugador)
   const openMenu = () => {
     setMenuOpen(true);
+    try {
+      const d = JSON.parse(Libretro.diskInfo()) as { count?: number; index?: number; labels?: string[] };
+      setDisks({ count: d.count ?? 0, index: d.index ?? 0, labels: d.labels ?? [] });
+    } catch {
+      setDisks({ count: 0, index: 0, labels: [] });
+    }
     if (!online) Libretro.setPaused(true);
     pushAfterSave(romPath);
   };
@@ -766,6 +800,14 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     setMenuOpen(false);
     Libretro.setPaused(paused || editing);
   };
+  // Botón Options / central del mando (PS5): abre o cierra el menú rápido sin tocar la pantalla
+  const menuToggleRef = useRef<() => void>(() => {});
+  menuToggleRef.current = () => (menuOpen ? closeMenu() : openMenu());
+  useEffect(() => {
+    const emitter = new NativeEventEmitter(Libretro as never);
+    const sub = emitter.addListener('padMenu', () => menuToggleRef.current());
+    return () => sub.remove();
+  }, []);
 
   // Editar controles pausa el juego; al salir se restaura el estado de pausa anterior
   const toggleEditing = () => {
@@ -1032,7 +1074,20 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
         }
       }}
       clipRecording={clipOn}
-      clipAvailable={clipsOk}
+        clipAvailable={clipsOk}
+        showPspRes={core === 'ppsspp'}
+        pspRes={pspRes}
+        onPspRes={(m) => {
+          setPspRes(m);
+          gameCfgRef.current = { ...gameCfgRef.current, pspRes: m };
+          saveGameConfig(romPath, gameCfgRef.current);
+          flash(`Resolución PSP ${m}x: reinicia el juego para aplicarla`);
+        }}
+        disks={disks}
+        onDisk={(i) => {
+          Libretro.diskSet(i);
+          setDisks((d) => ({ ...d, index: i }));
+        }}
       onClip={toggleClip}
       forceController={tvModeOff}
       onForceController={(v) => {

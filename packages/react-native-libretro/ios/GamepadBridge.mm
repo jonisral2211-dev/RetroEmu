@@ -251,6 +251,15 @@ static uint32_t stickAsDpad(float x, float y) {
   if (pad.rightThumbstickButton.pressed) phys |= 1u << kR3;
   if (pad.buttonMenu.pressed) phys |= 1u << kMenu;
   if (pad.buttonOptions.pressed) phys |= 1u << kOptions;
+  // Options / botón central (PS5): flanco de subida del Jugador 1 abre o cierra el menú rápido
+  static uint32_t lastMenu = 0;
+  const uint32_t menuNow = phys & ((1u << kMenu) | (1u << kOptions));
+  if (port == 0 && menuNow && !lastMenu) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [[NSNotificationCenter defaultCenter] postNotificationName:@"JLPadMenu" object:nil];
+    });
+  }
+  lastMenu = menuNow;
 
   // Sticks: GameController tiene +Y arriba; libretro usa negativo = arriba
   const float lx = deadzone(pad.leftThumbstick.xAxis.value);

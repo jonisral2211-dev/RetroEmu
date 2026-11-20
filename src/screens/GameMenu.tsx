@@ -192,6 +192,13 @@ export type GameMenuProps = {
   clipRecording: boolean;
   clipAvailable: boolean;
   onClip: () => void;
+  /** Resolución interna de PSP (PPSSPP): 1x..4x del perfil del juego. */
+  showPspRes: boolean;
+  pspRes: number;
+  onPspRes: (m: number) => void;
+  /** Discos de un juego multidisco (.m3u); count > 1 muestra el selector. */
+  disks: { count: number; index: number; labels: string[] };
+  onDisk: (i: number) => void;
   /** Modo control forzado a mano (Chromecast, capturadora…). */
   forceController: boolean;
   onForceController: (v: boolean) => void;
@@ -315,6 +322,30 @@ export function GameMenu(p: GameMenuProps) {
             <Text style={styles.padHint}>🎮 Mando: cruceta para moverte · ✕ / A elegir · ○ / B volver al juego</Text>
           ) : null}
           <Section title="Partida">
+            {p.disks.count > 1 ? (
+              <Segmented
+                label="Disco"
+                value={String(p.disks.index)}
+                onChange={(v) => p.onDisk(Number(v))}
+                options={Array.from({ length: p.disks.count }, (_, i) => ({
+                  id: String(i),
+                  label: p.disks.labels[i] ?? `Disco ${i + 1}`,
+                }))}
+              />
+            ) : null}
+            {p.showPspRes ? (
+              <Segmented
+                label="Resolución interna (PSP)"
+                value={String(p.pspRes)}
+                onChange={(v) => p.onPspRes(Number(v))}
+                options={[
+                  { id: '1', label: '1x' },
+                  { id: '2', label: '2x' },
+                  { id: '3', label: '3x' },
+                  { id: '4', label: '4x' },
+                ]}
+              />
+            ) : null}
             <View style={styles.grid}>
               <Action label="Guardar partida" onPress={p.onSave} />
               <Action label="Cargar partida" onPress={p.onLoad} disabled={online} />

@@ -1027,6 +1027,19 @@ static JLClipPreview *g_clipPreview;
 }
 @end
 
+// Discos de una lista .m3u (rutas absolutas, en el orden de la lista); ignora comentarios y líneas vacías
+static NSArray<NSString *> *m3uDiscs(NSString *m3uPath) {
+  NSString *text = [NSString stringWithContentsOfFile:m3uPath encoding:NSUTF8StringEncoding error:nil] ?: @"";
+  NSString *dir = [m3uPath stringByDeletingLastPathComponent];
+  NSMutableArray<NSString *> *discs = [NSMutableArray array];
+  for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+    NSString *t = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (t.length == 0 || [t hasPrefix:@"#"]) continue;
+    [discs addObject:[dir stringByAppendingPathComponent:t]];
+  }
+  return discs;
+}
+
 @interface Libretro : RCTEventEmitter <NativeLibretroSpec>
 @end
 
@@ -1040,7 +1053,7 @@ static JLClipPreview *g_clipPreview;
 RCT_EXPORT_MODULE(Libretro)
 
 - (NSArray<NSString *> *)supportedEvents {
-  return @[ @"gamepadStatus", @"jlPlayerPause" ];
+  return @[ @"gamepadStatus", @"jlPlayerPause", @"padMenu" ];
 }
 
 // Presión de memoria: guarda el progreso en la ranura de emergencia y pausa el vídeo
@@ -1068,6 +1081,10 @@ RCT_EXPORT_MODULE(Libretro)
     [self sendPauseEvent:NO reason:@"audio"];
   }
   g_pausedByAudio = NO;
+}
+
+- (void)onPadMenu:(NSNotification *)note {
+  if (_listening) [self sendEventWithName:@"padMenu" body:@{}];
 }
 
 - (void)sendPauseEvent:(BOOL)paused reason:(NSString *)reason {
@@ -1101,6 +1118,7 @@ RCT_EXPORT_MODULE(Libretro)
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserver:self selector:@selector(onMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
     [nc addObserver:self selector:@selector(onAudioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
+    [nc addObserver:self selector:@selector(onPadMenu:) name:@"JLPadMenu" object:nil];
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *docs = documentsDirectory();
     NSString *system = [docs stringByAppendingPathComponent:@"system"];
@@ -2330,6 +2348,10 @@ static id parseJSON(NSString *json) {
       NSString *bin = cueReferencedBin([docs stringByAppendingPathComponent:rel]);
       if (bin) [cueBins addObject:bin];
     }
+    // Juego de varios discos (.m3u): cada disco lo carga el .m3u, así que no se listan por separado
+    if ([rel.pathExtension.lowercaseString isEqualToString:@"m3u"]) {
+      for (NSString *disc in m3uDiscs([docs stringByAppendingPathComponent:rel])) [cueBins addObject:disc];
+    }
   }
   NSDirectoryEnumerator<NSString *> *en = [fm enumeratorAtPath:docs];
   for (NSString *rel in en) {
@@ -2372,13 +2394,20 @@ static id parseJSON(NSString *json) {
       }
       continue;
     }
+    if ([cueBins containsObject:full]) continue;  // lo carga su .cue o su .m3u
+    if ([ext isEqualToString:@"m3u"]) {
+      // Ficha única del juego de varios discos: la consola la decide el primer disco
+      NSArray<NSString *> *discs = m3uDiscs(full);
+      NSString *console = discs.count ? consoleForKind(sniffFile(discs.firstObject)) : nil;
+      if (console) [roms addObject:full];
+      continue;
+    }
     if ([ext isEqualToString:@"cue"]) {
       NSString *bin = cueReferencedBin(full);
       NSString *console = bin ? consoleForKind(sniffFile(bin)) : nil;
       if (console) [roms addObject:full];
       continue;
     }
-    if ([cueBins containsObject:full]) continue;  // lo carga su .cue
     if (romcheck::isRomExtension(ext.UTF8String) && consoleForKind(sniffFile(full)) != nil) {
       [roms addObject:full];
     }
