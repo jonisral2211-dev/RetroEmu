@@ -21,6 +21,8 @@ bool loadCore(const char *frameworkBinaryPath);
 /** Carga la ROM con el core activo. Persiste la SRAM del juego anterior. */
 bool loadGame(const char *romPath);
 void unloadGame();
+/** Carpeta Documents/patches: parches .ips/.bps/.ups por ROM (se fija antes de cada loadGame). */
+void setPatchDir(const std::string &dir);
 
 void start();
 void stop();  // para el hilo de emulación y persiste la SRAM

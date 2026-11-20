@@ -108,6 +108,17 @@ export interface Spec extends TurboModule {
   exportBackup(): Promise<string>;
   /** Elige un .zip de respaldo y lo restaura; resuelve el número de archivos (-1 = cancelado). */
   restoreBackup(): Promise<number>;
+  /** Elige un parche .ips/.bps/.ups para la ROM (se guarda aparte; la ROM no se modifica). Resuelve el nombre o "". */
+  patchPick(romPath: string): Promise<string>;
+  /** JSON {active, name} del parche de la ROM. */
+  patchInfo(romPath: string): string;
+  patchRemove(romPath: string): void;
+  /** Importa un paquete de texturas HD de PPSSPP para el ID de juego (carpeta PSP/TEXTURES/<ID>). Resuelve nº de archivos. */
+  texturesImport(serial: string): Promise<number>;
+  /** JSON {installed, enabled, files} de las texturas del juego. */
+  texturesInfo(serial: string): string;
+  texturesToggle(serial: string, enabled: boolean): void;
+  texturesRemove(serial: string): void;
   copyToClipboard(text: string): void;
   netStop(): void;
   /** "fase|mensaje|código|ping_ms"; fase: idle, waiting, connecting, syncing, playing. */

@@ -1,5 +1,6 @@
 #include "LibretroHost.hpp"
 #include "HWRender.hpp"
+#include "LibretroPatch.hpp"
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -781,6 +782,42 @@ bool readFile(const std::string &path, std::vector<uint8_t> &out) {
   return bool(f);
 }
 
+// ---- Parches al vuelo: Documents/patches/<ROM>.ips|bps|ups (la ROM original no se toca) ----
+std::string g_patchDir;   // Documents/patches: la fija el módulo antes de cada carga
+std::string g_patchedPath;  // copia parcheada en caché (solo núcleos que leen la ruta)
+
+// Parche activo para la ROM cargada (g_romBase), o "" si no hay
+std::string activePatchPath() {
+  if (g_patchDir.empty() || g_romBase.empty()) return "";
+  for (const char *ext : {"ips", "bps", "ups"}) {
+    const std::string p = g_patchDir + "/" + g_romBase + "." + ext;
+    struct stat st {};
+    if (stat(p.c_str(), &st) == 0) return p;
+  }
+  return "";
+}
+
+// Aplica el parche activo a la ROM en memoria. false = el parche no encaja con esta ROM.
+bool patchRomBuffer(std::vector<uint8_t> &rom, std::string &err) {
+  const std::string p = activePatchPath();
+  if (p.empty()) return true;
+  const std::string name = p.substr(p.rfind('/') + 1);
+  std::vector<uint8_t> patch;
+  if (!readFile(p, patch)) {
+    err = "No se pudo leer el parche " + name;
+    return false;
+  }
+  std::vector<uint8_t> out;
+  if (!jlpatch::apply(p.substr(p.size() - 3), patch, rom, out, err)) {
+    err = "Parche " + name + ": " + err;
+    return false;
+  }
+  rom.swap(out);
+  std::fprintf(stderr, "[RetroEmu] parche aplicado: %s
+", name.c_str());
+  return true;
+}
+
 void restoreSram() {
   const size_t size = g_core.getMemorySize(RETRO_MEMORY_SAVE_RAM);
   void *data = g_core.getMemoryData(RETRO_MEMORY_SAVE_RAM);
@@ -1491,6 +1528,7 @@ bool loadGame(const char *romPath) {
   retro_system_info info{};
   g_core.getSystemInfo(&info);
 
+  std::string patchErr;
   retro_game_info game{};
   game.path = romPath;
   if (!info.need_fullpath) {
@@ -1499,8 +1537,30 @@ bool loadGame(const char *romPath) {
       std::fprintf(stderr, "[libretro] no se pudo leer %s\n", romPath);
       return false;
     }
+    if (!patchRomBuffer(g_romData, patchErr)) {
+      g_lastError = patchErr;
+      return false;
+    }
     game.data = g_romData.data();
     game.size = g_romData.size();
+  } else if (!activePatchPath().empty()) {
+    // El núcleo lee la ruta: se carga una copia parcheada en caché; el original no cambia
+    std::vector<uint8_t> rom;
+    if (!readFile(path, rom) || !patchRomBuffer(rom, patchErr)) {
+      g_lastError = patchErr.empty() ? "No se pudo leer la ROM para aplicar el parche" : patchErr;
+      return false;
+    }
+    const std::string cacheDir = g_patchDir + "/cache";
+    mkdir(cacheDir.c_str(), 0755);
+    g_patchedPath = cacheDir + "/" + file;
+    std::ofstream out(g_patchedPath, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char *>(rom.data()), std::streamsize(rom.size()));
+    out.close();
+    if (!out) {
+      g_lastError = "No se pudo escribir la ROM parcheada en " + g_patchedPath;
+      return false;
+    }
+    game.path = g_patchedPath.c_str();
   }
   if (!g_core.loadGame(&game)) {
     // Diagnóstico visible en la app: núcleo, ruta exacta y tamaño verificado en disco
@@ -1799,6 +1859,9 @@ void webPadStop() {
   clearWebSeats();
   webPadSet(0, "Mando web cerrado");
 }
+
+// Carpeta de parches (la fija el módulo; se llama antes de cada loadGame)
+void setPatchDir(const std::string &dir) { g_patchDir = dir; }
 
 static std::string seatsMessage() {
   const int seats = g_webPadSeats.load();

@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { reloadCover } from '../../covers/CoverCache';
+import { patchInfo, pickPatch, removePatch } from '../../mods/patches';
+import { gameIdOf, importTextures, removeTextures, setTextures, textureInfo } from '../../mods/textures';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ALL_CONSOLES, Console, isArcadeConsole } from '../../emulator/cores';
 import { NavKey, usePadNav } from '../../input/uiNav';
@@ -226,9 +228,74 @@ export default function SteamLibrary({ onPlay, active }: { onPlay: PlayFn; activ
     toggleFavorite(e.path).then((on) => showToast(on ? '★ Añadido a Favoritos' : 'Quitado de Favoritos'));
   };
 
+  // Mods y parches: IPS / BPS / UPS (traducciones, ROM hacks) se aplican al lanzar el juego
+  const applyPatch = (e: Entry) =>
+    pickPatch(e.path)
+      .then((name) => {
+        if (name) showToast(`Parche guardado: ${name}. Se aplica al abrir el juego`);
+      })
+      .catch((err) => showToast(String(err?.message ?? err)));
+  const modsMenu = (e: Entry) => {
+    const p = patchInfo(e.path);
+    // Texturas HD: solo PSP (PPSSPP), por ID de juego
+    const gameId = e.console === 'psp' ? gameIdOf(e.path) : '';
+    const tex = gameId ? textureInfo(gameId) : null;
+    const lines = [
+      p.active ? `Parche activo: ${p.name}` : 'Parche: ninguno (.ips, .bps o .ups)',
+      tex ? (tex.installed ? `Texturas HD: ${tex.enabled ? 'activas' : 'desactivadas'} (${tex.files} archivos)` : 'Texturas HD: no instaladas') : null,
+    ].filter(Boolean);
+    const texButtons = gameId
+      ? [
+          { text: 'Importar texturas HD…', onPress: () => importTex(gameId) },
+          ...(tex?.installed
+            ? [
+                {
+                  text: tex.enabled ? 'Desactivar texturas HD' : 'Activar texturas HD',
+                  onPress: () => {
+                    setTextures(gameId, !tex.enabled);
+                    showToast(tex.enabled ? 'Texturas HD desactivadas' : 'Texturas HD activas');
+                  },
+                },
+                {
+                  text: 'Quitar texturas HD',
+                  style: 'destructive' as const,
+                  onPress: () => {
+                    removeTextures(gameId);
+                    showToast('Texturas HD quitadas');
+                  },
+                },
+              ]
+            : []),
+        ]
+      : [];
+    Alert.alert('Mods y parches', lines.join('\n'), [
+      { text: p.active ? 'Cambiar parche' : 'Aplicar parche…', onPress: () => applyPatch(e) },
+      ...(p.active
+        ? [
+            {
+              text: 'Quitar parche',
+              style: 'destructive' as const,
+              onPress: () => {
+                removePatch(e.path);
+                showToast('Parche quitado');
+              },
+            },
+          ]
+        : []),
+      ...texButtons,
+      { text: 'Volver', style: 'cancel' as const },
+    ]);
+  };
+  const importTex = (gameId: string) =>
+    importTextures(gameId)
+      .then((n) => {
+        if (n >= 0) showToast(`Texturas HD instaladas (${n} archivos). Se aplican al abrir el juego`);
+      })
+      .catch((err) => showToast(String(err?.message ?? err)));
   const gameOptions = (e: Entry | undefined) => {
     if (!e) return;
     Alert.alert(displayTitle(e.path), undefined, [
+      { text: 'Mods y parches', onPress: () => modsMenu(e) },
       ...(isArcadeConsole(e.console) ? [{ text: 'Cambiar núcleo (FBNeo / MAME)', onPress: () => chooseArcadeCore(e, onPlay) }] : []),
       { text: 'Cambiar carátula (Fotos)', onPress: () => pickCover(e) },
       { text: 'Recargar carátula', onPress: () => reloadCover(e.path, e.console) },

@@ -152,6 +152,32 @@ static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
 }
 
+// ---- Texturas HD de PPSSPP: system/PPSSPP/PSP/TEXTURES/<ID>/ (activas) o <ID>.off (desactivadas) ----
+static NSString *pspTexturesRoot(void) {
+  NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"system/PPSSPP/PSP/TEXTURES"];
+  [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+  return dir;
+}
+
+// Solo letras, números, guion y guion bajo: el ID de juego se usa como nombre de carpeta
+static BOOL validGameId(NSString *serial) {
+  NSCharacterSet *allowed =
+      [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"];
+  return serial.length >= 4 && serial.length <= 32 && [serial rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
+}
+
+static NSString *patchesDirectory(void) {
+  NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"patches"];
+  [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+  return dir;
+}
+
+
+static NSString *patchPath(NSString *romPath, NSString *ext) {
+  NSString *base = [[romPath lastPathComponent] stringByDeletingPathExtension];
+  return [patchesDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", base, ext]];
+}
+
 // Carpetas dentro de Documents: una por consola + states/ (save states)
 static NSArray<NSString *> *consoleFolders(void) {
   return @[
@@ -1157,6 +1183,7 @@ RCT_EXPORT_MODULE(Libretro)
   }
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
+  host::setPatchDir(patchesDirectory().UTF8String);
   return @(host::loadGame(path.UTF8String));
 }
 
@@ -1691,6 +1718,148 @@ static id parseJSON(NSString *json) {
     picker.delegate = handler;
     [top presentViewController:picker animated:YES completion:nil];
   });
+}
+
+// ---- Parches al vuelo (IPS / BPS / UPS): un parche activo por juego, la ROM no se modifica ----
+// Elige un .ips/.bps/.ups y lo guarda como Documents/patches/<ROM>.<ext>; resuelve el nombre del archivo
+- (void)patchPick:(NSString *)romPath resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = topViewController();
+    if (!top || g_filePicker) {
+      resolve(@"");
+      return;
+    }
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeData ] asCopy:YES];
+    JLFilePicker *handler = [JLFilePicker new];
+    handler.done = ^(NSURL *url) {
+      if (!url) {
+        resolve(@"");
+        return;
+      }
+      NSString *ext = url.pathExtension.lowercaseString;
+      if (![@[ @"ips", @"bps", @"ups" ] containsObject:ext]) {
+        reject(@"patch", @"Solo se admiten parches .ips, .bps o .ups", nil);
+        return;
+      }
+      NSFileManager *fm = NSFileManager.defaultManager;
+      // Un solo parche activo por juego: se quitan los de otros formatos
+      for (NSString *old in @[ @"ips", @"bps", @"ups" ]) {
+        [fm removeItemAtPath:patchPath(romPath, old) error:nil];
+      }
+      NSError *error = nil;
+      if (![fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:patchPath(romPath, ext)] error:&error]) {
+        reject(@"patch", error.localizedDescription ?: @"No se pudo copiar el parche", error);
+        return;
+      }
+      resolve(url.lastPathComponent);
+    };
+    g_filePicker = handler;
+    picker.delegate = handler;
+    [top presentViewController:picker animated:YES completion:nil];
+  });
+}
+
+// JSON {"active": bool, "name": "archivo del parche"} para la ROM dada
+- (NSString *)patchInfo:(NSString *)romPath {
+  NSString *name = @"";
+  for (NSString *ext in @[ @"ips", @"bps", @"ups" ]) {
+    NSString *p = patchPath(romPath, ext);
+    if ([NSFileManager.defaultManager fileExistsAtPath:p]) {
+      name = p.lastPathComponent;
+      break;
+    }
+  }
+  NSData *json = [NSJSONSerialization dataWithJSONObject:@{ @"active" : @(name.length > 0), @"name" : name }
+                                                 options:0
+                                                   error:nil];
+  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"{}";
+}
+
+- (void)patchRemove:(NSString *)romPath {
+  for (NSString *ext in @[ @"ips", @"bps", @"ups" ]) {
+    [NSFileManager.defaultManager removeItemAtPath:patchPath(romPath, ext) error:nil];
+  }
+}
+
+// ---- Texturas HD de PPSSPP por juego ----
+// Importa una carpeta de texturas (ID del juego como nombre) y la deja activa
+- (void)texturesImport:(NSString *)serial resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!validGameId(serial)) {
+    reject(@"textures", @"ID de juego no válido para las texturas", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = topViewController();
+    if (!top || g_filePicker) {
+      resolve(@(-1));
+      return;
+    }
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeFolder ]];
+    JLFilePicker *handler = [JLFilePicker new];
+    handler.done = ^(NSURL *url) {
+      if (!url) {
+        resolve(@(-1));
+        return;
+      }
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const BOOL scoped = [url startAccessingSecurityScopedResource];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSString *dest = [pspTexturesRoot() stringByAppendingPathComponent:serial];
+        [fm removeItemAtPath:dest error:nil];
+        [fm removeItemAtPath:[dest stringByAppendingString:@".off"] error:nil];
+        NSError *error = nil;
+        const BOOL ok = [fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:&error];
+        if (scoped) [url stopAccessingSecurityScopedResource];
+        if (!ok) {
+          reject(@"textures", error.localizedDescription ?: @"No se pudo copiar el paquete de texturas", error);
+          return;
+        }
+        NSInteger files = 0;
+        for (__unused NSString *f in [fm enumeratorAtPath:dest]) files++;
+        resolve(@(files));
+      });
+    };
+    g_filePicker = handler;
+    picker.delegate = handler;
+    [top presentViewController:picker animated:YES completion:nil];
+  });
+}
+
+// JSON {"installed": bool, "enabled": bool, "files": n} para el juego
+- (NSString *)texturesInfo:(NSString *)serial {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *dest = validGameId(serial) ? [pspTexturesRoot() stringByAppendingPathComponent:serial] : @"";
+  const BOOL enabled = dest.length && [fm fileExistsAtPath:dest];
+  const BOOL disabled = dest.length && [fm fileExistsAtPath:[dest stringByAppendingString:@".off"]];
+  NSInteger files = 0;
+  if (enabled || disabled) {
+    for (__unused NSString *f in [fm enumeratorAtPath:enabled ? dest : [dest stringByAppendingString:@".off"]]) files++;
+  }
+  NSData *json = [NSJSONSerialization dataWithJSONObject:@{ @"installed" : @(enabled || disabled), @"enabled" : @(enabled), @"files" : @(files) }
+                                                 options:0
+                                                   error:nil];
+  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"{}";
+}
+
+// Activa o desactiva las texturas del juego sin borrarlas (renombra la carpeta)
+- (void)texturesToggle:(NSString *)serial enabled:(BOOL)enabled {
+  if (!validGameId(serial)) return;
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSString *on = [pspTexturesRoot() stringByAppendingPathComponent:serial];
+  NSString *off = [on stringByAppendingString:@".off"];
+  NSString *from = enabled ? off : on;
+  NSString *to = enabled ? on : off;
+  if ([fm fileExistsAtPath:from] && ![fm fileExistsAtPath:to]) {
+    [fm moveItemAtPath:from toPath:to error:nil];
+  }
+}
+
+- (void)texturesRemove:(NSString *)serial {
+  if (!validGameId(serial)) return;
+  NSString *on = [pspTexturesRoot() stringByAppendingPathComponent:serial];
+  [NSFileManager.defaultManager removeItemAtPath:on error:nil];
+  [NSFileManager.defaultManager removeItemAtPath:[on stringByAppendingString:@".off"] error:nil];
 }
 
 - (void)showAirPlayPicker {
