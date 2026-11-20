@@ -17,6 +17,7 @@ import PlayerScreen from './screens/PlayerScreen';
 import SteamLibrary from './screens/steam/SteamLibrary';
 import { Libretro } from 'react-native-libretro';
 import { missingBios } from './emulator/biosCheck';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 
 type Tab = 'library' | 'web' | 'guide' | 'media';
 
@@ -74,6 +75,7 @@ export default function App() {
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
         {game ? (
+          <ErrorBoundary onExit={() => setGame(null)}>
           <PlayerScreen
             key={`${game.path}:${game.core ?? ''}:${game.run ?? 0}`}
             romPath={game.path}
@@ -83,6 +85,7 @@ export default function App() {
             onRestart={() => setGame({ path: game.path, run: (game.run ?? 0) + 1 })}
             startSlot={game.slot}
           />
+          </ErrorBoundary>
         ) : null}
         <View style={[styles.root, romPath ? styles.hidden : null]}>
           <View style={styles.root}>
@@ -91,7 +94,7 @@ export default function App() {
                 <LibraryScreen onPlay={play} />
               ) : uiMode === 'steam' ? (
                 // Mientras hay partida se libera la biblioteca SteamOS (texturas de carátulas y banners)
-                romPath ? null : <SteamLibrary onPlay={play} active={tab === 'library'} />
+                <SteamLibrary onPlay={play} active={!romPath && tab === 'library'} />
               ) : null}
             </View>
             <View style={[styles.pane, tab !== 'web' && styles.hidden]}>

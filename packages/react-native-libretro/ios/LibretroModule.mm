@@ -205,8 +205,17 @@ static JLMusicPicker *g_musicPicker;
 }
 @end
 
+// Diagnóstico: una excepción de Objective-C no capturada queda escrita en Documents/ultimo-error.txt
+static void jlUncaughtException(NSException *exception) {
+  NSString *docs = documentsDirectory() ?: NSTemporaryDirectory();
+  NSString *text = [NSString stringWithFormat:@"%@\n%@: %@\n%@\n", [NSDate date], exception.name,
+                                              exception.reason ?: @"", [[exception callStackSymbols] componentsJoinedByString:@"\n"]];
+  [text writeToFile:[docs stringByAppendingPathComponent:@"ultimo-error.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
 static NSString *patchesDirectory(void) {
-  NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"patches"];
+  NSString *docs = documentsDirectory() ?: NSTemporaryDirectory();
+  NSString *dir = [docs stringByAppendingPathComponent:@"patches"];
   [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
   return dir;
 }
@@ -1118,6 +1127,7 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (instancetype)init {
   if (self = [super init]) {
+    NSSetUncaughtExceptionHandler(&jlUncaughtException);
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserver:self selector:@selector(onMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
     [nc addObserver:self selector:@selector(onAudioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
@@ -1219,6 +1229,10 @@ RCT_EXPORT_MODULE(Libretro)
 
 - (NSNumber *)loadGame:(NSString *)romPath {
   _romError = nil;
+  if (romPath.length == 0) {
+    _romError = @"Ruta de ROM vacía";
+    return @NO;
+  }
   NSFileManager *fm = NSFileManager.defaultManager;
   NSString *path = normalizeRomPath(romPath);
   BOOL isDir = NO;

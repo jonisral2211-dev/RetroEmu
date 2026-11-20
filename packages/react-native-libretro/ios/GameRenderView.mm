@@ -260,6 +260,8 @@ static uint32_t g_color = 0;
 }
 
 - (void)syncLayout {
+  // Sin tamaño todavía (vista fuera de pantalla): no se crea ningún drawable de 0 píxeles
+  if (self.bounds.size.width <= 0 || self.bounds.size.height <= 0) return;
   CGFloat scale = self.contentScaleFactor > 0 ? self.contentScaleFactor : UIScreen.mainScreen.nativeScale;
   if (scale <= 0) scale = 1;
   _mtkView.frame = self.bounds;

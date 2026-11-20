@@ -217,7 +217,9 @@ export default function GameDetails({ entry, title, favorite, playtime, active, 
               {box ? (
                 <Image source={{ uri: box }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               ) : (
-                <GeneratedArt entry={entry} title={title} width={96} height={134} />
+                <View style={{ width: 96, height: 134, borderRadius: 12, overflow: 'hidden' }}>
+                  <GeneratedArt entry={entry} title={title} width={96} height={134} />
+                </View>
               )}
               <Animated.View
                 pointerEvents="none"
@@ -349,7 +351,7 @@ const styles = StyleSheet.create({
   boxWrap: {
     width: 96,
     height: 134,
-    borderRadius: 6,
+    borderRadius: 12,
     backgroundColor: S.panel,
     shadowColor: '#000',
     shadowOpacity: 0.7,
@@ -357,7 +359,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
   },
   // Recorte de la carátula: hijo sin transformar (en iOS el overflow no recorta dentro de un padre 3D)
-  boxArt: { flex: 1, borderRadius: 6, overflow: 'hidden', backgroundColor: S.panel },
+  boxArt: { flex: 1, borderRadius: 12, overflow: 'hidden', backgroundColor: S.panel },
   headText: { flex: 1, gap: 4 },
   title: { color: S.text, fontSize: 24, fontWeight: '900' },
   internal: { color: S.faint, fontSize: 12, fontWeight: '700' },
