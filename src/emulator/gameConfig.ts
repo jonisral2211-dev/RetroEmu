@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Perfil por juego del menú rápido: multiplicador de resolución interna en PSP (1x..4x)
-export type GameConfig = { pspRes?: number };
+export type GameConfig = { pspRes?: number; fpsCap?: number; turbo?: boolean };
 
 const KEY = (romPath: string) => `jl.gamecfg.v1:${romPath}`;
 

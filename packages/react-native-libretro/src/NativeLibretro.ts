@@ -124,6 +124,10 @@ export interface Spec extends TurboModule {
   clipAvailable(): boolean;
   /** Reduce una imagen en disco para que su lado mayor no pase de maxPixels. */
   resizeImage(path: string, maxPixels: number): boolean;
+  /** Límite de FPS del emulador (0 = libre): ahorro de batería. */
+  setFrameCap(fps: number): void;
+  /** Turbo / auto-fire de los botones de cara del mando físico. */
+  setTurbo(on: boolean): void;
   clipRecording(): boolean;
   /** Empieza a grabar la pantalla del juego con micrófono. */
   clipStart(): Promise<boolean>;

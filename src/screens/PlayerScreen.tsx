@@ -94,6 +94,7 @@ import { CONSOLE_LABEL, Console } from '../emulator/cores';
 import TVDeskPanel from './TVDeskPanel';
 import { clipsAvailable, startClip, stopClip } from '../clips/recorder';
 import { GameConfig, loadGameConfig, saveGameConfig } from '../emulator/gameConfig';
+import { setTouchTurbo } from '../input/turbo';
 
 type Props = {
   romPath: string;
@@ -209,12 +210,30 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   const gameCfgRef = useRef<GameConfig>({});
   const [cfgReady, setCfgReady] = useState(false);
   const [pspRes, setPspRes] = useState(1);
+  // Ahorro de batería (límite de FPS, 0 = libre) y turbo / auto-fire, por juego
+  const [fpsCap, setFpsCap] = useState(0);
+  const [turbo, setTurbo] = useState(false);
+  useEffect(() => {
+    if (cfgReady) Libretro.setFrameCap(fpsCap);
+  }, [cfgReady, fpsCap]);
+  useEffect(() => {
+    if (!cfgReady) return;
+    setTouchTurbo(turbo);
+    Libretro.setTurbo(turbo);
+  }, [cfgReady, turbo]);
+  // Guarda un cambio del menú rápido en el perfil del juego
+  const saveCfg = (patch: GameConfig) => {
+    gameCfgRef.current = { ...gameCfgRef.current, ...patch };
+    saveGameConfig(romPath, gameCfgRef.current);
+  };
   useEffect(() => {
     let alive = true;
     loadGameConfig(romPath).then((c) => {
       if (!alive) return;
       gameCfgRef.current = c;
       setPspRes(c.pspRes ?? 1);
+      setFpsCap(c.fpsCap ?? 0);
+      setTurbo(c.turbo ?? false);
       setCfgReady(true);
     });
     return () => {
@@ -1082,6 +1101,17 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
           gameCfgRef.current = { ...gameCfgRef.current, pspRes: m };
           saveGameConfig(romPath, gameCfgRef.current);
           flash(`Resolución PSP ${m}x: reinicia el juego para aplicarla`);
+        }}
+        fpsCap={fpsCap}
+        onFpsCap={(v) => {
+          setFpsCap(v);
+          saveCfg({ fpsCap: v });
+        }}
+        turbo={turbo}
+        onTurbo={(v) => {
+          setTurbo(v);
+          saveCfg({ turbo: v });
+          flash(v ? 'Turbo activado en los botones de cara' : 'Turbo desactivado');
         }}
         disks={disks}
         onDisk={(i) => {

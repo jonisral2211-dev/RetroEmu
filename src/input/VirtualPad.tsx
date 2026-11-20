@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Libretro } from 'react-native-libretro';
 import { Btn } from '../emulator/buttons';
+import { FACE_MASK, isTouchTurbo } from './turbo';
 import { theme } from '../theme';
 import { buildPad } from './buildPad';
 import { evaluateZones, Pt, Tuning } from './evaluate';
@@ -117,6 +118,34 @@ export function VirtualPad({
   const look = useRef({ x: 0, y: 0 });
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const mask = useRef(0);
+  // Turbo táctil: alterna los botones de cara ~10 veces por segundo mientras se mantienen
+  const turboTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const turboPhase = useRef(true);
+  const stopTurbo = () => {
+    if (turboTimer.current) clearInterval(turboTimer.current);
+    turboTimer.current = null;
+  };
+  const pushButtons = (bits: number) => {
+    if (isTouchTurbo() && (bits & FACE_MASK) !== 0) {
+      turboPhase.current = true;
+      Libretro.setButtons(bits);
+      if (!turboTimer.current) {
+        turboTimer.current = setInterval(() => {
+          const cur = mask.current;
+          if ((cur & FACE_MASK) === 0) {
+            stopTurbo();
+            return;
+          }
+          turboPhase.current = !turboPhase.current;
+          Libretro.setButtons(turboPhase.current ? cur : cur & ~FACE_MASK);
+        }, 50);
+      }
+      return;
+    }
+    stopTurbo();
+    Libretro.setButtons(bits);
+  };
+  useEffect(() => stopTurbo, []);
   const axis = useRef({ x: 0, y: 0 });
   const owners = useRef(new Map<string | number, string>());
 
@@ -236,7 +265,7 @@ export function VirtualPad({
       // Vibración solo al pulsar un botón nuevo (no al soltar ni al mantener)
       if (hapticsRef.current && (bits & ~mask.current) !== 0) hapticFor(bits & ~mask.current);
       mask.current = bits;
-      Libretro.setButtons(bits);
+      pushButtons(bits);
       setActive(bits);
     }
     if (ax !== axis.current.x || ay !== axis.current.y) {

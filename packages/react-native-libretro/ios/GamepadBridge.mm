@@ -49,6 +49,10 @@ static void onCoreRumble(unsigned port, float strong, float weak) {
   });
 }
 
+// Turbo / auto-fire del mando físico: los botones de cara se disparan ~10 veces por segundo
+static BOOL g_turboOn = NO;
+void jlSetPhysicalTurbo(BOOL on) { g_turboOn = on; }
+
 @implementation GamepadBridge
 
 + (instancetype)sharedBridge {
@@ -253,6 +257,13 @@ static uint32_t stickAsDpad(float x, float y) {
   if (pad.buttonOptions.pressed) phys |= 1u << kOptions;
   // Options / botón central (PS5): flanco de subida del Jugador 1 abre o cierra el menú rápido
   static uint32_t lastMenu = 0;
+  if (g_turboOn && port == 0) {
+    static uint32_t turboTick = 0;
+    const uint32_t face = (1u << kCross) | (1u << kCircle) | (1u << kSquare) | (1u << kTriangle);
+    if (phys & face) {
+      if ((++turboTick / 3) % 2) phys &= ~face;  // ~10 pulsaciones/s con 60 Hz
+    }
+  }
   const uint32_t menuNow = phys & ((1u << kMenu) | (1u << kOptions));
   if (port == 0 && menuNow && !lastMenu) {
     dispatch_async(dispatch_get_main_queue(), ^{

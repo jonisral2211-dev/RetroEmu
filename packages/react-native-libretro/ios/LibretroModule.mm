@@ -150,6 +150,8 @@ static BOOL writeFramePNG(NSString *path) {
   return [UIImagePNGRepresentation(shot) writeToFile:path atomically:YES];
 }
 
+void jlSetPhysicalTurbo(BOOL on);
+
 static NSString *documentsDirectory(void) {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
 }
@@ -2257,6 +2259,14 @@ static id parseJSON(NSString *json) {
 - (void)stop {
   host::stop();
   [[JLHaptics shared] rumble:0 sharpness:0];
+}
+
+- (void)setFrameCap:(double)fps {
+  host::setFrameCap(fps);
+}
+
+- (void)setTurbo:(BOOL)on {
+  jlSetPhysicalTurbo(on);
 }
 
 - (void)setPaused:(BOOL)paused {

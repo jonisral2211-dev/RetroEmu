@@ -251,6 +251,8 @@ retro_audio_buffer_status_callback_t g_audioStatus = nullptr;
 
 enum retro_pixel_format g_pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 double g_sampleRate = 32768.0;
+// Límite de FPS elegido por el usuario (0 = sin límite): el bucle toma el menor de ambos
+std::atomic<double> g_frameCap{0.0};
 std::atomic<double> g_fps{60.0};
 // Ritmo real medido (frames emulados por segundo) para el diagnóstico de velocidad
 std::atomic<double> g_measuredFps{0.0};
@@ -1340,7 +1342,8 @@ void runLoop() {
   int statsFrames = 0;
   bool wasPaused = false;
   while (g_running) {
-    const double fps = g_fps.load();
+    const double cap = g_frameCap.load();
+    const double fps = cap > 0 ? std::min(g_fps.load(), cap) : g_fps.load();
     // Al despausar (menú, cambio de app, carga de estado): el reloj empieza de cero, sin
     // ráfaga de frames para "ponerse al día"
     const bool pausedNow = g_paused.load();
@@ -1617,6 +1620,8 @@ void stop() {
   g_audio.stop();
   persistSram();
 }
+
+void setFrameCap(double fps) { g_frameCap = fps > 0 ? std::max(10.0, std::min(fps, 240.0)) : 0.0; }
 
 void setPaused(bool paused) { g_paused = paused; }
 

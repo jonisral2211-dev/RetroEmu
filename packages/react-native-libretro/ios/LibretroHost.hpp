@@ -27,6 +27,8 @@ void setPatchDir(const std::string &dir);
 void start();
 void stop();  // para el hilo de emulación y persiste la SRAM
 void setPaused(bool paused);
+/** Límite de FPS del bucle de emulación (0 = libre). Ahorro de batería. */
+void setFrameCap(double fps);
 void setButtons(uint16_t mask);
 /** Stick analógico izquierdo, x/y en [-1, 1]. */
 void setAnalog(double x, double y);

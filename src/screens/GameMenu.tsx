@@ -199,6 +199,12 @@ export type GameMenuProps = {
   /** Discos de un juego multidisco (.m3u); count > 1 muestra el selector. */
   disks: { count: number; index: number; labels: string[] };
   onDisk: (i: number) => void;
+  /** Límite de FPS del juego (0 = libre, 60, 30 para ahorrar batería). */
+  fpsCap: number;
+  onFpsCap: (v: number) => void;
+  /** Turbo / auto-fire de los botones de cara (táctil y mando físico). */
+  turbo: boolean;
+  onTurbo: (v: boolean) => void;
   /** Modo control forzado a mano (Chromecast, capturadora…). */
   forceController: boolean;
   onForceController: (v: boolean) => void;
@@ -333,6 +339,21 @@ export function GameMenu(p: GameMenuProps) {
                 }))}
               />
             ) : null}
+            <Segmented
+              label="Límite de FPS (ahorro de batería)"
+              value={String(p.fpsCap)}
+              onChange={(v) => p.onFpsCap(Number(v))}
+              options={[
+                { id: '0', label: 'Libre' },
+                { id: '60', label: '60 FPS' },
+                { id: '30', label: '30 · batería' },
+              ]}
+            />
+            <Action
+              label={p.turbo ? 'Turbo / auto-fire: activado' : 'Turbo / auto-fire: desactivado'}
+              onPress={() => p.onTurbo(!p.turbo)}
+              primary={p.turbo}
+            />
             {p.showPspRes ? (
               <Segmented
                 label="Resolución interna (PSP)"
