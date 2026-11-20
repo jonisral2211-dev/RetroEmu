@@ -203,7 +203,7 @@ static NSString *patchPath(NSString *romPath, NSString *ext) {
 static NSArray<NSString *> *consoleFolders(void) {
   return @[
     @"n64", @"gba", @"sega", @"arcade", @"ps1", @"psp", @"nds", @"saturn", @"fbneo", @"snes", @"nes", @"gb", @"gbc",
-    @"ports", @"dreamcast", @"states"
+    @"ports", @"dreamcast", @"n3ds", @"ps2", @"states"
   ];
 }
 
@@ -216,7 +216,7 @@ static NSDictionary<NSString *, NSString *> *unsupportedFolders(void) {
 // Carpetas de consola donde un .zip o .7z se descomprime automáticamente (y se borra). arcade/ y
 // fbneo/ no: allí los .zip son romsets que el core lee comprimidos.
 static NSArray<NSString *> *unpackFolders(void) {
-  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc", @"ports", @"dreamcast" ];
+  return @[ @"psp", @"ps1", @"n64", @"gba", @"sega", @"saturn", @"nds", @"snes", @"nes", @"gb", @"gbc", @"ports", @"dreamcast", @"n3ds", @"ps2" ];
 }
 // Descargas comprimidas grandes (o .7z): se descomprimen en segundo plano a la raíz de Documents
 // y desde ahí la auto-organización reparte cada juego en su carpeta
@@ -723,6 +723,7 @@ static NSString *folderForExtension(NSString *ext) {
       @"md" : @"sega", @"gen" : @"sega", @"smd" : @"sega", @"sms" : @"sega", @"gg" : @"sega", @"sg" : @"sega",
       @"cso" : @"psp", @"wad" : @"ports", @"gdi" : @"dreamcast", @"cdi" : @"dreamcast", @"sfc" : @"snes", @"smc" : @"snes", @"fig" : @"snes", @"swc" : @"snes", @"nes" : @"nes",
       @"fds" : @"nes", @"unf" : @"nes", @"unif" : @"nes", @"gb" : @"gb", @"dmg" : @"gb", @"sgb" : @"gb", @"gbc" : @"gbc",
+      @"3ds" : @"n3ds", @"cci" : @"n3ds",
     };
   });
   return map[ext] ?: unsupportedFolders()[ext];
@@ -776,6 +777,7 @@ static NSString *folderLabel(NSString *folder) {
       @"nds" : @"Nintendo DS", @"sega" : @"Sega", @"saturn" : @"Saturn", @"arcade" : @"Arcade",
       @"fbneo" : @"FBNeo", @".inbox" : @"Descomprimir y organizar", @"gb" : @"Game Boy",
       @"gbc" : @"Game Boy Color", @"nes" : @"NES", @"snes" : @"Super Nintendo", @"ports" : @"Ports", @"dreamcast" : @"Dreamcast",
+      @"n3ds" : @"Nintendo 3DS", @"ps2" : @"PlayStation 2",
     };
   });
   return labels[folder] ?: folder;
@@ -1142,6 +1144,8 @@ RCT_EXPORT_MODULE(Libretro)
     @"mame" : @"mame2003_plus_libretro",
     @"pcsx" : @"pcsx_rearmed_libretro",
     @"melonds" : @"melonds_libretro",
+    @"azahar" : @"azahar_libretro",
+    @"play" : @"play_libretro",
     @"desmume" : @"desmume_libretro",
     @"yabause" : @"yabause_libretro",
     @"fbneo" : @"fbneo_libretro",

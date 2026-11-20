@@ -58,6 +58,8 @@ const CONSOLE_NAME: Record<Console, string> = {
   gb: 'Game Boy',
   nes: 'NES',
   dreamcast: 'Dreamcast',
+  n3ds: 'Nintendo 3DS',
+  ps2: 'PlayStation 2',
   ports: 'Ports PC',
   saturn: 'Sega Saturn',
   sega: 'Sega Mega Drive',

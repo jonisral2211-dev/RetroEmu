@@ -81,6 +81,7 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
     case 'mupen64':
       return hd
         ? [
+            ['mupen64plus-cpucore', 'cached_interpreter'],
             ['mupen64plus-rdp-plugin', 'gliden64'],
             ['mupen64plus-43screensize', ultra ? '1920x1440' : '1280x960'],
             ['mupen64plus-169screensize', ultra ? '1920x1080' : '1280x720'],
@@ -91,7 +92,10 @@ export function gfxOptions(core: CoreId, p: GfxPreset): [string, string][] {
             ['mupen64plus-MultiSampling', remaster ? '4' : '0'],
           ]
         : [
-            ['mupen64plus-rdp-plugin', 'angrylion'],
+            ['mupen64plus-cpucore', 'cached_interpreter'],
+            ['mupen64plus-rdp-plugin', 'gliden64'],
+            ['mupen64plus-43screensize', '640x480'],
+            ['mupen64plus-169screensize', '640x360'],
             ['mupen64plus-aspect', '4:3'],
             ['mupen64plus-txHiresEnable', 'False'],
           ];

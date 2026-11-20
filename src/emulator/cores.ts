@@ -24,7 +24,9 @@ export type CoreId =
   | 'easyrpg'
   | 'scummvm'
   | 'flycast'
-  | 'swanstation';
+  | 'swanstation'
+  | 'azahar'
+  | 'play';
 
 // Consolas de la biblioteca (carpetas en Documents y pestañas de la UI)
 export type Console =
@@ -42,11 +44,13 @@ export type Console =
   | 'gb'
   | 'gbc'
   | 'ports'
-  | 'dreamcast';
+  | 'dreamcast'
+  | 'n3ds'
+  | 'ps2';
 
 /** Todas las consolas de la biblioteca (para contadores y filtros). */
 export const ALL_CONSOLES: Console[] = [
-  'ps1', 'psp', 'n64', 'nds', 'gba', 'snes', 'nes', 'gb', 'gbc', 'saturn', 'sega', 'fbneo', 'mame', 'ports', 'dreamcast',
+  'ps1', 'psp', 'n64', 'nds', 'gba', 'snes', 'nes', 'gb', 'gbc', 'saturn', 'sega', 'fbneo', 'mame', 'ports', 'dreamcast', 'n3ds', 'ps2',
 ];
 
 // Debe coincidir con los cores que scripts/cores.lock marca como enabled=true.
@@ -76,6 +80,8 @@ export const ENABLED_CORES: ReadonlySet<CoreId> = new Set<CoreId>([
   'scummvm',
   'flycast',
   'swanstation',
+  'azahar',
+  'play',
 ]);
 
 export const SYSTEM_NAME: Record<CoreId, string> = {
@@ -103,6 +109,8 @@ export const SYSTEM_NAME: Record<CoreId, string> = {
   scummvm: 'Aventuras gráficas (ScummVM)',
   flycast: 'Sega Dreamcast (Flycast)',
   swanstation: 'PlayStation HD (SwanStation)',
+  azahar: 'Nintendo 3DS (Azahar)',
+  play: 'PlayStation 2 (Play!, intérprete)',
 };
 
 export const CONSOLE_LABEL: Record<Console, string> = {
@@ -121,6 +129,8 @@ export const CONSOLE_LABEL: Record<Console, string> = {
   gbc: 'GBC',
   ports: 'Ports',
   dreamcast: 'DC',
+  n3ds: '3DS',
+  ps2: 'PS2',
 };
 
 // PSP: PPSSPP precompilado para iOS, con render por software (sin JIT: intérprete IR)
@@ -139,6 +149,8 @@ const CORE_OF_CONSOLE: Partial<Record<Console, CoreId>> = {
   gb: 'gambatte',
   gbc: 'gambatte',
   dreamcast: 'flycast',
+  n3ds: 'azahar',
+  ps2: 'play',
 };
 
 /** Núcleo alternativo si el principal no arranca el juego (NDS: melonDS -> DeSmuME). */
@@ -198,7 +210,7 @@ export function portTitle(path: string): string | null {
 // Carpeta de Documents donde debe ir cada tipo de juego
 export const FOLDER_GUIDE =
   'Dreamcast → dreamcast/ · Ports (Doom, Quake, Cave Story…) → ports/ · SNES → snes/ · NES → nes/ · Game Boy → gb/ · GB Color → gbc/ · GBA → gba/ · N64 → n64/ · Mega Drive → sega/ · PS1 → ps1/ · Saturn → saturn/ · NDS → nds/ · ' +
-  'PSP → psp/ · Arcade y Neo-Geo (.zip) → arcade/ o fbneo/';
+  'PSP → psp/ · 3DS → n3ds/ · PS2 → ps2/ · Arcade y Neo-Geo (.zip) → arcade/ o fbneo/';
 
 /** true si es un .zip fuera de arcade/ y fbneo/ (solo esos son romsets arcade). */
 export function isMisplacedZip(path: string): boolean {
@@ -222,6 +234,8 @@ export const MOVE_TARGETS: { folder: string; label: string }[] = [
   { folder: 'saturn', label: 'Saturn' },
   { folder: 'arcade', label: 'Arcade (MAME)' },
   { folder: 'fbneo', label: 'FBNeo' },
+  { folder: 'n3ds', label: 'Nintendo 3DS' },
+  { folder: 'ps2', label: 'PlayStation 2' },
 ];
 
 /** Aviso para un .zip mal ubicado: a qué carpeta moverlo según la consola. */

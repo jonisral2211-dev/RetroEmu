@@ -59,6 +59,8 @@ export const CONSOLE_NAMES: Record<string, string> = {
   gba: 'Game Boy Advance',
   gb: 'Game Boy',
   gbc: 'Game Boy Color',
+  n3ds: 'Nintendo 3DS',
+  ps2: 'PlayStation 2',
   snes: 'Super Nintendo',
   nes: 'NES',
   sega: 'Sega',

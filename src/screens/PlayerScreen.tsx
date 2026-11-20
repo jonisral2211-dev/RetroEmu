@@ -122,6 +122,7 @@ const WEB_PAD_TYPE: Record<CoreId, string> = {
   yabause: 'arcade', fbneo: 'arcade', ppsspp: 'ps', snes9x: 'snes', fceumm: 'nes', gambatte: 'nes',
   prboom: 'fps', ecwolf: 'fps', tyrquake: 'fps', vitaquake2: 'fps', nxengine: 'snes', cannonball: 'arcade',
   reminiscence: 'snes', easyrpg: 'nes', scummvm: 'nes', flycast: 'ps', swanstation: 'ps',
+  azahar: 'snes', play: 'ps',
 };
 
 export type NdsScreen = 'both' | 'swap' | 'top' | 'bottom';

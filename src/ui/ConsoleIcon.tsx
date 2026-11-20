@@ -17,7 +17,9 @@ export type IconKind =
   | 'gb'
   | 'gbc'
   | 'ports'
-  | 'dreamcast';
+  | 'dreamcast'
+  | 'n3ds'
+  | 'ps2';
 
 // Siluetas vectoriales minimalistas (trazo fino, viewBox 24x24)
 export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?: number; color: string }) {
@@ -75,7 +77,7 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Circle cx={15.8} cy={15} r={0.6} fill={color} />
         </>
       ) : null}
-      {kind === 'nds' ? (
+      {kind === 'nds' || kind === 'n3ds' ? (
         // Portátil de doble pantalla abierta
         <>
           <Rect x={5} y={2.5} width={14} height={8.5} rx={1.6} {...stroke} />
@@ -166,7 +168,7 @@ export function ConsoleIcon({ kind, size = 18, color }: { kind: IconKind; size?:
           <Rect x={4} y={19} width={16} height={2.4} rx={0.8} {...stroke} />
         </>
       ) : null}
-      {kind === 'ps1' ? (
+      {kind === 'ps1' || kind === 'ps2' ? (
         // Disco óptico
         <>
           <Circle cx={12} cy={12} r={8.5} {...stroke} />
