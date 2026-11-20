@@ -69,6 +69,11 @@ if ! ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
 fi
 ruby "$ROOT/scripts/add-live-activity.rb" "$ROOT/ios/RetroEmu.xcodeproj" "$ROOT/ios-overlay/LiveActivity"
 
+# Multimedia: reproducción de música con la app en segundo plano (AVAudioPlayer)
+/usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
+
 # Nombre visible en el iPhone
 for key in CFBundleDisplayName CFBundleName; do
   /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" >/dev/null 2>&1 || true

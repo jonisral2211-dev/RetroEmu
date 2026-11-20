@@ -108,6 +108,18 @@ export interface Spec extends TurboModule {
   exportBackup(): Promise<string>;
   /** Elige un .zip de respaldo y lo restaura; resuelve el número de archivos (-1 = cancelado). */
   restoreBackup(): Promise<number>;
+  /** Multimedia: importa pistas (.mp3, .flac, .m4a…) a la biblioteca musical. Resuelve nº o -1 si se canceló. */
+  mediaImport(): Promise<number>;
+  /** JSON [{name, size}] de las pistas. */
+  mediaList(): string;
+  mediaPlay(name: string): boolean;
+  mediaPause(): void;
+  mediaResume(): void;
+  mediaSeek(seconds: number): void;
+  mediaStop(): void;
+  /** JSON {playing, name, position, duration}. */
+  mediaState(): string;
+  mediaRemove(name: string): void;
   /** Elige un parche .ips/.bps/.ups para la ROM (se guarda aparte; la ROM no se modifica). Resuelve el nombre o "". */
   patchPick(romPath: string): Promise<string>;
   /** JSON {active, name} del parche de la ROM. */

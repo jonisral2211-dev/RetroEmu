@@ -166,6 +166,40 @@ static BOOL validGameId(NSString *serial) {
   return serial.length >= 4 && serial.length <= 32 && [serial rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
 }
 
+// ---- Reproductor de música local (Multimedia): Documents/music/, segundo plano con AVAudioPlayer ----
+static AVAudioPlayer *g_musicPlayer = nil;
+static NSString *g_musicName = nil;
+
+static NSString *musicDirectory(void) {
+  NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"music"];
+  [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+  return dir;
+}
+
+static BOOL isMusicFile(NSString *name) {
+  if (name.length == 0 || [name hasPrefix:@"."]) return NO;
+  NSString *ext = name.pathExtension.lowercaseString;
+  return [@[ @"mp3", @"flac", @"m4a", @"aac", @"wav", @"aif", @"aiff" ] containsObject:ext];
+}
+
+// Selector de varios archivos de audio
+@interface JLMusicPicker : NSObject <UIDocumentPickerDelegate>
+@property(nonatomic, copy) void (^done)(NSArray<NSURL *> *_Nullable urls);
+@end
+static JLMusicPicker *g_musicPicker;
+@implementation JLMusicPicker
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+  void (^cb)(NSArray<NSURL *> *) = self.done;
+  g_musicPicker = nil;
+  cb(urls);
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+  void (^cb)(NSArray<NSURL *> *) = self.done;
+  g_musicPicker = nil;
+  cb(nil);
+}
+@end
+
 static NSString *patchesDirectory(void) {
   NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"patches"];
   [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -1860,6 +1894,114 @@ static id parseJSON(NSString *json) {
   NSString *on = [pspTexturesRoot() stringByAppendingPathComponent:serial];
   [NSFileManager.defaultManager removeItemAtPath:on error:nil];
   [NSFileManager.defaultManager removeItemAtPath:[on stringByAppendingString:@".off"] error:nil];
+}
+
+// ---- Multimedia: música local en segundo plano ----
+- (void)mediaImport:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = topViewController();
+    if (!top || g_musicPicker) {
+      resolve(@(-1));
+      return;
+    }
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeAudio ] asCopy:YES];
+    picker.allowsMultipleSelection = YES;
+    JLMusicPicker *handler = [JLMusicPicker new];
+    handler.done = ^(NSArray<NSURL *> *urls) {
+      if (urls.count == 0) {
+        resolve(@(-1));
+        return;
+      }
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSInteger n = 0;
+        NSFileManager *fm = NSFileManager.defaultManager;
+        for (NSURL *url in urls) {
+          if (!isMusicFile(url.lastPathComponent)) continue;
+          NSString *dest = [musicDirectory() stringByAppendingPathComponent:url.lastPathComponent];
+          [fm removeItemAtPath:dest error:nil];
+          if ([fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:nil]) n++;
+        }
+        resolve(@(n));
+      });
+    };
+    g_musicPicker = handler;
+    picker.delegate = handler;
+    [top presentViewController:picker animated:YES completion:nil];
+  });
+}
+
+// JSON [{name, size}] de las pistas guardadas, por nombre
+- (NSString *)mediaList {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:musicDirectory() error:nil] ?: @[];
+  NSMutableArray *items = [NSMutableArray new];
+  for (NSString *name in [names sortedArrayUsingSelector:@selector(localizedStandardCompare:)]) {
+    if (!isMusicFile(name)) continue;
+    NSDictionary *attrs = [fm attributesOfItemAtPath:[musicDirectory() stringByAppendingPathComponent:name] error:nil];
+    [items addObject:@{ @"name" : name, @"size" : attrs[NSFileSize] ?: @0 }];
+  }
+  NSData *json = [NSJSONSerialization dataWithJSONObject:items options:0 error:nil];
+  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"[]";
+}
+
+// Reproduce una pista (en segundo plano, mezclada con otros audios)
+- (BOOL)mediaPlay:(NSString *)name {
+  if (!isMusicFile(name)) return NO;
+  NSURL *url = [NSURL fileURLWithPath:[musicDirectory() stringByAppendingPathComponent:name]];
+  AVAudioSession *session = AVAudioSession.sharedInstance;
+  [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+  [session setActive:YES error:nil];
+  NSError *error = nil;
+  AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:url error:&error];
+  if (!player) {
+    NSLog(@"[Multimedia] no se puede reproducir %@: %@", name, error);
+    return NO;
+  }
+  [g_musicPlayer stop];
+  g_musicPlayer = player;
+  g_musicName = name;
+  [player prepareToPlay];
+  return [player play];
+}
+
+- (void)mediaPause {
+  [g_musicPlayer pause];
+}
+
+- (void)mediaResume {
+  [g_musicPlayer play];
+}
+
+- (void)mediaSeek:(double)seconds {
+  if (g_musicPlayer) g_musicPlayer.currentTime = MAX(0, MIN(seconds, g_musicPlayer.duration));
+}
+
+- (void)mediaStop {
+  [g_musicPlayer stop];
+  g_musicPlayer = nil;
+  g_musicName = nil;
+}
+
+// JSON {playing, name, position, duration} de la pista actual
+- (NSString *)mediaState {
+  NSDictionary *state = g_musicPlayer
+      ? @{
+          @"playing" : @(g_musicPlayer.playing),
+          @"name" : g_musicName ?: @"",
+          @"position" : @(g_musicPlayer.currentTime),
+          @"duration" : @(g_musicPlayer.duration),
+        }
+      : @{ @"playing" : @NO, @"name" : @"", @"position" : @0, @"duration" : @0 };
+  NSData *json = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
+  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"{}";
+}
+
+// Borra una pista de la biblioteca musical (si suena, se detiene)
+- (void)mediaRemove:(NSString *)name {
+  if (!isMusicFile(name)) return;
+  if ([g_musicName isEqualToString:name]) [self mediaStop];
+  [NSFileManager.defaultManager removeItemAtPath:[musicDirectory() stringByAppendingPathComponent:name] error:nil];
 }
 
 - (void)showAirPlayPicker {
