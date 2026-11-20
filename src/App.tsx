@@ -6,7 +6,6 @@ import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-nativ
 import { theme } from './theme';
 import BrowserScreen from './screens/BrowserScreen';
 import GuideScreen from './screens/GuideScreen';
-import MediaScreen from './screens/MediaScreen';
 import LibraryScreen from './screens/LibraryScreen';
 import type { CoreId } from './emulator/cores';
 import { loadGfxPreset } from './emulator/graphics';
@@ -19,7 +18,7 @@ import { Libretro } from 'react-native-libretro';
 import { missingBios } from './emulator/biosCheck';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 
-type Tab = 'library' | 'web' | 'guide' | 'media';
+type Tab = 'library' | 'web' | 'guide';
 
 export default function App() {
   // Juego en curso: ruta y, en arcade, el núcleo elegido (FBNeo o MAME)
@@ -105,11 +104,6 @@ export default function App() {
                 <GuideScreen />
               </View>
             ) : null}
-            {tab === 'media' ? (
-              <View style={styles.pane}>
-                <MediaScreen />
-              </View>
-            ) : null}
           </View>
           <View style={styles.tabBar}>
             <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
@@ -130,7 +124,6 @@ export default function App() {
             <TabButton label="Biblioteca" icon="library" active={tab === 'library'} onPress={() => setTab('library')} />
             <TabButton label="Explorar web" icon="web" active={tab === 'web'} onPress={() => setTab('web')} />
             <TabButton label="Guía" icon="guide" active={tab === 'guide'} onPress={() => setTab('guide')} />
-            <TabButton label="Multimedia" icon="media" active={tab === 'media'} onPress={() => setTab('media')} />
           </View>
         </View>
         {notice && !game ? (
@@ -144,7 +137,7 @@ export default function App() {
   );
 }
 
-function TabIcon({ kind, color }: { kind: 'library' | 'web' | 'guide' | 'media'; color: string }) {
+function TabIcon({ kind, color }: { kind: 'library' | 'web' | 'guide'; color: string }) {
   return (
     <Svg width={24} height={24} viewBox="0 0 24 24">
       {kind === 'library' ? (
@@ -153,12 +146,6 @@ function TabIcon({ kind, color }: { kind: 'library' | 'web' | 'guide' | 'media';
           <Rect x="13" y="3" width="8" height="8" rx="2" stroke={color} strokeWidth={1.8} fill="none" />
           <Rect x="3" y="13" width="8" height="8" rx="2" stroke={color} strokeWidth={1.8} fill="none" />
           <Path d="M15.5 14.5 L19.5 17 L15.5 19.5 Z" fill={color} />
-        </>
-      ) : kind === 'media' ? (
-        <>
-          <Path d="M9 18V6l10-2v12" stroke={color} strokeWidth={1.8} fill="none" strokeLinejoin="round" />
-          <Circle cx="6.5" cy="18" r="2.5" stroke={color} strokeWidth={1.8} fill="none" />
-          <Circle cx="16.5" cy="16" r="2.5" stroke={color} strokeWidth={1.8} fill="none" />
         </>
       ) : kind === 'guide' ? (
         <>
@@ -188,7 +175,7 @@ function TabButton({
   onPress,
 }: {
   label: string;
-  icon: 'library' | 'web' | 'guide' | 'media';
+  icon: 'library' | 'web' | 'guide';
   active: boolean;
   onPress: () => void;
 }) {

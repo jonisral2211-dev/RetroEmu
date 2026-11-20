@@ -8,6 +8,8 @@ export interface Spec extends TurboModule {
   loadGame(romPath: string): boolean;
   unloadGame(): void;
   start(): void;
+  /** true si la app se cerró durante el último arranque de un juego: se usan ajustes base. */
+  safeMode(): boolean;
   stop(): void;
   setPaused(paused: boolean): void;
   reset(): void;
@@ -108,18 +110,6 @@ export interface Spec extends TurboModule {
   exportBackup(): Promise<string>;
   /** Elige un .zip de respaldo y lo restaura; resuelve el número de archivos (-1 = cancelado). */
   restoreBackup(): Promise<number>;
-  /** Multimedia: importa pistas (.mp3, .flac, .m4a…) a la biblioteca musical. Resuelve nº o -1 si se canceló. */
-  mediaImport(): Promise<number>;
-  /** JSON [{name, size}] de las pistas. */
-  mediaList(): string;
-  mediaPlay(name: string): boolean;
-  mediaPause(): void;
-  mediaResume(): void;
-  mediaSeek(seconds: number): void;
-  mediaStop(): void;
-  /** JSON {playing, name, position, duration}. */
-  mediaState(): string;
-  mediaRemove(name: string): void;
   /** Clips de partida (ReplayKit): disponible en el dispositivo. */
   clipAvailable(): boolean;
   /** Reduce una imagen en disco para que su lado mayor no pase de maxPixels. */

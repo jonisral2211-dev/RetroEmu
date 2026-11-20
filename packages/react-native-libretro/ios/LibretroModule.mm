@@ -171,39 +171,12 @@ static BOOL validGameId(NSString *serial) {
   return serial.length >= 4 && serial.length <= 32 && [serial rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
 }
 
-// ---- Reproductor de música local (Multimedia): Documents/music/, segundo plano con AVAudioPlayer ----
-static AVAudioPlayer *g_musicPlayer = nil;
-static NSString *g_musicName = nil;
-
-static NSString *musicDirectory(void) {
-  NSString *dir = [documentsDirectory() stringByAppendingPathComponent:@"music"];
-  [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-  return dir;
+// Modo seguro: un centinela (.arranque-en-curso) queda en Documents mientras un juego arranca.
+// Si la app se cerró durante ese arranque, la siguiente carga usa ajustes base (sin perfil ni parches).
+static BOOL g_safeMode = NO;
+static NSString *sentinelPath(void) {
+  return [(documentsDirectory() ?: NSTemporaryDirectory()) stringByAppendingPathComponent:@".arranque-en-curso"];
 }
-
-static BOOL isMusicFile(NSString *name) {
-  if (name.length == 0 || [name hasPrefix:@"."]) return NO;
-  NSString *ext = name.pathExtension.lowercaseString;
-  return [@[ @"mp3", @"flac", @"m4a", @"aac", @"wav", @"aif", @"aiff" ] containsObject:ext];
-}
-
-// Selector de varios archivos de audio
-@interface JLMusicPicker : NSObject <UIDocumentPickerDelegate>
-@property(nonatomic, copy) void (^done)(NSArray<NSURL *> *_Nullable urls);
-@end
-static JLMusicPicker *g_musicPicker;
-@implementation JLMusicPicker
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-  void (^cb)(NSArray<NSURL *> *) = self.done;
-  g_musicPicker = nil;
-  cb(urls);
-}
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-  void (^cb)(NSArray<NSURL *> *) = self.done;
-  g_musicPicker = nil;
-  cb(nil);
-}
-@end
 
 // Diagnóstico: una excepción de Objective-C no capturada queda escrita en Documents/ultimo-error.txt
 static void jlUncaughtException(NSException *exception) {
@@ -1128,6 +1101,7 @@ RCT_EXPORT_MODULE(Libretro)
 - (instancetype)init {
   if (self = [super init]) {
     NSSetUncaughtExceptionHandler(&jlUncaughtException);
+    g_safeMode = [NSFileManager.defaultManager fileExistsAtPath:sentinelPath()];
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserver:self selector:@selector(onMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
     [nc addObserver:self selector:@selector(onAudioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
@@ -1307,9 +1281,13 @@ RCT_EXPORT_MODULE(Libretro)
   }
   NSNumber *size = [fm attributesOfItemAtPath:path error:nil][NSFileSize];
   NSLog(@"[RetroEmu] loadGame core=%@ path=%@ size=%@ bytes", _coreId ?: @"(ninguno)", path, size);
-  host::setPatchDir(patchesDirectory().UTF8String);
+  // Centinela: si la app se cierra durante el arranque, la próxima vez se entra en modo seguro
+  [@"1" writeToFile:sentinelPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  // En modo seguro no se aplican parches (ni al cargar esta ROM)
+  host::setPatchDir(g_safeMode ? std::string() : std::string(patchesDirectory().UTF8String));
   const BOOL ok = host::loadGame(path.UTF8String);
   g_gameLoaded = ok;
+  if (!ok) [NSFileManager.defaultManager removeItemAtPath:sentinelPath() error:nil];
   return @(ok);
 }
 
@@ -1988,194 +1966,6 @@ static id parseJSON(NSString *json) {
   [NSFileManager.defaultManager removeItemAtPath:[on stringByAppendingString:@".off"] error:nil];
 }
 
-// ---- Multimedia: música local en segundo plano ----
-- (void)mediaImport:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  dispatch_async(dispatch_get_main_queue(), ^{
-    UIViewController *top = topViewController();
-    if (!top || g_musicPicker) {
-      resolve(@(-1));
-      return;
-    }
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeAudio ] asCopy:YES];
-    picker.allowsMultipleSelection = YES;
-    JLMusicPicker *handler = [JLMusicPicker new];
-    handler.done = ^(NSArray<NSURL *> *urls) {
-      if (urls.count == 0) {
-        resolve(@(-1));
-        return;
-      }
-      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSInteger n = 0;
-        NSFileManager *fm = NSFileManager.defaultManager;
-        for (NSURL *url in urls) {
-          if (!isMusicFile(url.lastPathComponent)) continue;
-          NSString *dest = [musicDirectory() stringByAppendingPathComponent:url.lastPathComponent];
-          [fm removeItemAtPath:dest error:nil];
-          if ([fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:nil]) n++;
-        }
-        resolve(@(n));
-      });
-    };
-    g_musicPicker = handler;
-    picker.delegate = handler;
-    [top presentViewController:picker animated:YES completion:nil];
-  });
-}
-
-// JSON [{name, size}] de las pistas guardadas, por nombre
-- (NSString *)mediaList {
-  NSFileManager *fm = NSFileManager.defaultManager;
-  NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:musicDirectory() error:nil] ?: @[];
-  NSMutableArray *items = [NSMutableArray new];
-  for (NSString *name in [names sortedArrayUsingSelector:@selector(localizedStandardCompare:)]) {
-    if (!isMusicFile(name)) continue;
-    NSDictionary *attrs = [fm attributesOfItemAtPath:[musicDirectory() stringByAppendingPathComponent:name] error:nil];
-    [items addObject:@{ @"name" : name, @"size" : attrs[NSFileSize] ?: @0 }];
-  }
-  NSData *json = [NSJSONSerialization dataWithJSONObject:items options:0 error:nil];
-  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"[]";
-}
-
-// Reproduce una pista (en segundo plano, mezclada con otros audios)
-- (BOOL)mediaPlay:(NSString *)name {
-  if (!isMusicFile(name)) return NO;
-  NSURL *url = [NSURL fileURLWithPath:[musicDirectory() stringByAppendingPathComponent:name]];
-  AVAudioSession *session = AVAudioSession.sharedInstance;
-  [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-  [session setActive:YES error:nil];
-  NSError *error = nil;
-  AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:url error:&error];
-  if (!player) {
-    NSLog(@"[Multimedia] no se puede reproducir %@: %@", name, error);
-    return NO;
-  }
-  [g_musicPlayer stop];
-  g_musicPlayer = player;
-  g_musicName = name;
-  [player prepareToPlay];
-  return [player play];
-}
-
-- (void)mediaPause {
-  [g_musicPlayer pause];
-}
-
-- (void)mediaResume {
-  [g_musicPlayer play];
-}
-
-- (void)mediaSeek:(double)seconds {
-  if (g_musicPlayer) g_musicPlayer.currentTime = MAX(0, MIN(seconds, g_musicPlayer.duration));
-}
-
-- (void)mediaStop {
-  [g_musicPlayer stop];
-  g_musicPlayer = nil;
-  g_musicName = nil;
-}
-
-// JSON {playing, name, position, duration} de la pista actual
-- (NSString *)mediaState {
-  NSDictionary *state = g_musicPlayer
-      ? @{
-          @"playing" : @(g_musicPlayer.playing),
-          @"name" : g_musicName ?: @"",
-          @"position" : @(g_musicPlayer.currentTime),
-          @"duration" : @(g_musicPlayer.duration),
-        }
-      : @{ @"playing" : @NO, @"name" : @"", @"position" : @0, @"duration" : @0 };
-  NSData *json = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
-  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] ?: @"{}";
-}
-
-// Borra una pista de la biblioteca musical (si suena, se detiene)
-- (void)mediaRemove:(NSString *)name {
-  if (!isMusicFile(name)) return;
-  if ([g_musicName isEqualToString:name]) [self mediaStop];
-  [NSFileManager.defaultManager removeItemAtPath:[musicDirectory() stringByAppendingPathComponent:name] error:nil];
-}
-
-// ---- Clips de partida (ReplayKit) ----
-// Reduce una imagen en disco para que su lado mayor no pase de maxPixels (ahorro de RAM en carátulas)
-- (NSNumber *)resizeImage:(NSString *)path maxPixels:(double)maxPixels {
-  NSURL *url = [NSURL fileURLWithPath:path];
-  CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
-  if (!source) return @NO;
-  NSDictionary *options = @{
-    (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways : @YES,
-    (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform : @YES,
-    (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize : @(maxPixels),
-  };
-  CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
-  CFRelease(source);
-  if (!image) return @NO;
-  NSMutableData *data = [NSMutableData data];
-  CGImageDestinationRef destination =
-      CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, CFSTR("public.png"), 1, NULL);
-  BOOL ok = NO;
-  if (destination) {
-    CGImageDestinationAddImage(destination, image, NULL);
-    ok = CGImageDestinationFinalize(destination) && [data writeToFile:path atomically:YES];
-    CFRelease(destination);
-  }
-  CGImageRelease(image);
-  return @(ok);
-}
-
-- (BOOL)clipAvailable {
-  return RPScreenRecorder.sharedRecorder.available;
-}
-
-- (BOOL)clipRecording {
-  return g_clipActive;
-}
-
-- (void)clipStart:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  RPScreenRecorder *recorder = RPScreenRecorder.sharedRecorder;
-  if (!recorder.available) {
-    reject(@"clip", @"La grabación de pantalla no está disponible en este dispositivo", nil);
-    return;
-  }
-  if (g_clipActive) {
-    resolve(@YES);
-    return;
-  }
-  [recorder startRecordingWithMicrophoneEnabled:YES
-                                        handler:^(NSError *error) {
-                                          if (error) {
-                                            reject(@"clip", error.localizedDescription, error);
-                                            return;
-                                          }
-                                          g_clipActive = YES;
-                                          resolve(@YES);
-                                        }];
-}
-
-// Detiene la grabación y muestra la vista previa (desde ahí se guarda en Fotos o se comparte)
-- (void)clipStop:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  if (!g_clipActive) {
-    resolve(@NO);
-    return;
-  }
-  [RPScreenRecorder.sharedRecorder stopRecordingWithHandler:^(RPPreviewViewController *preview, NSError *error) {
-    g_clipActive = NO;
-    if (error || !preview) {
-      reject(@"clip", error.localizedDescription ?: @"No se pudo terminar la grabación", error);
-      return;
-    }
-    dispatch_async(dispatch_get_main_queue(), ^{
-      g_clipPreview = [JLClipPreview new];
-      preview.previewControllerDelegate = g_clipPreview;
-      UIViewController *top = topViewController();
-      if (top) {
-        [top presentViewController:preview animated:YES completion:nil];
-      }
-      resolve(@YES);
-    });
-  }];
-}
-
 - (void)showAirPlayPicker {
   [[TVOutput shared] showRoutePicker];
 }
@@ -2268,7 +2058,16 @@ static id parseJSON(NSString *json) {
   [session setCategory:AVAudioSessionCategoryPlayback error:&error];
   [session setActive:YES error:&error];
   [[JLAmbientMusic shared] setWanted:NO];  // la música de la interfaz nunca suena con el juego
+  // El arranque ya no es sospechoso: se quita el modo seguro y el centinela tras unos segundos de juego
+  g_safeMode = NO;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, int64_t(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [NSFileManager.defaultManager removeItemAtPath:sentinelPath() error:nil];
+  });
   host::start();
+}
+
+- (BOOL)safeMode {
+  return g_safeMode;
 }
 
 - (void)stop {

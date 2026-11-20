@@ -75,11 +75,6 @@ ruby "$ROOT/scripts/add-live-activity.rb" "$ROOT/ios/RetroEmu.xcodeproj" "$ROOT/
 /usr/libexec/PlistBuddy -c "Delete :NSPhotoLibraryAddUsageDescription" "$PLIST" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string Para guardar los clips de partida en tu carrete" "$PLIST"
 
-# Multimedia: reproducción de música con la app en segundo plano (AVAudioPlayer)
-/usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" >/dev/null 2>&1 || true
-/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
-
 # Nombre visible en el iPhone
 for key in CFBundleDisplayName CFBundleName; do
   /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" >/dev/null 2>&1 || true

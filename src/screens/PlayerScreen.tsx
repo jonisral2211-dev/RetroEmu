@@ -95,6 +95,7 @@ import TVDeskPanel from './TVDeskPanel';
 import { clipsAvailable, startClip, stopClip } from '../clips/recorder';
 import { GameConfig, loadGameConfig, saveGameConfig } from '../emulator/gameConfig';
 import { setTouchTurbo } from '../input/turbo';
+import { safeModeFlag } from '../emulator/safeMode';
 import { LocalSeat, localPlaySeats, localPlayStart, localPlayStop } from '../net/localPlay';
 
 type Props = {
@@ -256,10 +257,13 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
     let alive = true;
     loadGameConfig(romPath).then((c) => {
       if (!alive) return;
-      gameCfgRef.current = c;
-      setPspRes(c.pspRes ?? 1);
-      setFpsCap(c.fpsCap ?? 0);
-      setTurbo(c.turbo ?? false);
+      // Modo seguro (el arranque anterior no terminó): se ignoran los ajustes del perfil
+      const safe = safeModeFlag();
+      gameCfgRef.current = safe ? {} : c;
+      setPspRes(safe ? 1 : (c.pspRes ?? 1));
+      setFpsCap(safe ? 0 : (c.fpsCap ?? 0));
+      setTurbo(safe ? false : (c.turbo ?? false));
+      if (safe) flash('Modo seguro: el arranque anterior no terminó. Se usan ajustes base.');
       setCfgReady(true);
     });
     return () => {
