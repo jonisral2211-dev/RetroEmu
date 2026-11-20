@@ -2001,17 +2001,21 @@ static id parseJSON(NSString *json) {
   return @(ok);
 }
 
-- (BOOL)clipAvailable {
+- (NSNumber *)clipAvailable {
   // Nunca lanza: si ReplayKit falla, el menú simplemente no ofrece clips
   @try {
-    return RPScreenRecorder.sharedRecorder.available;
+    return @(RPScreenRecorder.sharedRecorder.available);
   } @catch (NSException *e) {
-    return NO;
+    return @NO;
   }
 }
 
-- (BOOL)clipRecording {
-  return g_clipActive;
+- (NSNumber *)clipRecording {
+  @try {
+    return @(g_clipActive);
+  } @catch (NSException *e) {
+    return @NO;
+  }
 }
 
 - (void)clipStart:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
@@ -2156,8 +2160,13 @@ static id parseJSON(NSString *json) {
   host::start();
 }
 
-- (BOOL)safeMode {
-  return g_safeMode;
+- (NSNumber *)safeMode {
+  // Codegen exige NSNumber * para boolean; nunca BOOL (ObjCTurboModule lo trata como objeto)
+  @try {
+    return @(g_safeMode);
+  } @catch (NSException *e) {
+    return @NO;
+  }
 }
 
 - (void)stop {
