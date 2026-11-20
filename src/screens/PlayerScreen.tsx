@@ -18,10 +18,12 @@ import { getGfxPreset, gfxOptions, GFX_CORES, GfxPreset, saveGfxPreset } from '.
 import {
   defaultImagePrefs,
   ImagePrefs,
+  loadGameImagePrefs,
   loadImagePrefs,
   nativeImageArgs,
   REMASTER_2D,
   REMASTER_3D,
+  saveGameImagePrefs,
   saveImagePrefs,
 } from '../input/imagePrefs';
 import { addPlaytime } from '../library/playtime';
@@ -599,16 +601,17 @@ export default function PlayerScreen({ romPath, coreOverride, onExit, onRetryWit
   // Ajustes de imagen por consola (shader, nitidez CAS, suavizado, color): en vivo por GPU
   const consoleId = useMemo(() => Libretro.consoleOf(romPath), [romPath]);
   const [imagePrefs, setImagePrefs] = useState<ImagePrefs>(() => defaultImagePrefs(consoleId));
+  // Perfil del juego (shader, suavizado, nitidez, color); si no hay, los de la consola
   useEffect(() => {
-    loadImagePrefs(consoleId).then(setImagePrefs);
-  }, [consoleId]);
+    loadGameImagePrefs(romPath).then((g) => (g ? setImagePrefs(g) : loadImagePrefs(consoleId).then(setImagePrefs)));
+  }, [consoleId, romPath]);
   useEffect(() => {
     Libretro.setImageOptions(...nativeImageArgs(imagePrefs));
   }, [imagePrefs]);
   useEffect(() => () => Libretro.setImageOptions(0, 0, 0, 0), []);
   const changeImage = (p: ImagePrefs) => {
     setImagePrefs(p);
-    saveImagePrefs(consoleId, p);
+    saveGameImagePrefs(romPath, p);
   };
   const remaster = () => {
     if (core && GFX_CORES.has(core)) {

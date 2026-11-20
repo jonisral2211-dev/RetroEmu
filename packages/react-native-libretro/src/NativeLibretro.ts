@@ -122,6 +122,8 @@ export interface Spec extends TurboModule {
   mediaRemove(name: string): void;
   /** Clips de partida (ReplayKit): disponible en el dispositivo. */
   clipAvailable(): boolean;
+  /** Reduce una imagen en disco para que su lado mayor no pase de maxPixels. */
+  resizeImage(path: string, maxPixels: number): boolean;
   clipRecording(): boolean;
   /** Empieza a grabar la pantalla del juego con micrófono. */
   clipStart(): Promise<boolean>;

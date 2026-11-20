@@ -1,4 +1,5 @@
 import RNFS from 'react-native-fs';
+import { Libretro } from 'react-native-libretro';
 import { portCoreFor, portTitle } from '../emulator/cores';
 import { arcadeTitle } from './arcadeNames';
 
@@ -203,6 +204,12 @@ async function tryDownload(console: string, official: string, file: string, art:
   if (res.statusCode === 200 && res.bytesWritten > 0) {
     if (await RNFS.exists(file)) await RNFS.unlink(file);
     await RNFS.moveFile(tmp, file);
+    // Carátulas a máx. 600 px: menos RAM en la biblioteca (si falla, se queda la original)
+    try {
+      Libretro.resizeImage(file, 600);
+    } catch {
+      // sin reducción: la imagen original sirve igual
+    }
     return true;
   }
   if (await RNFS.exists(tmp)) await RNFS.unlink(tmp);

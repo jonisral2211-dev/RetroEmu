@@ -90,7 +90,8 @@ export default function App() {
               {uiMode === 'classic' ? (
                 <LibraryScreen onPlay={play} />
               ) : uiMode === 'steam' ? (
-                <SteamLibrary onPlay={play} active={!romPath && tab === 'library'} />
+                // Mientras hay partida se libera la biblioteca SteamOS (texturas de carátulas y banners)
+                romPath ? null : <SteamLibrary onPlay={play} active={tab === 'library'} />
               ) : null}
             </View>
             <View style={[styles.pane, tab !== 'web' && styles.hidden]}>

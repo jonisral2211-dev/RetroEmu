@@ -44,3 +44,19 @@ export function nativeImageArgs(p: ImagePrefs): [number, number, number, number]
   const color = p.color === 'vivid' ? 1 : p.color === 'cine' ? 2 : 0;
   return [shader, p.smooth, p.sharpen, color];
 }
+
+// Perfil por juego: si el título tiene ajustes guardados, mandan sobre los de la consola
+const GAME_KEY = (romPath: string) => `jl.gameimage.v1:${romPath}`;
+
+export async function loadGameImagePrefs(romPath: string): Promise<ImagePrefs | null> {
+  try {
+    const raw = await AsyncStorage.getItem(GAME_KEY(romPath));
+    return raw ? (JSON.parse(raw) as ImagePrefs) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveGameImagePrefs(romPath: string, prefs: ImagePrefs): void {
+  AsyncStorage.setItem(GAME_KEY(romPath), JSON.stringify(prefs)).catch(() => {});
+}

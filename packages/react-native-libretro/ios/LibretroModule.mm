@@ -22,6 +22,7 @@
 
 #import <PhotosUI/PhotosUI.h>
 #import <ReplayKit/ReplayKit.h>
+#import <ImageIO/ImageIO.h>
 #import <objc/runtime.h>
 
 #include <memory>
@@ -2061,6 +2062,32 @@ static id parseJSON(NSString *json) {
 }
 
 // ---- Clips de partida (ReplayKit) ----
+// Reduce una imagen en disco para que su lado mayor no pase de maxPixels (ahorro de RAM en carátulas)
+- (NSNumber *)resizeImage:(NSString *)path maxPixels:(double)maxPixels {
+  NSURL *url = [NSURL fileURLWithPath:path];
+  CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+  if (!source) return @NO;
+  NSDictionary *options = @{
+    (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways : @YES,
+    (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform : @YES,
+    (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize : @(maxPixels),
+  };
+  CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+  CFRelease(source);
+  if (!image) return @NO;
+  NSMutableData *data = [NSMutableData data];
+  CGImageDestinationRef destination =
+      CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, CFSTR("public.png"), 1, NULL);
+  BOOL ok = NO;
+  if (destination) {
+    CGImageDestinationAddImage(destination, image, NULL);
+    ok = CGImageDestinationFinalize(destination) && [data writeToFile:path atomically:YES];
+    CFRelease(destination);
+  }
+  CGImageRelease(image);
+  return @(ok);
+}
+
 - (BOOL)clipAvailable {
   return RPScreenRecorder.sharedRecorder.available;
 }
