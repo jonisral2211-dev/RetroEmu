@@ -424,6 +424,12 @@ void traceVariableOnce(const char *key, const char *value) {
 }
 // Respuesta a RETRO_ENVIRONMENT_GET_VARIABLE: opción del usuario > opción forzada > valor del núcleo
 static bool answerVariable(struct retro_variable *var) {
+  // N64: GLideN64 (GPU) cierra la app en iOS (FrameBuffer::init -> pc 0, CODESIGNING Invalid Page).
+  // Se fuerza RDP por software aunque el usuario haya elegido HD: prevalece sobre cualquier opción guardada
+  if (g_isN64 && var && var->key && std::strcmp(var->key, "mupen64plus-rdp-plugin") == 0) {
+    var->value = "angrylion";
+    return true;
+  }
   if (var && var->key) {
     if (const char *chosen = userOption(var->key)) {
       var->value = chosen;
@@ -555,7 +561,7 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     case RETRO_ENVIRONMENT_SET_HW_RENDER: {
       auto *cb = static_cast<struct retro_hw_render_callback *>(data);
-      if (!cb || !(g_hwAllowed.load() || g_hwRequired)) {
+      if (!cb || !((g_hwAllowed.load() && !g_isN64) || g_hwRequired)) {
         traceStep("SET_HW_RENDER rechazado (jl_hw_render desactivado)");
         return false;
       }
@@ -574,7 +580,7 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     }
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
-      if (!(g_hwAllowed.load() || g_hwRequired)) return false;
+      if (!((g_hwAllowed.load() && !g_isN64) || g_hwRequired)) return false;
       *static_cast<unsigned *>(data) = RETRO_HW_CONTEXT_OPENGLES3;
       return true;
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
