@@ -183,7 +183,10 @@ static void jlUncaughtException(NSException *exception) {
   NSString *docs = documentsDirectory() ?: NSTemporaryDirectory();
   NSString *text = [NSString stringWithFormat:@"%@\n%@: %@\n%@\n", [NSDate date], exception.name,
                                               exception.reason ?: @"", [[exception callStackSymbols] componentsJoinedByString:@"\n"]];
-  [text writeToFile:[docs stringByAppendingPathComponent:@"ultimo-error.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  // Se añade al final: el diagnóstico de pasos del núcleo (LibretroHost) comparte este archivo
+  NSString *file = [docs stringByAppendingPathComponent:@"ultimo-error.txt"];
+  NSString *previous = [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil] ?: @"";
+  [[previous stringByAppendingString:text] writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
 static NSString *patchesDirectory(void) {

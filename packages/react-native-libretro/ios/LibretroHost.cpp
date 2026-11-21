@@ -20,6 +20,8 @@
 #include <cerrno>
 #include <cmath>
 #include <atomic>
+#include <ctime>
+#include <set>
 #include <chrono>
 #include <cstdarg>
 #include <cstdlib>
@@ -341,9 +343,10 @@ const char *forcedOption(const char *key) {
       {"desmume_internal_resolution", "256x192"},
       {"desmume_screens_layout", "top/bottom"},
       {"desmume_screens_gap", "0"},
-      // PPSSPP (PSP): sin JIT en iOS -> intérprete IR; render por software (el host no ofrece
+      // PPSSPP (PSP): sin JIT en iOS -> intérprete puro (el valor «IR jit» de PPSSPP sigue siendo JIT); render por software (el host no ofrece
       // contexto GL); resolución nativa, salto de frames automático y E/S rápida
-      {"ppsspp_cpu_core", "IR JIT"},
+      {"ppsspp_cpu_core", "interpreter"},
+      {"ppsspp_backend", "OpenGL"},
       {"ppsspp_fast_memory", "enabled"},
       {"ppsspp_internal_resolution", "480x272"},
       {"ppsspp_auto_frameskip", "enabled"},
@@ -367,6 +370,26 @@ const char *forcedOption(const char *key) {
       // Yabause (Saturn): render por software multihilo y salto de frames automático
       {"yabause_frameskip", "enabled"},
       {"yabause_numthreads", "4"},
+      // Mupen64Plus (N64): RSP HLE, 1x nativo y sin emulación de framebuffer ni copia de color a
+      // RDRAM (costosas; solo las usa GLideN64). Sin hilo de render (evita conflicto de contexto)
+      {"mupen64plus-rsp-plugin", "hle"},
+      {"mupen64plus-43screensize", "320x240"},
+      {"mupen64plus-169screensize", "640x360"},
+      {"mupen64plus-EnableCopyColorToRDRAM", "Off"},
+      {"mupen64plus-EnableFBEmulation", "False"},
+      {"mupen64plus-ThreadedRenderer", "False"},
+      // PCSX ReARMed (PS1): sin recompilador dinámico (prohibido en iOS)
+      {"pcsx_rearmed_drc", "disabled"},
+      // SwanStation (PS1): intérprete de CPU
+      {"swanstation_CPU_ExecutionMode", "Interpreter"},
+      // Yabause (Saturn): intérprete SH-2
+      {"yabause_sh2core", "interpreter"},
+      // Flycast (Dreamcast): CPU genérica (intérprete) y render sin hilo propio
+      {"reicast_cpu_mode", "generic"},
+      {"reicast_threaded_rendering", "disabled"},
+      // Azahar/Citra (3DS): sin JIT de CPU. Los dos nombres: el core usa uno u otro según versión
+      {"azahar_use_cpu_jit", "disabled"},
+      {"citra_use_cpu_jit", "disabled"},
   };
   for (const Opt &o : kOptions) {
     if (std::strcmp(key, o.key) == 0) return o.value;
@@ -378,6 +401,67 @@ void updateAspect(const retro_game_geometry &g) {
   float a = g.aspect_ratio;
   if (!(a > 0.0f) && g.base_width && g.base_height) a = float(g.base_width) / float(g.base_height);
   g_aspect.store(a > 0.0f ? a : 0.0f, std::memory_order_relaxed);
+}
+
+// Diagnóstico síncrono: cada paso del arranque se escribe en Documents/ultimo-error.txt antes de seguir
+std::string g_tracePath;
+std::set<std::string> g_tracedKeys;
+std::atomic<bool> g_traceFirstFrame{false};
+extern "C" bool hasPs1Bios();
+void traceStep(const std::string &msg) {
+  if (g_tracePath.empty()) return;
+  char stamp[16] = "";
+  const std::time_t now = std::time(nullptr);
+  std::strftime(stamp, sizeof stamp, "%H:%M:%S", std::localtime(&now));
+  FILE *f = std::fopen(g_tracePath.c_str(), "a");
+  if (!f) return;
+  std::fprintf(f, "%s %s\n", stamp, msg.c_str());
+  std::fclose(f);  // cerrado = escrito en disco: sobrevive a un cierre inmediato
+}
+void traceVariableOnce(const char *key, const char *value) {
+  if (!key || !g_tracedKeys.insert(key).second) return;
+  traceStep(std::string("GET_VARIABLE ") + key + " = " + (value ? value : "(null)"));
+}
+// Respuesta a RETRO_ENVIRONMENT_GET_VARIABLE: opción del usuario > opción forzada > valor del núcleo
+static bool answerVariable(struct retro_variable *var) {
+  if (var && var->key) {
+    if (const char *chosen = userOption(var->key)) {
+      var->value = chosen;
+      return true;
+    }
+    if (const char *forced = forcedOption(var->key)) {
+      var->value = forced;
+      return true;
+    }
+  }
+  // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
+  if (var && var->key && std::strcmp(var->key, "pcsx_rearmed_bios") == 0 && !hasPs1Bios()) {
+    var->value = "HLE";  // PCSX ReARMed: BIOS HLE si no hay BIOS real
+    return true;
+  }
+  if (g_isN64 && var && var->key) {
+    // Claves reales del core: CORE_NAME = "mupen64plus" (ver mupen64plus-next_common.h)
+    if (std::strcmp(var->key, "mupen64plus-rdp-plugin") == 0) {
+      var->value = "angrylion";
+      return true;
+    }
+    // Sin estas dos opciones mupen deja astick_sensitivity = 0 y el radio del stick es siempre 0
+    // (ver emulate_game_controller_via_libretro.c): el stick nunca mueve a Mario.
+    // Valores por defecto del propio core (libretro_core_options.h).
+    if (std::strcmp(var->key, "mupen64plus-astick-sensitivity") == 0) {
+      var->value = "100";
+      return true;
+    }
+    if (std::strcmp(var->key, "mupen64plus-astick-deadzone") == 0) {
+      var->value = "15";
+      return true;
+    }
+    if (std::strcmp(var->key, "mupen64plus-cpucore") == 0) {
+      var->value = "pure_interpreter";
+      return true;
+    }
+  }
+  return false;  // el resto de opciones: valores por defecto del core
 }
 
 // ---- Callbacks de Libretro (la API es C: deben tener enlace C) -------------
@@ -471,7 +555,10 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     case RETRO_ENVIRONMENT_SET_HW_RENDER: {
       auto *cb = static_cast<struct retro_hw_render_callback *>(data);
-      if (!cb || !(g_hwAllowed.load() || g_hwRequired)) return false;
+      if (!cb || !(g_hwAllowed.load() || g_hwRequired)) {
+        traceStep("SET_HW_RENDER rechazado (jl_hw_render desactivado)");
+        return false;
+      }
       const bool gles = cb->context_type == RETRO_HW_CONTEXT_OPENGLES2 ||
                         cb->context_type == RETRO_HW_CONTEXT_OPENGLES3 ||
                         (cb->context_type == RETRO_HW_CONTEXT_OPENGLES_VERSION && cb->version_major <= 3);
@@ -483,6 +570,7 @@ static bool onEnvironment(unsigned cmd, void *data) {
       cb->get_proc_address = hwProcAddress;
       g_hw = *cb;
       g_hwRequested = true;
+      traceStep("SET_HW_RENDER aceptado: context_type=" + std::to_string(int(cb->context_type)));
       return true;
     }
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
@@ -506,44 +594,9 @@ static bool onEnvironment(unsigned cmd, void *data) {
       return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
       auto *var = static_cast<struct retro_variable *>(data);
-      if (var && var->key) {
-        if (const char *chosen = userOption(var->key)) {
-          var->value = chosen;
-          return true;
-        }
-        if (const char *forced = forcedOption(var->key)) {
-          var->value = forced;
-          return true;
-        }
-      }
-      // N64 en iOS: RDP por software (sin contexto GL) e intérprete puro (sin JIT, prohibido en iOS)
-      if (var && var->key && std::strcmp(var->key, "pcsx_rearmed_bios") == 0 && !hasPs1Bios()) {
-        var->value = "HLE";  // PCSX ReARMed: BIOS HLE si no hay BIOS real
-        return true;
-      }
-      if (g_isN64 && var && var->key) {
-        // Claves reales del core: CORE_NAME = "mupen64plus" (ver mupen64plus-next_common.h)
-        if (std::strcmp(var->key, "mupen64plus-rdp-plugin") == 0) {
-          var->value = "angrylion";
-          return true;
-        }
-        // Sin estas dos opciones mupen deja astick_sensitivity = 0 y el radio del stick es siempre 0
-        // (ver emulate_game_controller_via_libretro.c): el stick nunca mueve a Mario.
-        // Valores por defecto del propio core (libretro_core_options.h).
-        if (std::strcmp(var->key, "mupen64plus-astick-sensitivity") == 0) {
-          var->value = "100";
-          return true;
-        }
-        if (std::strcmp(var->key, "mupen64plus-astick-deadzone") == 0) {
-          var->value = "15";
-          return true;
-        }
-        if (std::strcmp(var->key, "mupen64plus-cpucore") == 0) {
-          var->value = "pure_interpreter";
-          return true;
-        }
-      }
-      return false;  // el resto de opciones: valores por defecto del core
+      const bool answered = answerVariable(var);
+      if (answered && var) traceVariableOnce(var->key, var->value);
+      return answered;
     }
     case RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK: {
       // Frameskip automático (PCSX, Yabause, FBNeo…): cada frame se informa del llenado del audio
@@ -1324,10 +1377,12 @@ bool prepareHwRender() {
   std::string error;
   if (!hwgl::create(g_hwWidth, g_hwHeight, g_hw.depth, g_hw.stencil, error)) {
     g_lastError = "GPU: " + error;
+    traceStep("ERROR contexto GPU: " + error);
     return false;
   }
   if (g_hw.context_reset) g_hw.context_reset();
   g_hwReady = true;
+  traceStep("contexto GPU listo (context_reset ejecutado)");
   return true;
 }
 
@@ -1369,7 +1424,9 @@ void runLoop() {
         } else {
           g_rewindHold = 0;
         }
+        if (g_hwReady) hwgl::makeCurrent();
         g_core.run();
+        if (g_traceFirstFrame.exchange(false)) traceStep("first_frame OK");
         if (g_frameHook) g_frameHook();
         // Avance rápido (sin netplay): frames extra en el mismo periodo, sin sonido
         const int extra = g_netActive ? 0 : std::clamp(g_speed.load(), 1, 8) - 1;
@@ -1413,11 +1470,14 @@ void runLoop() {
 
 void configure(const char *systemDir, const char *saveDir, const char *stateDir) {
   g_systemDir = systemDir;
+  const size_t slash = g_systemDir.find_last_of('/');
+  g_tracePath = (slash == std::string::npos ? std::string() : g_systemDir.substr(0, slash)) + "/ultimo-error.txt";
   g_saveDir = saveDir;
   g_stateDir = stateDir;
 }
 
 bool loadCore(const char *frameworkBinaryPath) {
+  traceStep(std::string("loadCore ") + frameworkBinaryPath);
   stop();
   {
     std::lock_guard<std::mutex> lock(g_coreMutex);
@@ -1511,6 +1571,9 @@ bool loadGame(const char *romPath) {
     return false;
   }
   std::fprintf(stderr, "[RetroEmu] loadGame path=%s\n", romPath);
+  g_tracedKeys.clear();
+  g_traceFirstFrame = true;
+  traceStep(std::string("--- loadGame ") + romPath);
   if (!g_core.handle) {
     g_lastError = "No hay ningún núcleo cargado";
     return false;
@@ -1564,7 +1627,10 @@ bool loadGame(const char *romPath) {
     }
     game.path = g_patchedPath.c_str();
   }
-  if (!g_core.loadGame(&game)) {
+  traceStep("retro_load_game llamando");
+  const bool gameOk = g_core.loadGame(&game);
+  traceStep(gameOk ? "retro_load_game OK" : "retro_load_game devolvio false");
+  if (!gameOk) {
     // Diagnóstico visible en la app: núcleo, ruta exacta y tamaño verificado en disco
     struct stat st {};
     const long long fileSize = stat(path.c_str(), &st) == 0 ? static_cast<long long>(st.st_size) : -1;
@@ -1608,6 +1674,7 @@ void unloadGame() {
 }
 
 void start() {
+  traceStep("start()");
   if (!g_gameLoaded || g_running.exchange(true)) return;
   g_audio.start(48000.0);
   g_thread = std::thread(runLoop);
@@ -2116,6 +2183,7 @@ double measuredFps() { return g_measuredFps.load(); }
 
 void setOption(const char *key, const char *value) {
   if (!key || !value) return;
+  traceStep(std::string("setOption ") + key + "=" + value);
   // Pseudo-opción del frontend: dispositivo del puerto 2 (SNES multitap = subclase 0 de JOYPAD,
   // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0) = 0x101). Con él, J2-J4 se leen de los puertos 1-3.
   // Pseudo-opción: permitir render por GPU (calidad HD/Ultra). Se fija antes de loadGame.
